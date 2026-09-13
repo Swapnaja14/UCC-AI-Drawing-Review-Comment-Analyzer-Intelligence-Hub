@@ -635,8 +635,9 @@ class AppController(QObject):
         Export drawing review comments to Error Tracker Excel, JSON, or CSV.
         Auto-populates drawing and project metadata if omitted.
         """
-        if not config.drawing_id and self._current_drawing_id:
+        if not config.drawing_id and self._current_drawing_id and getattr(config, 'scope', 'drawing') == 'drawing':
             config.drawing_id = self._current_drawing_id
+
 
         if not config.drawing_no and self._active_doc:
             config.drawing_no = self._active_doc.file_name.rsplit(".", 1)[0]

@@ -153,15 +153,17 @@ class ClassificationPage(QWidget):
         dept_filt.currentTextChanged.connect(self._on_dept_filter_changed)
         tb.addWidget(dept_filt)
 
-        cat_filt = QComboBox()
-        cat_filt.addItems(["All Categories"] + list(category_counts.keys()))
-        cat_filt.setFixedHeight(36)
-        tb.addWidget(cat_filt)
+        self._cat_filt = QComboBox()
+        self._cat_filt.addItems(["All Categories"] + list(category_counts.keys()))
+        self._cat_filt.setFixedHeight(36)
+        self._cat_filt.currentTextChanged.connect(self._on_cat_filter_changed)
+        tb.addWidget(self._cat_filt)
 
-        st_filt = QComboBox()
-        st_filt.addItems(["All Status", "Pending", "Approved", "Rejected", "Flagged"])
-        st_filt.setFixedHeight(36)
-        tb.addWidget(st_filt)
+        self._st_filt = QComboBox()
+        self._st_filt.addItems(["All Status", "Pending", "Approved", "Rejected", "Flagged"])
+        self._st_filt.setFixedHeight(36)
+        self._st_filt.currentTextChanged.connect(self._on_status_filter_changed)
+        tb.addWidget(self._st_filt)
         root.addLayout(tb)
 
         # Table
@@ -329,8 +331,50 @@ class ClassificationPage(QWidget):
 
         self._drawer.open_drawer()
 
+    def _apply_table_filter(self) -> None:
+        """Apply combined category + status filter. Department is not a table column so skip."""
+        cat_text = self._cat_filt.currentText() if hasattr(self, "_cat_filt") else "All Categories"
+        st_text = self._st_filt.currentText() if hasattr(self, "_st_filt") else "All Status"
+
+        # Rebuild the model from self._comments_data with combined filters
+        self._model.removeRows(0, self._model.rowCount())
+        for c in self._comments_data:
+            ocr_text   = _get(c, "ocr_text", "")
+            cid        = _get(c, "id", "")
+            category   = _get(c, "category", "Other")
+            confidence = _get(c, "confidence", 0.0)
+            status     = _get(c, "status", "Pending")
+
+            # Apply category filter
+            if cat_text != "All Categories" and str(category) != cat_text:
+                continue
+            # Apply status filter
+            if st_text != "All Status" and str(status) != st_text:
+                continue
+
+            text_item = QStandardItem(str(ocr_text)[:80])
+            text_item.setData(cid, Qt.ItemDataRole.UserRole)
+            cat_item  = QStandardItem(str(category))
+            conf_item = QStandardItem()
+            conf_item.setData(float(confidence), Qt.ItemDataRole.UserRole)
+            st_item   = QStandardItem(str(status))
+            for item in [text_item, cat_item, conf_item, st_item]:
+                item.setTextAlignment(
+                    Qt.AlignmentFlag.AlignVCenter | Qt.AlignmentFlag.AlignLeft
+                )
+            self._model.appendRow([text_item, cat_item, conf_item, st_item])
+
     def _on_dept_filter_changed(self, text: str) -> None:
+        """Department filter — filters across all columns via proxy."""
         if text == "All Departments" or not text:
             self._proxy.setFilterFixedString("")
         else:
             self._proxy.setFilterFixedString(text)
+
+    def _on_cat_filter_changed(self, text: str) -> None:
+        """Category filter — rebuilds table with only matching categories."""
+        self._apply_table_filter()
+
+    def _on_status_filter_changed(self, text: str) -> None:
+        """Status filter — rebuilds table with only matching statuses."""
+        self._apply_table_filter()

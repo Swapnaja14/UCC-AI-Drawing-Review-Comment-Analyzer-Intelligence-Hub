@@ -585,6 +585,15 @@ class CommentRepository:
             )
             return [_comment_to_dict(c) for c in rows]
 
+    def get_all_comments(self) -> List[Dict[str, Any]]:
+        with self._db.get_session() as session:
+            rows = (
+                session.query(CommentModel)
+                .order_by(CommentModel.drawing_id, CommentModel.page_number, CommentModel.bbox_y0)
+                .all()
+            )
+            return [_comment_to_dict(c) for c in rows]
+
     def update_comment_status(
         self,
         comment_id: str,

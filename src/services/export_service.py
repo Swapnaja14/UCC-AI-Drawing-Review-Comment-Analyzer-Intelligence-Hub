@@ -46,7 +46,9 @@ class ExportService:
     def export_drawing_comments(self, config: ExportConfigDTO) -> ExportResultDTO:
         """Export review comments to the requested format (Excel, JSON, or CSV)."""
         try:
-            if config.drawing_id:
+            if getattr(config, 'scope', 'drawing') in ['all', 'project']:
+                comments = self.comment_repo.get_all_comments()
+            elif config.drawing_id:
                 comments = self.comment_repo.get_comments_for_drawing(config.drawing_id)
             else:
                 comments = []

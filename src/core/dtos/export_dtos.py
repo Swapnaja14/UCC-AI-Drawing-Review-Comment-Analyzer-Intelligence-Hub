@@ -15,6 +15,7 @@ class ExportConfigDTO:
     include_confidence_scores: bool = True
     filter_status: Optional[str] = None
     drawing_id: Optional[str] = None
+    scope: str = 'drawing'
     template_style: str = "error_tracker"  # "error_tracker" | "standard"
     date_str: Optional[str] = None
     contract_no: Optional[str] = None
