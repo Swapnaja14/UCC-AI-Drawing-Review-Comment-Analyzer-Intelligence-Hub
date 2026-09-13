@@ -245,7 +245,7 @@ class AppController(QObject):
         
         # ── New Backend Services ──────────────────────────────────
         self.analytics_service      = AnalyticsService(self.db_engine)
-        self.export_service         = ExportService(self.comment_repo, self.project_repo, self.drawing_repo)
+        self.export_service         = ExportService(self.comment_repo, self.project_repo, self.drawing_repo, self.department_repo)
         self.verification_service   = VerificationService(self.comment_repo, self.audit_repo)
         self.text_cleaning_service  = TextCleaningService()
         self.classification_service = ClassificationService()
@@ -411,11 +411,24 @@ class AppController(QObject):
         """Return live KPI aggregates from the database."""
         return self.analytics_service.get_global_kpis()
 
-    def get_category_distribution(self) -> List[Any]:
-        return self.analytics_service.get_category_distribution()
+    def get_category_distribution(
+        self,
+        drawing_id: Optional[str] = None,
+        department_name: Optional[str] = None,
+    ) -> List[Any]:
+        return self.analytics_service.get_category_distribution(
+            drawing_id=drawing_id, department_name=department_name
+        )
 
-    def get_pareto_analysis(self, top_n: int = 5) -> List[Any]:
-        return self.analytics_service.get_pareto_analysis(top_n=top_n)
+    def get_pareto_analysis(
+        self,
+        drawing_id: Optional[str] = None,
+        department_name: Optional[str] = None,
+        top_n: int = 5,
+    ) -> List[Any]:
+        return self.analytics_service.get_pareto_analysis(
+            drawing_id=drawing_id, department_name=department_name, top_n=top_n
+        )
 
     def get_status_trend(self, drawing_id: str = None) -> List[Any]:
         return self.analytics_service.get_status_trend(drawing_id=drawing_id)

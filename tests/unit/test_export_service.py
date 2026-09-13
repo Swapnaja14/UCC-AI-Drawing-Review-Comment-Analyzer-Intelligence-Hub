@@ -159,12 +159,29 @@ def test_error_tracker_excel_structure_and_styling(tmp_path):
     assert out_file.exists()
     assert res.file_size_bytes > 0
     assert res.total_rows == 2
+    # Executive Summary + 7 standard UCC departments
+    assert res.total_sheets == 8
 
     # Verify Excel internal cell structure and headers
     wb = openpyxl.load_workbook(out_file)
-    ws = wb["Error Tracker"]
 
-    # 1. Check Row 1 (Group Banner tier)
+    # 1. Verify sheet names
+    expected_sheets = [
+        "Executive Summary",
+        "Electrical Engineering",
+        "GPD",
+        "Pipe Support Engineering",
+        "Piping Engineering",
+        "Plakon",
+        "Structural & Physical Design",
+        "System Engineering",
+    ]
+    assert wb.sheetnames == expected_sheets
+
+    # 2. Check "Piping Engineering" worksheet (where our mock comments belong)
+    ws = wb["Piping Engineering"]
+
+    # Check Row 1 (Group Banner tier - 9 columns)
     assert ws["A1"].value == "Standard Input Field"
     assert ws["C1"].value == "Auto Read by Program"
     assert ws["D1"].value == "Standard Input Field"
@@ -174,7 +191,7 @@ def test_error_tracker_excel_structure_and_styling(tmp_path):
     assert ws["A1"].fill.start_color.rgb in ("00FFC000", "FFC000")
     assert ws["C1"].fill.start_color.rgb in ("0092D050", "92D050")
 
-    # 2. Check Row 2 (Column Number tier: 1, 2, 3, 4, 6, 7, 8, 9, 10, 11)
+    # Check Row 2 (Column Number tier: 1, 2, 3, 4, 6, 7, 8, 9, 10)
     assert ws.cell(row=2, column=1).value == 1
     assert ws.cell(row=2, column=2).value == 2
     assert ws.cell(row=2, column=3).value == 3
@@ -184,24 +201,22 @@ def test_error_tracker_excel_structure_and_styling(tmp_path):
     assert ws.cell(row=2, column=7).value == 8
     assert ws.cell(row=2, column=8).value == 9
     assert ws.cell(row=2, column=9).value == 10
-    assert ws.cell(row=2, column=10).value == 11
 
-    # 3. Check Row 3 (Source tier)
+    # Check Row 3 (Source tier - 9 columns)
     assert ws.cell(row=3, column=1).value == "User Input"
     assert "Drawing #" in ws.cell(row=3, column=6).value
     assert "Commentary" in ws.cell(row=3, column=8).value
     assert "Classify Error" in ws.cell(row=3, column=9).value
-    assert "Engineering" in ws.cell(row=3, column=10).value
 
-    # 4. Check Row 4 (Primary Column Headers)
+    # Check Row 4 (Primary Column Headers - 9 columns)
     expected_headers = [
         "Date", "Contract #", "Plant Name", "E-Pod WO #", "UCC-I Designer",
-        "Drawing #", "Drawing Title", "Errors Description", "Category of Error", "Engineering Department"
+        "Drawing #", "Drawing Title", "Errors Description", "Category of Error"
     ]
     for idx, expected in enumerate(expected_headers, 1):
         assert ws.cell(row=4, column=idx).value == expected
 
-    # 5. Check Row 5 (Data Row 1)
+    # Check Row 5 (Data Row 1)
     assert ws.cell(row=5, column=1).value == "2026-09-12"
     assert ws.cell(row=5, column=2).value == "CTR-2026-881"
     assert ws.cell(row=5, column=3).value == "Austin Substation"
@@ -211,9 +226,59 @@ def test_error_tracker_excel_structure_and_styling(tmp_path):
     assert ws.cell(row=5, column=7).value == "Primary Crusher Piping Isometric"
     assert ws.cell(row=5, column=8).value == "Pipe clearance less than 50mm from structural beam"
     assert ws.cell(row=5, column=9).value == "Coordination/Interference"
-    assert ws.cell(row=5, column=10).value == "Piping Engineering"
 
-    # 6. Check Row 6 (Data Row 2)
+    # Check Row 6 (Data Row 2)
     assert ws.cell(row=6, column=8).value == "Dimension missing on flange weld neck"
     assert ws.cell(row=6, column=9).value == "Dimensional/Tolerancing"
-    assert ws.cell(row=6, column=10).value == "Piping Engineering"
+
+    # 3. Check an empty department sheet (e.g. "Electrical Engineering") has 5 empty placeholder rows
+    ws_elec = wb["Electrical Engineering"]
+    assert ws_elec.cell(row=4, column=1).value == "Date"
+    # Row 5 to Row 9 should be placeholder rows with empty string values
+    for r in range(5, 10):
+        for col_idx in range(1, 10):
+            assert ws_elec.cell(row=r, column=col_idx).value in ("", None)
+
+
+
+@pytest.mark.skipif(not OPENPYXL_AVAILABLE, reason="openpyxl not installed")
+def test_unassigned_department_tab_creation(tmp_path):
+    class MockUnassignedRepo:
+        def get_comments_for_drawing(self, drawing_id):
+            return [
+                {
+                    'id': '1',
+                    'drawing_id': drawing_id,
+                    'status': 'Pending',
+                    'raw_text': 'Cable tray clearance issue',
+                    'category_name': 'Electrical',
+                    'department_name': 'Electrical Engineering',
+                },
+                {
+                    'id': '2',
+                    'drawing_id': drawing_id,
+                    'status': 'Pending',
+                    'raw_text': 'Unknown issue with no department assigned',
+                    'category_name': 'General',
+                    'department_name': 'Unassigned',
+                },
+            ]
+
+    service = ExportService(MockUnassignedRepo(), MockProjectRepo(), MockDrawingRepo())
+    out_file = tmp_path / "unassigned_test.xlsx"
+
+    config = ExportConfigDTO(
+        output_path=out_file,
+        format=ExportFormat.EXCEL,
+        drawing_id="draw1",
+        include_summary_sheet=False,
+    )
+    res = service.export_drawing_comments(config)
+
+    assert res.success is True
+    wb = openpyxl.load_workbook(out_file)
+    assert "Unassigned" in wb.sheetnames
+
+    ws_unassigned = wb["Unassigned"]
+    assert ws_unassigned.cell(row=5, column=8).value == "Unknown issue with no department assigned"
+

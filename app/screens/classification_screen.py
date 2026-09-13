@@ -137,6 +137,22 @@ class ClassificationPage(QWidget):
         tb.addWidget(search)
         tb.addStretch()
 
+        dept_filt = QComboBox()
+        dept_filt.addItems([
+            "All Departments",
+            "Electrical Engineering",
+            "GPD",
+            "Pipe Support Engineering",
+            "Piping Engineering",
+            "Plakon",
+            "Structural & Physical Design",
+            "System Engineering",
+            "Unassigned",
+        ])
+        dept_filt.setFixedHeight(36)
+        dept_filt.currentTextChanged.connect(self._on_dept_filter_changed)
+        tb.addWidget(dept_filt)
+
         cat_filt = QComboBox()
         cat_filt.addItems(["All Categories"] + list(category_counts.keys()))
         cat_filt.setFixedHeight(36)
@@ -312,3 +328,9 @@ class ClassificationPage(QWidget):
         lay.addWidget(conf_lbl)
 
         self._drawer.open_drawer()
+
+    def _on_dept_filter_changed(self, text: str) -> None:
+        if text == "All Departments" or not text:
+            self._proxy.setFilterFixedString("")
+        else:
+            self._proxy.setFilterFixedString(text)

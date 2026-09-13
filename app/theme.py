@@ -210,19 +210,41 @@ QComboBox {{
     color: {t['text_primary']};
     border: 1px solid {t['border']};
     border-radius: 8px;
-    padding: 4px 12px;
+    padding: 4px 32px 4px 12px;
     height: 36px;
 }}
 QComboBox:hover {{
     border-color: {t['accent']};
 }}
 QComboBox::drop-down {{
+    subcontrol-origin: padding;
+    subcontrol-position: top right;
+    width: 32px;
     border: none;
-    width: 28px;
+    background: transparent;
+}}
+QComboBox::drop-down:hover {{
+    background-color: {t['accent']}1A;
+    border-top-right-radius: 7px;
+    border-bottom-right-radius: 7px;
 }}
 QComboBox::down-arrow {{
-    width: 12px;
-    height: 12px;
+    image: none;
+    width: 0;
+    height: 0;
+    border-left: 5px solid transparent;
+    border-right: 5px solid transparent;
+    border-top: 6px solid {t['text_secondary']};
+    margin-right: 10px;
+}}
+QComboBox::down-arrow:hover, QComboBox:hover::down-arrow {{
+    border-top-color: {t['accent']};
+}}
+QComboBox::down-arrow:on {{
+    border-top: none;
+    border-left: 5px solid transparent;
+    border-right: 5px solid transparent;
+    border-bottom: 6px solid {t['accent']};
 }}
 QComboBox QAbstractItemView {{
     background-color: {t['bg_elevated']};

@@ -115,3 +115,34 @@ def test_kpi_accuracy_calculation(test_setup):
     service = test_setup
     kpis = service.get_global_kpis()
     assert kpis.accuracy_rate == pytest.approx(20.0)
+
+
+def test_department_pareto_analysis(tmp_path):
+    from src.infrastructure.storage.models import EngineeringDepartmentModel
+    db_engine, service = _setup_test_db(tmp_path)
+
+    with db_engine.get_session() as session:
+        dept_elec = session.query(EngineeringDepartmentModel).filter_by(name="Electrical Engineering").first()
+        dept_pipe = session.query(EngineeringDepartmentModel).filter_by(name="Piping Engineering").first()
+
+        _dwg = dict(file_path="/tmp/test.pdf", file_name="test.pdf", file_size_bytes=1024, file_hash_sha256="abc123", total_pages=1)
+        d1 = DrawingModel(id="d1", **_dwg)
+        session.add(d1)
+
+        c1 = CommentModel(id="c1", drawing_id="d1", page_number=1, raw_text="t1", category_name="Wiring", department_id=dept_elec.id)
+        c2 = CommentModel(id="c2", drawing_id="d1", page_number=1, raw_text="t2", category_name="Wiring", department_id=dept_elec.id)
+        c3 = CommentModel(id="c3", drawing_id="d1", page_number=1, raw_text="t3", category_name="Clearance", department_id=dept_pipe.id)
+        session.add_all([c1, c2, c3])
+        session.commit()
+
+    pareto_elec = service.get_pareto_analysis(department_name="Electrical Engineering")
+    assert len(pareto_elec) == 1
+    assert pareto_elec[0].category_name == "Wiring"
+    assert pareto_elec[0].count == 2
+
+    pareto_pipe = service.get_pareto_analysis(department_name="Piping Engineering")
+    assert len(pareto_pipe) == 1
+    assert pareto_pipe[0].category_name == "Clearance"
+    assert pareto_pipe[0].count == 1
+
+

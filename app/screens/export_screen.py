@@ -320,18 +320,51 @@ class ExportPage(QWidget):
                 color: #F8FAFC;
                 border: 1px solid #334155;
                 border-radius: 8px;
-                padding: 10px 14px;
+                padding: 10px 36px 10px 14px;
                 font-size: 14px;
                 font-family: 'Segoe UI', Arial;
                 min-height: 22px;
             }
+            QComboBox:hover {
+                border-color: #38BDF8;
+            }
             QComboBox::drop-down {
+                subcontrol-origin: padding;
+                subcontrol-position: top right;
+                width: 32px;
                 border: none;
+                background: transparent;
+            }
+            QComboBox::drop-down:hover {
+                background-color: rgba(56, 189, 248, 0.15);
+                border-top-right-radius: 7px;
+                border-bottom-right-radius: 7px;
+            }
+            QComboBox::down-arrow {
+                image: none;
+                width: 0;
+                height: 0;
+                border-left: 5px solid transparent;
+                border-right: 5px solid transparent;
+                border-top: 6px solid #94A3B8;
+                margin-right: 10px;
+            }
+            QComboBox::down-arrow:hover, QComboBox:hover::down-arrow {
+                border-top-color: #38BDF8;
+            }
+            QComboBox::down-arrow:on {
+                border-top: none;
+                border-left: 5px solid transparent;
+                border-right: 5px solid transparent;
+                border-bottom: 6px solid #38BDF8;
             }
             QComboBox QAbstractItemView {
                 background-color: #1E222B;
                 color: #F8FAFC;
                 selection-background-color: #0284C7;
+                border: 1px solid #334155;
+                border-radius: 6px;
+                padding: 4px;
             }
         """)
         # Populate 7 official UCC engineering departments

@@ -9,6 +9,7 @@ from src.infrastructure.storage.repository import (
     CommentRepository,
     ProjectRepository,
     DrawingRepository,
+    EngineeringDepartmentRepository,
 )
 from src.infrastructure.logging.logger import get_logger
 
@@ -35,10 +36,12 @@ class ExportService:
         comment_repo: CommentRepository,
         project_repo: Optional[ProjectRepository] = None,
         drawing_repo: Optional[DrawingRepository] = None,
+        department_repo: Optional[EngineeringDepartmentRepository] = None,
     ):
         self.comment_repo = comment_repo
         self.project_repo = project_repo
         self.drawing_repo = drawing_repo
+        self.department_repo = department_repo
 
     def export_drawing_comments(self, config: ExportConfigDTO) -> ExportResultDTO:
         """Export review comments to the requested format (Excel, JSON, or CSV)."""
@@ -104,32 +107,140 @@ class ExportService:
 
     def _export_to_excel(self, comments: List[Dict[str, Any]], config: ExportConfigDTO) -> ExportResultDTO:
         """
-        Generate Excel spreadsheet formatted according to the 4-tier
-        Error Tracker Sheet specification:
-        - Row 1: Group Banners ('Standard Input Field', 'Auto Read by Program')
-        - Row 2: Column Numbers (1, 2, 3, 4, 6, 7, 8, 9, 10)
-        - Row 3: Data Source / Role ('User Input', 'Drawing # from Title Block', etc.)
-        - Row 4: Column Header Names ('Date', 'Contract #', 'Plant Name', etc.)
-        - Rows 5+: Formatted Data Rows
+        Generate multi-sheet Excel workbook with a separate Error Tracker worksheet for
+        each Engineering Department (Electrical Engineering, GPD, Pipe Support Engineering,
+        Piping Engineering, Plakon, Structural & Physical Design, System Engineering, etc.).
+        Each department sheet adheres to the 4-tier UCC Error Tracker specification.
         """
         if not OPENPYXL_AVAILABLE:
             raise ImportError("openpyxl is required for Excel export")
 
         wb = openpyxl.Workbook()
-        ws = wb.active
-        ws.title = "Error Tracker"
+
+        # Retrieve active departments list
+        active_departments = []
+        if self.department_repo:
+            try:
+                depts = self.department_repo.get_all_departments()
+                active_departments = [d["name"] for d in depts if d.get("is_active", True)]
+            except Exception as ex:
+                logger.debug(f"Failed to fetch departments from repo: {ex}")
+
+        if not active_departments:
+            active_departments = [
+                "Electrical Engineering",
+                "GPD",
+                "Pipe Support Engineering",
+                "Piping Engineering",
+                "Plakon",
+                "Structural & Physical Design",
+                "System Engineering",
+            ]
+
+        # Group comments by department name
+        comments_by_dept: Dict[str, List[Dict[str, Any]]] = {dept: [] for dept in active_departments}
+        unassigned_comments: List[Dict[str, Any]] = []
+
+        for comment in comments:
+            dept_name = comment.get("department_name") or comment.get("department") or config.department_name
+            if dept_name in comments_by_dept:
+                comments_by_dept[dept_name].append(comment)
+            elif dept_name and dept_name != "Unassigned":
+                comments_by_dept.setdefault(dept_name, []).append(comment)
+            else:
+                unassigned_comments.append(comment)
+
+        total_sheets = 0
+        summary_ws = None
+
+        # Executive Summary Sheet (optional)
+        if config.include_summary_sheet and comments:
+            summary_ws = wb.active
+            summary_ws.title = "Executive Summary"
+            summary_ws.views.sheetView[0].showGridLines = True
+
+            ORANGE_FILL = PatternFill(start_color="FFC000", end_color="FFC000", fill_type="solid")
+            FONT_GROUP  = Font(name="Segoe UI", size=11, bold=True, color="000000")
+            FONT_HEADER = Font(name="Segoe UI", size=11, bold=True, color="000000")
+            THIN_SIDE   = Side(border_style="thin", color="000000")
+            THIN_BORDER = Border(left=THIN_SIDE, right=THIN_SIDE, top=THIN_SIDE, bottom=THIN_SIDE)
+
+            summary_ws.cell(row=1, column=1, value="Review Metrics Summary").font = FONT_GROUP
+            summary_ws.cell(row=3, column=1, value="Metric").font = FONT_HEADER
+            summary_ws.cell(row=3, column=2, value="Count").font = FONT_HEADER
+            summary_ws.cell(row=3, column=1).fill = ORANGE_FILL
+            summary_ws.cell(row=3, column=2).fill = ORANGE_FILL
+            summary_ws.cell(row=3, column=1).border = THIN_BORDER
+            summary_ws.cell(row=3, column=2).border = THIN_BORDER
+
+            summary_ws.cell(row=4, column=1, value="Total Comments Extracted").border = THIN_BORDER
+            summary_ws.cell(row=4, column=2, value=len(comments)).border = THIN_BORDER
+
+            statuses = [c.get('status', 'Pending') for c in comments]
+            for idx, stat in enumerate(['Approved', 'Rejected', 'Pending', 'Flagged'], start=5):
+                summary_ws.cell(row=idx, column=1, value=f"{stat} Status").border = THIN_BORDER
+                summary_ws.cell(row=idx, column=2, value=statuses.count(stat)).border = THIN_BORDER
+
+            summary_ws.column_dimensions["A"].width = 30
+            summary_ws.column_dimensions["B"].width = 15
+            total_sheets += 1
+
+        # Create department sheets
+        first_dept = True
+        for dept_name, dept_comments in comments_by_dept.items():
+            sheet_title = dept_name[:31]
+            if first_dept and summary_ws is None:
+                ws = wb.active
+                ws.title = sheet_title
+                first_dept = False
+            else:
+                ws = wb.create_sheet(title=sheet_title)
+
+            self._create_department_sheet(ws, dept_name, dept_comments, config)
+            total_sheets += 1
+
+        # Create Unassigned sheet if unassigned comments exist
+        if unassigned_comments:
+            ws = wb.create_sheet(title="Unassigned")
+            self._create_department_sheet(ws, "Unassigned", unassigned_comments, config)
+            total_sheets += 1
+
+        os.makedirs(os.path.dirname(os.path.abspath(config.output_path)), exist_ok=True)
+        wb.save(config.output_path)
+        file_size = os.path.getsize(config.output_path)
+
+        return ExportResultDTO(
+            output_path=config.output_path,
+            format=config.format,
+            total_rows=len(comments),
+            total_sheets=total_sheets,
+            file_size_bytes=file_size,
+            success=True
+        )
+
+    def _create_department_sheet(
+        self,
+        ws: Any,
+        dept_name: str,
+        comments: List[Dict[str, Any]],
+        config: ExportConfigDTO,
+    ) -> None:
+        """
+        Populate a single department worksheet formatted according to the 4-tier
+        Error Tracker Sheet specification (9 Columns A-I).
+        """
         ws.views.sheetView[0].showGridLines = True
 
         # Styles & Color Palette
         ORANGE_FILL = PatternFill(start_color="FFC000", end_color="FFC000", fill_type="solid")
         GREEN_FILL  = PatternFill(start_color="92D050", end_color="92D050", fill_type="solid")
-        
+
         FONT_GROUP   = Font(name="Segoe UI", size=11, bold=True, color="000000")
         FONT_NUM     = Font(name="Segoe UI", size=11, bold=True, color="000000")
         FONT_ROLE    = Font(name="Segoe UI", size=10, bold=True, color="000000")
         FONT_HEADER  = Font(name="Segoe UI", size=11, bold=True, color="000000")
         FONT_DATA    = Font(name="Segoe UI", size=10, color="000000")
-        
+
         THIN_SIDE    = Side(border_style="thin", color="000000")
         THIN_BORDER  = Border(left=THIN_SIDE, right=THIN_SIDE, top=THIN_SIDE, bottom=THIN_SIDE)
 
@@ -137,10 +248,10 @@ class ExportService:
         ALIGN_LEFT   = Alignment(horizontal="left", vertical="center", wrap_text=True)
 
         # -------------------------------------------------------------------
-        # ROW 1: Grouping Banners (Standard Input Field vs Auto Read by Program)
+        # ROW 1: Grouping Banners
         # -------------------------------------------------------------------
         ws.row_dimensions[1].height = 28
-        
+
         row1_cells = [
             (1, "Standard Input Field", ORANGE_FILL),
             (2, "",                     ORANGE_FILL),
@@ -151,7 +262,6 @@ class ExportService:
             (7, "",                     GREEN_FILL),
             (8, "",                     GREEN_FILL),
             (9, "",                     GREEN_FILL),
-            (10, "",                    GREEN_FILL),
         ]
         for col_idx, val, fill in row1_cells:
             c = ws.cell(row=1, column=col_idx, value=val)
@@ -163,7 +273,7 @@ class ExportService:
         # Merge header bands
         ws.merge_cells("A1:B1")
         ws.merge_cells("D1:E1")
-        ws.merge_cells("F1:J1")
+        ws.merge_cells("F1:I1")
 
         # -------------------------------------------------------------------
         # ROW 2: Column Index Numbering
@@ -174,12 +284,11 @@ class ExportService:
             (2, 2, ORANGE_FILL),
             (3, 3, GREEN_FILL),
             (4, 4, ORANGE_FILL),
-            (5, 6, ORANGE_FILL),   # Column 6 in template numbering
+            (5, 6, ORANGE_FILL),
             (6, 7, GREEN_FILL),
             (7, 8, GREEN_FILL),
             (8, 9, GREEN_FILL),
             (9, 10, GREEN_FILL),
-            (10, 11, GREEN_FILL),
         ]
         for col_idx, num_val, fill in col_numbers:
             c = ws.cell(row=2, column=col_idx, value=num_val)
@@ -202,7 +311,6 @@ class ExportService:
             (7, "Drawing # from\nTitle Block", GREEN_FILL),
             (8, "Drawing\nCommentary", GREEN_FILL),
             (9, "Classify Error\nbased on Error\nDescription", GREEN_FILL),
-            (10, "Engineering\nDepartment", GREEN_FILL),
         ]
         for col_idx, role_text, fill in col_roles:
             c = ws.cell(row=3, column=col_idx, value=role_text)
@@ -225,7 +333,6 @@ class ExportService:
             (7, "Drawing Title", GREEN_FILL),
             (8, "Errors Description", GREEN_FILL),
             (9, "Category of Error", GREEN_FILL),
-            (10, "Engineering Department", GREEN_FILL),
         ]
         for col_idx, hdr_text, fill in headers:
             c = ws.cell(row=4, column=col_idx, value=hdr_text)
@@ -250,7 +357,7 @@ class ExportService:
             # If no comments, insert 5 empty placeholder rows with grid borders
             for r in range(start_row, start_row + 5):
                 ws.row_dimensions[r].height = 24
-                for col_idx in range(1, 11):
+                for col_idx in range(1, 10):
                     c = ws.cell(row=r, column=col_idx, value="")
                     c.font = FONT_DATA
                     c.border = THIN_BORDER
@@ -258,7 +365,6 @@ class ExportService:
             for idx, comment in enumerate(comments, start_row):
                 desc = comment.get('raw_text') or comment.get('cleaned_text') or ""
                 cat  = comment.get('category_name') or comment.get('category') or "Uncategorized"
-                dept = comment.get('department_name') or comment.get('department') or config.department_name or "Unassigned"
                 reviewer = comment.get('reviewer_id') or designer_val
 
                 row_data = [
@@ -271,7 +377,6 @@ class ExportService:
                     (7, drawing_ttl, ALIGN_LEFT),
                     (8, desc, ALIGN_LEFT),
                     (9, cat, ALIGN_LEFT),
-                    (10, dept, ALIGN_LEFT),
                 ]
 
                 # Dynamically set row height based on text length
@@ -302,50 +407,9 @@ class ExportService:
             "G": 28,  # Drawing Title
             "H": 55,  # Errors Description
             "I": 30,  # Category of Error
-            "J": 25,  # Engineering Department
         }
         for col_letter, width in col_widths.items():
             ws.column_dimensions[col_letter].width = width
-
-        # Optional Summary Sheet
-        total_sheets = 1
-        if config.include_summary_sheet and comments:
-            summary_ws = wb.create_sheet(title="Executive Summary")
-            summary_ws.views.sheetView[0].showGridLines = True
-            
-            # Header
-            summary_ws.cell(row=1, column=1, value="Review Metrics Summary").font = FONT_GROUP
-            summary_ws.cell(row=3, column=1, value="Metric").font = FONT_HEADER
-            summary_ws.cell(row=3, column=2, value="Count").font = FONT_HEADER
-            summary_ws.cell(row=3, column=1).fill = ORANGE_FILL
-            summary_ws.cell(row=3, column=2).fill = ORANGE_FILL
-            summary_ws.cell(row=3, column=1).border = THIN_BORDER
-            summary_ws.cell(row=3, column=2).border = THIN_BORDER
-
-            summary_ws.cell(row=4, column=1, value="Total Comments Extracted").border = THIN_BORDER
-            summary_ws.cell(row=4, column=2, value=len(comments)).border = THIN_BORDER
-
-            statuses = [c.get('status', 'Pending') for c in comments]
-            for idx, stat in enumerate(['Approved', 'Rejected', 'Pending', 'Flagged'], start=5):
-                summary_ws.cell(row=idx, column=1, value=f"{stat} Status").border = THIN_BORDER
-                summary_ws.cell(row=idx, column=2, value=statuses.count(stat)).border = THIN_BORDER
-
-            summary_ws.column_dimensions["A"].width = 30
-            summary_ws.column_dimensions["B"].width = 15
-            total_sheets += 1
-
-        os.makedirs(os.path.dirname(os.path.abspath(config.output_path)), exist_ok=True)
-        wb.save(config.output_path)
-        file_size = os.path.getsize(config.output_path)
-
-        return ExportResultDTO(
-            output_path=config.output_path,
-            format=config.format,
-            total_rows=len(comments),
-            total_sheets=total_sheets,
-            file_size_bytes=file_size,
-            success=True
-        )
 
     def _export_to_json(self, comments: List[Dict[str, Any]], config: ExportConfigDTO) -> ExportResultDTO:
         data = {
