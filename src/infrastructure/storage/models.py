@@ -63,6 +63,30 @@ class UserModel(Base):
 
 
 # ---------------------------------------------------------------------------
+# engineering_departments
+# ---------------------------------------------------------------------------
+
+class EngineeringDepartmentModel(Base):
+    """Engineering departments taxonomy for error tracker metrics and Pareto charts."""
+
+    __tablename__ = "engineering_departments"
+
+    id          = Column(String(50),  primary_key=True)
+    name        = Column(String(100), nullable=False, unique=True)
+    description = Column(Text,        nullable=True)
+    is_active   = Column(Boolean,     nullable=False, default=True)
+    created_at  = Column(DateTime,    nullable=False, default=datetime.utcnow)
+
+    # Relationships
+    drawings = relationship("DrawingModel", back_populates="department_rel")
+    comments = relationship("CommentModel", back_populates="department_rel")
+
+    __table_args__ = (
+        Index("ix_engineering_departments_name", "name"),
+    )
+
+
+# ---------------------------------------------------------------------------
 # categories
 # ---------------------------------------------------------------------------
 
@@ -133,6 +157,9 @@ class DrawingModel(Base):
     project_id        = Column(String(50),
                                ForeignKey("projects.id", ondelete="SET NULL"),
                                nullable=True)
+    department_id     = Column(String(50),
+                               ForeignKey("engineering_departments.id", ondelete="SET NULL"),
+                               nullable=True)
     file_path         = Column(Text,        nullable=False)
     file_name         = Column(String(255), nullable=False)
     file_size_bytes   = Column(Integer,     nullable=False)
@@ -144,13 +171,15 @@ class DrawingModel(Base):
     uploaded_at       = Column(DateTime,    nullable=False, default=datetime.utcnow)
 
     # Relationships
-    project  = relationship("ProjectModel", back_populates="drawings")
-    pages    = relationship(
+    project        = relationship("ProjectModel", back_populates="drawings")
+    department_rel = relationship("EngineeringDepartmentModel", back_populates="drawings",
+                                  foreign_keys=[department_id])
+    pages          = relationship(
         "PageModel",
         back_populates="drawing",
         cascade="all, delete-orphan",
     )
-    comments = relationship(
+    comments       = relationship(
         "CommentModel",
         back_populates="drawing",
         cascade="all, delete-orphan",
@@ -160,6 +189,7 @@ class DrawingModel(Base):
         # Fast duplicate-detection by hash
         Index("ix_drawings_file_hash", "file_hash_sha256"),
         Index("ix_drawings_project_id", "project_id"),
+        Index("ix_drawings_department_id", "department_id"),
     )
 
 
@@ -206,10 +236,11 @@ class CommentModel(Base):
     A review comment extracted from a drawing page.
 
     Relationships:
-        page     — the page the comment was extracted from
-        drawing  — denormalised short-cut for direct drawing queries
-        category_rel — classification category
-        user     — reviewer who last actioned the comment (nullable)
+        page           — the page the comment was extracted from
+        drawing        — denormalised short-cut for direct drawing queries
+        category_rel   — classification category
+        department_rel — engineering department taxonomy
+        user           — reviewer who last actioned the comment (nullable)
     """
 
     __tablename__ = "comments"
@@ -223,6 +254,9 @@ class CommentModel(Base):
                                   nullable=True)
     category_id          = Column(String(50),
                                   ForeignKey("categories.id", ondelete="SET NULL"),
+                                  nullable=True)
+    department_id        = Column(String(50),
+                                  ForeignKey("engineering_departments.id", ondelete="SET NULL"),
                                   nullable=True)
     user_id              = Column(String(50),
                                   ForeignKey("users.id", ondelete="SET NULL"),
@@ -246,22 +280,32 @@ class CommentModel(Base):
                                   default=datetime.utcnow, onupdate=datetime.utcnow)
 
     # Relationships
-    drawing      = relationship("DrawingModel",  back_populates="comments",
-                                foreign_keys=[drawing_id])
-    page         = relationship("PageModel",     back_populates="comments",
-                                foreign_keys=[page_id])
-    category_rel = relationship("CategoryModel", back_populates="comments",
-                                foreign_keys=[category_id])
-    user         = relationship("UserModel",     back_populates="comments",
-                                foreign_keys=[user_id])
-    audit_logs   = relationship("AuditLogModel", back_populates="comment",
-                                cascade="all, delete-orphan")
+    drawing        = relationship("DrawingModel",              back_populates="comments",
+                                  foreign_keys=[drawing_id])
+    page           = relationship("PageModel",                 back_populates="comments",
+                                  foreign_keys=[page_id])
+    category_rel   = relationship("CategoryModel",             back_populates="comments",
+                                  foreign_keys=[category_id])
+    department_rel = relationship("EngineeringDepartmentModel", back_populates="comments",
+                                  foreign_keys=[department_id])
+    user           = relationship("UserModel",                 back_populates="comments",
+                                  foreign_keys=[user_id])
+    audit_logs     = relationship("AuditLogModel",             back_populates="comment",
+                                  cascade="all, delete-orphan")
+
+    @property
+    def department_name(self) -> str:
+        """Dynamically return the engineering department name, defaulting to 'Unassigned'."""
+        if self.department_rel and self.department_rel.name:
+            return self.department_rel.name
+        return "Unassigned"
 
     __table_args__ = (
-        Index("ix_comments_drawing_id",  "drawing_id"),
-        Index("ix_comments_status",      "status"),
-        Index("ix_comments_category_id", "category_id"),
-        Index("ix_comments_user_id",     "user_id"),
+        Index("ix_comments_drawing_id",     "drawing_id"),
+        Index("ix_comments_status",         "status"),
+        Index("ix_comments_category_id",    "category_id"),
+        Index("ix_comments_department_id",  "department_id"),
+        Index("ix_comments_user_id",        "user_id"),
     )
 
 

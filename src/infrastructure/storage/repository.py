@@ -26,11 +26,22 @@ from src.infrastructure.storage.models import (
     PageModel,
     ProjectModel,
     CategoryModel,
+    EngineeringDepartmentModel,
     UserModel,
     AuditLogModel,
 )
 
 logger = get_logger("DatabaseRepository")
+
+OFFICIAL_UCC_DEPARTMENTS = [
+    "Electrical Engineering",
+    "GPD",
+    "Pipe Support Engineering",
+    "Piping Engineering",
+    "Plakon",
+    "Structural & Physical Design",
+    "System Engineering",
+]
 
 # ---------------------------------------------------------------------------
 # Resolve the canonical database path once at import time.
@@ -109,6 +120,9 @@ class DatabaseEngine:
         """Create all tables declared in models.py (idempotent) and apply migrations."""
         Base.metadata.create_all(bind=self.engine)
         self._run_migrations()
+        # Seed official UCC departments automatically if empty
+        dept_repo = EngineeringDepartmentRepository(self)
+        dept_repo.seed_default_departments()
         logger.info(f"SQLite database ready at: {self.db_path}")
 
     def _run_migrations(self) -> None:
@@ -121,6 +135,16 @@ class DatabaseEngine:
                 if columns and "label" not in columns:
                     logger.info("Migrating database: adding 'label' column to 'comments' table")
                     conn.execute(text("ALTER TABLE comments ADD COLUMN label VARCHAR(50) DEFAULT 'comment_red';"))
+                if columns and "department_id" not in columns:
+                    logger.info("Migrating database: adding 'department_id' column to 'comments' table")
+                    conn.execute(text("ALTER TABLE comments ADD COLUMN department_id VARCHAR(50);"))
+
+                # Check columns in drawings table
+                dwg_result = conn.execute(text("PRAGMA table_info(drawings);"))
+                dwg_columns = [row[1] for row in dwg_result.fetchall()]
+                if dwg_columns and "department_id" not in dwg_columns:
+                    logger.info("Migrating database: adding 'department_id' column to 'drawings' table")
+                    conn.execute(text("ALTER TABLE drawings ADD COLUMN department_id VARCHAR(50);"))
         except Exception as exc:
             logger.warning(f"Database migration check failed: {exc}")
 
@@ -356,6 +380,84 @@ class CategoryRepository:
 
 
 # ---------------------------------------------------------------------------
+# EngineeringDepartmentRepository
+# ---------------------------------------------------------------------------
+
+class EngineeringDepartmentRepository:
+    """CRUD operations and seed logic for Engineering Department records."""
+
+    def __init__(self, db_engine: DatabaseEngine) -> None:
+        self._db = db_engine
+
+    def get_all_departments(self) -> List[Dict[str, Any]]:
+        """Return all active engineering departments ordered by name."""
+        with self._db.get_session() as session:
+            rows = (
+                session.query(EngineeringDepartmentModel)
+                .filter(EngineeringDepartmentModel.is_active.is_(True))
+                .order_by(EngineeringDepartmentModel.name)
+                .all()
+            )
+            return [
+                {
+                    "id": d.id,
+                    "name": d.name,
+                    "description": d.description,
+                    "is_active": d.is_active,
+                }
+                for d in rows
+            ]
+
+    def get_or_create_department(
+        self,
+        name: str,
+        description: Optional[str] = None,
+    ) -> Dict[str, Any]:
+        """Return an existing engineering department by name, or create it."""
+        with self._db.get_session() as session:
+            row = (
+                session.query(EngineeringDepartmentModel)
+                .filter(EngineeringDepartmentModel.name == name)
+                .first()
+            )
+            if row:
+                return {"id": row.id, "name": row.name}
+
+            dept_id = f"DEPT-{uuid.uuid4().hex[:8].upper()}"
+            dept = EngineeringDepartmentModel(
+                id=dept_id,
+                name=name,
+                description=description,
+                is_active=True,
+            )
+            session.add(dept)
+            session.commit()
+            logger.info(f"Created engineering department '{name}' → id={dept_id}")
+            return {"id": dept.id, "name": dept.name}
+
+    def seed_default_departments(self) -> None:
+        """Seed the 7 official UCC engineering departments if not already present."""
+        with self._db.get_session() as session:
+            for dept_name in OFFICIAL_UCC_DEPARTMENTS:
+                existing = (
+                    session.query(EngineeringDepartmentModel)
+                    .filter(EngineeringDepartmentModel.name == dept_name)
+                    .first()
+                )
+                if not existing:
+                    dept_id = f"DEPT-{uuid.uuid4().hex[:8].upper()}"
+                    session.add(
+                        EngineeringDepartmentModel(
+                            id=dept_id,
+                            name=dept_name,
+                            description=f"Official UCC Department: {dept_name}",
+                            is_active=True,
+                        )
+                    )
+            session.commit()
+
+
+# ---------------------------------------------------------------------------
 # UserRepository
 # ---------------------------------------------------------------------------
 
@@ -424,40 +526,21 @@ class CommentRepository:
         confidence: float = 0.0,
         category_id: Optional[str] = None,
         category_name: Optional[str] = "Uncategorized",
+        department_id: Optional[str] = None,
         page_id: Optional[str] = None,
         user_id: Optional[str] = None,
         cleaned_text: str = "",
         status: str = "Pending",
         label: str = "comment_red",
     ) -> Dict[str, Any]:
-        """Persist a single extracted comment.
-
-        Parameters
-        ----------
-        bbox:
-            MUST be (x0, y0, x1, y1) in ABSOLUTE PDF POINT COORDINATES.
-            1 point = 1/72 inch. Origin is top-left of page.
-            x0=left, y0=top, x1=right, y1=bottom.
-
-            Do NOT pass normalised (0-1) coordinates.
-            Do NOT pass (x, y, width, height) format.
-
-            PyMuPDF's extract_page_text_blocks() already returns (x0,y0,x1,y1)
-            absolute points and is the correct source for this parameter.
-
-            See docs/AGENT_INTEGRATION_GUIDELINES.md WARNING-009 for context.
-        status:
-            Must be one of: "Pending", "Approved", "Rejected", "Flagged".
-            Default is "Pending" for all newly extracted comments.
-        label:
-            Detection label, e.g. "comment_red", "comment_blue", "native_redline".
-        """
+        """Persist a single extracted comment."""
         with self._db.get_session() as session:
             comment = CommentModel(
                 id=f"CMT-{uuid.uuid4().hex[:8].upper()}",
                 drawing_id=drawing_id,
                 page_id=page_id,
                 category_id=category_id,
+                department_id=department_id,
                 user_id=user_id,
                 page_number=page_number,
                 raw_text=raw_text,
@@ -624,6 +707,34 @@ class CommentRepository:
                 for row in rows
             }
 
+    def get_department_category_counts(
+        self, drawing_id: Optional[str] = None
+    ) -> Dict[tuple[str, str], int]:
+        """
+        Return comment counts grouped by (department_name, category_name) for Pareto charts.
+        """
+        with self._db.get_session() as session:
+            query = session.query(
+                EngineeringDepartmentModel.name.label("dept_name"),
+                CommentModel.category_name,
+                __import__("sqlalchemy").func.count(CommentModel.id).label("cnt"),
+            ).outerjoin(
+                EngineeringDepartmentModel,
+                CommentModel.department_id == EngineeringDepartmentModel.id,
+            )
+            if drawing_id is not None:
+                query = query.filter(CommentModel.drawing_id == drawing_id)
+            rows = query.group_by(
+                EngineeringDepartmentModel.name, CommentModel.category_name
+            ).all()
+            return {
+                (
+                    row.dept_name or "Unassigned",
+                    row.category_name or "Uncategorized",
+                ): row.cnt
+                for row in rows
+            }
+
 
 # ---------------------------------------------------------------------------
 # AuditLogRepository
@@ -755,6 +866,8 @@ def _comment_to_dict(c: CommentModel) -> Dict[str, Any]:
         "cleaned_text":         c.cleaned_text,
         "category_id":          c.category_id,
         "category_name":        c.category_name,
+        "department_id":        c.department_id,
+        "department_name":      c.department_name,
         "user_id":              c.user_id,
         "confidence":           c.confidence,
         "status":               c.status,

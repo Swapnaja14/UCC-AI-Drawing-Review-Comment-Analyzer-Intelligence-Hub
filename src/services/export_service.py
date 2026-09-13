@@ -151,6 +151,7 @@ class ExportService:
             (7, "",                     GREEN_FILL),
             (8, "",                     GREEN_FILL),
             (9, "",                     GREEN_FILL),
+            (10, "",                    GREEN_FILL),
         ]
         for col_idx, val, fill in row1_cells:
             c = ws.cell(row=1, column=col_idx, value=val)
@@ -162,7 +163,7 @@ class ExportService:
         # Merge header bands
         ws.merge_cells("A1:B1")
         ws.merge_cells("D1:E1")
-        ws.merge_cells("F1:I1")
+        ws.merge_cells("F1:J1")
 
         # -------------------------------------------------------------------
         # ROW 2: Column Index Numbering
@@ -178,6 +179,7 @@ class ExportService:
             (7, 8, GREEN_FILL),
             (8, 9, GREEN_FILL),
             (9, 10, GREEN_FILL),
+            (10, 11, GREEN_FILL),
         ]
         for col_idx, num_val, fill in col_numbers:
             c = ws.cell(row=2, column=col_idx, value=num_val)
@@ -200,6 +202,7 @@ class ExportService:
             (7, "Drawing # from\nTitle Block", GREEN_FILL),
             (8, "Drawing\nCommentary", GREEN_FILL),
             (9, "Classify Error\nbased on Error\nDescription", GREEN_FILL),
+            (10, "Engineering\nDepartment", GREEN_FILL),
         ]
         for col_idx, role_text, fill in col_roles:
             c = ws.cell(row=3, column=col_idx, value=role_text)
@@ -222,6 +225,7 @@ class ExportService:
             (7, "Drawing Title", GREEN_FILL),
             (8, "Errors Description", GREEN_FILL),
             (9, "Category of Error", GREEN_FILL),
+            (10, "Engineering Department", GREEN_FILL),
         ]
         for col_idx, hdr_text, fill in headers:
             c = ws.cell(row=4, column=col_idx, value=hdr_text)
@@ -246,7 +250,7 @@ class ExportService:
             # If no comments, insert 5 empty placeholder rows with grid borders
             for r in range(start_row, start_row + 5):
                 ws.row_dimensions[r].height = 24
-                for col_idx in range(1, 10):
+                for col_idx in range(1, 11):
                     c = ws.cell(row=r, column=col_idx, value="")
                     c.font = FONT_DATA
                     c.border = THIN_BORDER
@@ -254,6 +258,7 @@ class ExportService:
             for idx, comment in enumerate(comments, start_row):
                 desc = comment.get('raw_text') or comment.get('cleaned_text') or ""
                 cat  = comment.get('category_name') or comment.get('category') or "Uncategorized"
+                dept = comment.get('department_name') or comment.get('department') or config.department_name or "Unassigned"
                 reviewer = comment.get('reviewer_id') or designer_val
 
                 row_data = [
@@ -266,6 +271,7 @@ class ExportService:
                     (7, drawing_ttl, ALIGN_LEFT),
                     (8, desc, ALIGN_LEFT),
                     (9, cat, ALIGN_LEFT),
+                    (10, dept, ALIGN_LEFT),
                 ]
 
                 # Dynamically set row height based on text length
@@ -296,6 +302,7 @@ class ExportService:
             "G": 28,  # Drawing Title
             "H": 55,  # Errors Description
             "I": 30,  # Category of Error
+            "J": 25,  # Engineering Department
         }
         for col_letter, width in col_widths.items():
             ws.column_dimensions[col_letter].width = width
@@ -352,6 +359,7 @@ class ExportService:
                 "designer_name": config.designer_name or "",
                 "drawing_no": config.drawing_no or "",
                 "drawing_title": config.drawing_title or "",
+                "department_name": config.department_name or "",
             },
             "comments": comments
         }
@@ -374,7 +382,7 @@ class ExportService:
     def _export_to_csv(self, comments: List[Dict[str, Any]], config: ExportConfigDTO) -> ExportResultDTO:
         os.makedirs(os.path.dirname(os.path.abspath(config.output_path)), exist_ok=True)
         
-        # Produce the Error Tracker CSV format matching the 9 columns
+        # Produce the Error Tracker CSV format matching the 10 columns
         headers = [
             "Date",
             "Contract #",
@@ -384,7 +392,8 @@ class ExportService:
             "Drawing #",
             "Drawing Title",
             "Errors Description",
-            "Category of Error"
+            "Category of Error",
+            "Engineering Department"
         ]
 
         date_val     = config.date_str or date.today().strftime("%Y-%m-%d")
@@ -402,6 +411,7 @@ class ExportService:
             for comment in comments:
                 desc = comment.get('raw_text') or comment.get('cleaned_text') or ""
                 cat  = comment.get('category_name') or comment.get('category') or "Uncategorized"
+                dept = comment.get('department_name') or comment.get('department') or config.department_name or "Unassigned"
                 reviewer = comment.get('reviewer_id') or designer_val
                 writer.writerow([
                     date_val,
@@ -413,6 +423,7 @@ class ExportService:
                     drawing_ttl,
                     desc,
                     cat,
+                    dept,
                 ])
             
         file_size = os.path.getsize(config.output_path)

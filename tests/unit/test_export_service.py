@@ -81,7 +81,8 @@ def test_export_to_csv_creates_file(tmp_path):
         contract_no="CTR-2026-01",
         plant_name="Austin Substation",
         epod_wo_no="WO-440192",
-        designer_name="Lead Reviewer"
+        designer_name="Lead Reviewer",
+        department_name="Piping Engineering",
     )
     res = service.export_drawing_comments(config)
     
@@ -94,15 +95,18 @@ def test_export_to_csv_creates_file(tmp_path):
         rows = list(reader)
         # Header + 2 data rows
         assert len(rows) == 3
+        assert len(rows[0]) == 10
         assert rows[0][0] == "Date"
         assert rows[0][1] == "Contract #"
         assert rows[0][7] == "Errors Description"
         assert rows[0][8] == "Category of Error"
+        assert rows[0][9] == "Engineering Department"
         # Check data row 1
         assert rows[1][1] == "CTR-2026-01"
         assert rows[1][2] == "Austin Substation"
         assert rows[1][7] == "Pipe clearance less than 50mm from structural beam"
         assert rows[1][8] == "Coordination/Interference"
+        assert rows[1][9] == "Piping Engineering"
 
 def test_export_result_dto_fields(tmp_path):
     repo = MockCommentRepo()
@@ -127,6 +131,7 @@ def test_export_config_defaults():
     assert config.include_confidence_scores is True
     assert config.filter_status is None
     assert config.drawing_id is None
+    assert config.department_name is None
 
 @pytest.mark.skipif(not OPENPYXL_AVAILABLE, reason="openpyxl not installed")
 def test_error_tracker_excel_structure_and_styling(tmp_path):
@@ -146,6 +151,7 @@ def test_error_tracker_excel_structure_and_styling(tmp_path):
         designer_name="Soham Lead",
         drawing_no="M-70086-01-013_B_",
         drawing_title="Primary Crusher Piping Isometric",
+        department_name="Piping Engineering",
     )
     res = service.export_drawing_comments(config)
     
@@ -168,7 +174,7 @@ def test_error_tracker_excel_structure_and_styling(tmp_path):
     assert ws["A1"].fill.start_color.rgb in ("00FFC000", "FFC000")
     assert ws["C1"].fill.start_color.rgb in ("0092D050", "92D050")
 
-    # 2. Check Row 2 (Column Number tier: 1, 2, 3, 4, 6, 7, 8, 9, 10)
+    # 2. Check Row 2 (Column Number tier: 1, 2, 3, 4, 6, 7, 8, 9, 10, 11)
     assert ws.cell(row=2, column=1).value == 1
     assert ws.cell(row=2, column=2).value == 2
     assert ws.cell(row=2, column=3).value == 3
@@ -178,17 +184,19 @@ def test_error_tracker_excel_structure_and_styling(tmp_path):
     assert ws.cell(row=2, column=7).value == 8
     assert ws.cell(row=2, column=8).value == 9
     assert ws.cell(row=2, column=9).value == 10
+    assert ws.cell(row=2, column=10).value == 11
 
     # 3. Check Row 3 (Source tier)
     assert ws.cell(row=3, column=1).value == "User Input"
     assert "Drawing #" in ws.cell(row=3, column=6).value
     assert "Commentary" in ws.cell(row=3, column=8).value
     assert "Classify Error" in ws.cell(row=3, column=9).value
+    assert "Engineering" in ws.cell(row=3, column=10).value
 
     # 4. Check Row 4 (Primary Column Headers)
     expected_headers = [
         "Date", "Contract #", "Plant Name", "E-Pod WO #", "UCC-I Designer",
-        "Drawing #", "Drawing Title", "Errors Description", "Category of Error"
+        "Drawing #", "Drawing Title", "Errors Description", "Category of Error", "Engineering Department"
     ]
     for idx, expected in enumerate(expected_headers, 1):
         assert ws.cell(row=4, column=idx).value == expected
@@ -203,7 +211,9 @@ def test_error_tracker_excel_structure_and_styling(tmp_path):
     assert ws.cell(row=5, column=7).value == "Primary Crusher Piping Isometric"
     assert ws.cell(row=5, column=8).value == "Pipe clearance less than 50mm from structural beam"
     assert ws.cell(row=5, column=9).value == "Coordination/Interference"
+    assert ws.cell(row=5, column=10).value == "Piping Engineering"
 
     # 6. Check Row 6 (Data Row 2)
     assert ws.cell(row=6, column=8).value == "Dimension missing on flange weld neck"
     assert ws.cell(row=6, column=9).value == "Dimensional/Tolerancing"
+    assert ws.cell(row=6, column=10).value == "Piping Engineering"

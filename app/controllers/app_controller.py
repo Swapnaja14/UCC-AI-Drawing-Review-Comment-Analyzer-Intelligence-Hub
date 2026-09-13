@@ -43,6 +43,7 @@ from src.infrastructure.storage.repository import (
     ProjectRepository,
     CommentRepository,
     AuditLogRepository,
+    EngineeringDepartmentRepository,
 )
 from src.core.dtos.pdf_dtos import PDFDocumentDTO, RenderedPageDTO
 from src.core.dtos.auth_dtos import UserDTO, SessionTokenDTO
@@ -233,10 +234,11 @@ class AppController(QObject):
         # ── Database ──────────────────────────────────────────────
         db_path = self.config.database.get_resolved_db_path()
         self.db_engine    = DatabaseEngine(db_path=db_path)
-        self.drawing_repo = DrawingRepository(self.db_engine)
-        self.project_repo = ProjectRepository(self.db_engine)
-        self.comment_repo = CommentRepository(self.db_engine)
-        self.audit_repo   = AuditLogRepository(self.db_engine)
+        self.drawing_repo    = DrawingRepository(self.db_engine)
+        self.project_repo    = ProjectRepository(self.db_engine)
+        self.comment_repo    = CommentRepository(self.db_engine)
+        self.audit_repo      = AuditLogRepository(self.db_engine)
+        self.department_repo = EngineeringDepartmentRepository(self.db_engine)
 
         # Auth and workflow services that depend on db_engine
         self.auth_service    = AuthService(self.db_engine)
@@ -422,6 +424,10 @@ class AppController(QObject):
         """Return all project records from the database."""
         return self.project_repo.get_all_projects()
 
+    def get_all_departments(self) -> List[Dict[str, Any]]:
+        """Return all active engineering department records from the database."""
+        return self.department_repo.get_all_departments()
+
     # ── Comment operations ─────────────────────────────────────────
     #
     # These methods are the ONLY way UI screens should access comment data.
@@ -512,6 +518,14 @@ class AppController(QObject):
         """
         return self.comment_repo.get_category_counts(drawing_id)
 
+    def get_department_category_counts(
+        self, drawing_id: Optional[str] = None
+    ) -> Dict[tuple[str, str], int]:
+        """
+        Return comment counts grouped by (department_name, category_name) for Pareto charts.
+        """
+        return self.comment_repo.get_department_category_counts(drawing_id)
+
     # ── Export operations ──────────────────────────────────────────
 
     def export_data(self, config: ExportConfigDTO) -> Any:
@@ -580,6 +594,7 @@ class AppController(QObject):
             "page":        db_dict.get("page_number", 1),
             "ocr_text":    db_dict.get("raw_text", ""),
             "category":    db_dict.get("category_name") or "Uncategorized",
+            "department":  db_dict.get("department_name") or "Unassigned",
             "confidence":  db_dict.get("confidence", 0.0),
             "status":      db_dict.get("status", "Pending"),
             "label":       db_dict.get("label", "comment_red"),
