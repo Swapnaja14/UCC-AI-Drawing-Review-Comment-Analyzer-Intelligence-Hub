@@ -13,7 +13,7 @@ from pathlib import Path
 from typing import Optional, Any
 
 from PySide6.QtWidgets import (QWidget, QVBoxLayout, QHBoxLayout, QGridLayout, QFrame,
-                                QLabel, QLineEdit, QPushButton, QRadioButton, QButtonGroup,
+                                QLabel, QLineEdit, QComboBox, QPushButton, QRadioButton, QButtonGroup,
                                 QProgressBar, QTableView, QHeaderView, QScrollArea,
                                 QAbstractItemView, QFileDialog, QMessageBox, QSizePolicy)
 from PySide6.QtGui import QFont, QStandardItemModel, QStandardItem, QColor
@@ -295,7 +295,7 @@ class ExportPage(QWidget):
         d_box.addWidget(self._designer_input)
         grid.addLayout(d_box, 1, 1)
 
-        # Column 4 & 5: Review Date & Auto-filled drawing info
+        # Row 2 (Cols 0 & 1): Review Date & Engineering Department
         dt_box = QVBoxLayout()
         dt_box.setSpacing(6)
         dt_lbl = QLabel("Review Date (Column 1):")
@@ -308,18 +308,61 @@ class ExportPage(QWidget):
         dt_box.addWidget(self._date_input)
         grid.addLayout(dt_box, 2, 0)
 
+        dept_box = QVBoxLayout()
+        dept_box.setSpacing(6)
+        dept_lbl = QLabel("Engineering Department (Column 10):")
+        dept_lbl.setFont(QFont("Segoe UI", 13, QFont.Weight.DemiBold))
+        dept_lbl.setStyleSheet("color: #CBD5E1;")
+        self._dept_combo = QComboBox()
+        self._dept_combo.setStyleSheet("""
+            QComboBox {
+                background-color: #12141A;
+                color: #F8FAFC;
+                border: 1px solid #334155;
+                border-radius: 8px;
+                padding: 10px 14px;
+                font-size: 14px;
+                font-family: 'Segoe UI', Arial;
+                min-height: 22px;
+            }
+            QComboBox::drop-down {
+                border: none;
+            }
+            QComboBox QAbstractItemView {
+                background-color: #1E222B;
+                color: #F8FAFC;
+                selection-background-color: #0284C7;
+            }
+        """)
+        # Populate 7 official UCC engineering departments
+        ucc_depts = [
+            "Electrical Engineering",
+            "GPD",
+            "Pipe Support Engineering",
+            "Piping Engineering",
+            "Plakon",
+            "Structural & Physical Design",
+            "System Engineering",
+        ]
+        self._dept_combo.addItems(ucc_depts)
+        self._dept_combo.setCurrentText("Piping Engineering")
+        dept_box.addWidget(dept_lbl)
+        dept_box.addWidget(self._dept_combo)
+        grid.addLayout(dept_box, 2, 1)
+
+        # Row 3 (Col 0): Auto-read program fields explanation
         info_box = QVBoxLayout()
         info_box.setSpacing(6)
         info_lbl = QLabel("Auto-Read Program Fields (Cols 7-10):")
         info_lbl.setFont(QFont("Segoe UI", 13, QFont.Weight.DemiBold))
         info_lbl.setStyleSheet("color: #92D050;")
-        info_val = QLabel("Drawing #, Title, Commentary OCR, and Error Classification are auto-filled from database.")
+        info_val = QLabel("Drawing #, Title, Commentary OCR, Error Classification, and Department are auto-read from database.")
         info_val.setFont(QFont("Segoe UI", 12))
         info_val.setWordWrap(True)
         info_val.setStyleSheet("color: #94A3B8; padding-top: 4px;")
         info_box.addWidget(info_lbl)
         info_box.addWidget(info_val)
-        grid.addLayout(info_box, 2, 1)
+        grid.addLayout(info_box, 3, 0, 1, 2)
 
         grid.setColumnStretch(0, 1)
         grid.setColumnStretch(1, 1)
@@ -532,11 +575,12 @@ class ExportPage(QWidget):
             drawing_id = getattr(self._controller, "current_drawing_id", None) or None
             
             # Read standard input metadata fields
-            contract_no   = self._contract_input.text().strip()
-            plant_name    = self._plant_input.text().strip()
-            epod_wo_no    = self._epod_input.text().strip()
-            designer_name = self._designer_input.text().strip()
-            date_str      = self._date_input.text().strip()
+            contract_no     = self._contract_input.text().strip()
+            plant_name      = self._plant_input.text().strip()
+            epod_wo_no      = self._epod_input.text().strip()
+            designer_name   = self._designer_input.text().strip()
+            date_str        = self._date_input.text().strip()
+            department_name = self._dept_combo.currentText().strip() if hasattr(self, "_dept_combo") else "Piping Engineering"
 
             config = ExportConfigDTO(
                 output_path=out_path,
@@ -548,6 +592,7 @@ class ExportPage(QWidget):
                 designer_name=designer_name,
                 date_str=date_str,
                 drawing_no=drawing_no,
+                department_name=department_name,
             )
 
             result = self._controller.export_data(config)

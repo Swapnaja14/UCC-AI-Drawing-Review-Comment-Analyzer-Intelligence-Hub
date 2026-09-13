@@ -23,6 +23,7 @@ class ExportConfigDTO:
     designer_name: Optional[str] = None
     drawing_no: Optional[str] = None
     drawing_title: Optional[str] = None
+    department_name: Optional[str] = None
 
 @dataclass
 class ExportResultDTO:
