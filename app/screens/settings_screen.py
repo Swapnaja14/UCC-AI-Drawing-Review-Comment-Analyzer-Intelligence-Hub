@@ -26,7 +26,7 @@ from PySide6.QtGui import QFont
 from app.components.dialogs import open_folder
 from src.config import get_config, save_config, reload_config, AppConfig, DEFAULT_CONFIG_PATH
 
-_TABS = ["Appearance", "Application", "AI & Processing", "About"]
+_TABS = ["Appearance", "Application", "AI & Processing", "Categories", "About"]
 
 
 # ── Segmented control ─────────────────────────────────────────────────────────
@@ -99,7 +99,7 @@ class SettingsPage(QWidget):
             " color:#3E9BFF; font-weight:600; }"
         )
 
-        icons = ["🎨", "⚙", "🤖", "ℹ"]
+        icons = ["🎨", "⚙", "🤖", "🏷", "ℹ"]
         for tab, icon in zip(_TABS, icons):
             item = QListWidgetItem(f"  {icon}   {tab}")
             item.setSizeHint(QSize(220, 44))
@@ -111,6 +111,7 @@ class SettingsPage(QWidget):
         self._stack.addWidget(self._build_appearance())
         self._stack.addWidget(self._build_application())
         self._stack.addWidget(self._build_processing())
+        self._stack.addWidget(self._build_categories())
         self._stack.addWidget(self._build_about())
 
         tab_list.currentRowChanged.connect(self._stack.setCurrentIndex)
@@ -354,6 +355,62 @@ class SettingsPage(QWidget):
     def _on_export_format_changed(self, text: str) -> None:
         self._config.export.default_format = text
         self._persist()
+
+    def _build_categories(self) -> QWidget:
+        page = QWidget()
+        lay  = QVBoxLayout(page)
+        lay.setContentsMargins(40, 32, 40, 32)
+        lay.setSpacing(16)
+        lay.addWidget(self._section_title("Error Classifications"))
+        
+        desc = QLabel("Manage the dynamic error categories used by the AI classifier.")
+        desc.setObjectName("SubCaption")
+        lay.addWidget(desc)
+        
+        # Add new category form
+        form = QHBoxLayout()
+        self._new_cat_name = QLineEdit()
+        self._new_cat_name.setPlaceholderText("New Category Name...")
+        self._new_cat_name.setFixedHeight(36)
+        
+        add_btn = QPushButton("Add Category")
+        add_btn.setObjectName("PrimaryBtn")
+        add_btn.setFixedHeight(36)
+        add_btn.clicked.connect(self._on_add_category)
+        
+        form.addWidget(self._new_cat_name)
+        form.addWidget(add_btn)
+        lay.addLayout(form)
+        
+        # List widget to show categories
+        self._cat_list = QListWidget()
+        self._cat_list.setStyleSheet(
+            "QListWidget { background: #1B1C1F; border: 1px solid #3A3C42; border-radius: 6px; padding: 4px; }"
+            "QListWidget::item { padding: 12px; border-bottom: 1px solid #26272B; color: #E5E7EB; }"
+        )
+        lay.addWidget(self._cat_list, 1)
+        
+        self._refresh_categories()
+        
+        return page
+
+    def _on_add_category(self) -> None:
+        name = self._new_cat_name.text().strip()
+        if not name:
+            return
+        if self._controller:
+            self._controller.add_category(name)
+            self._new_cat_name.clear()
+            self._refresh_categories()
+            QMessageBox.information(self, "Success", f"Category '{name}' added successfully.")
+            
+    def _refresh_categories(self) -> None:
+        self._cat_list.clear()
+        if self._controller:
+            cats = self._controller.get_all_categories()
+            for c in cats:
+                name = c.get("name", "Unknown")
+                self._cat_list.addItem(name)
 
     def _build_about(self) -> QWidget:
         page = QWidget()

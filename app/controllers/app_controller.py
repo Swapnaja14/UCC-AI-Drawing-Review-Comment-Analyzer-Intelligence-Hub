@@ -44,6 +44,7 @@ from src.infrastructure.storage.repository import (
     CommentRepository,
     AuditLogRepository,
     EngineeringDepartmentRepository,
+    CategoryRepository
 )
 from src.core.dtos.pdf_dtos import PDFDocumentDTO, RenderedPageDTO
 from src.core.dtos.auth_dtos import UserDTO, SessionTokenDTO
@@ -239,6 +240,7 @@ class AppController(QObject):
         self.comment_repo    = CommentRepository(self.db_engine)
         self.audit_repo      = AuditLogRepository(self.db_engine)
         self.department_repo = EngineeringDepartmentRepository(self.db_engine)
+        self.category_repo   = CategoryRepository(self.db_engine)
 
         # Auth and workflow services that depend on db_engine
         self.auth_service    = AuthService(self.db_engine)
@@ -433,13 +435,22 @@ class AppController(QObject):
     def get_status_trend(self, drawing_id: str = None) -> List[Any]:
         return self.analytics_service.get_status_trend(drawing_id=drawing_id)
 
+    def get_all_departments(self) -> List[Dict[str, Any]]:
+        """Return all engineering departments for UI dropdowns."""
+        return self.department_repo.get_all_departments() if hasattr(self, 'department_repo') else []
+
+    def get_all_categories(self) -> List[Dict[str, Any]]:
+        """Return all classifications categories from DB."""
+        return self.category_repo.get_all_categories() if hasattr(self, 'category_repo') else []
+
+    def add_category(self, name: str, description: str = "", color_hex: str = "#808080") -> None:
+        """Add a new classification category."""
+        if hasattr(self, 'category_repo'):
+            self.category_repo.get_or_create_category(name, description, color_hex)
+
     def get_all_projects(self) -> List[Dict[str, Any]]:
         """Return all project records from the database."""
         return self.project_repo.get_all_projects()
-
-    def get_all_departments(self) -> List[Dict[str, Any]]:
-        """Return all active engineering department records from the database."""
-        return self.department_repo.get_all_departments()
 
     # ── Comment operations ─────────────────────────────────────────
     #
