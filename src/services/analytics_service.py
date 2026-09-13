@@ -4,7 +4,7 @@ from datetime import datetime
 
 from src.infrastructure.storage.repository import DatabaseEngine
 from src.infrastructure.storage.models import (
-    ProjectModel, DrawingModel, PageModel, CommentModel, CategoryModel, UserModel
+    ProjectModel, DrawingModel, PageModel, CommentModel, CategoryModel, UserModel, EngineeringDepartmentModel
 )
 from src.infrastructure.logging.logger import get_logger
 from src.core.dtos.analytics_dtos import (
@@ -82,11 +82,26 @@ class AnalyticsService:
                 low_confidence_pct=low_confidence_pct
             )
 
-    def get_category_distribution(self, drawing_id: Optional[str] = None) -> List[CategoryDistributionDTO]:
+    def get_category_distribution(
+        self,
+        drawing_id: Optional[str] = None,
+        department_name: Optional[str] = None,
+    ) -> List[CategoryDistributionDTO]:
         with self._db.get_session() as session:
             query = session.query(CommentModel.category_name, func.count(CommentModel.id)).group_by(CommentModel.category_name)
             if drawing_id:
                 query = query.filter(CommentModel.drawing_id == drawing_id)
+            if department_name:
+                if department_name == "Unassigned":
+                    query = query.outerjoin(
+                        EngineeringDepartmentModel,
+                        CommentModel.department_id == EngineeringDepartmentModel.id
+                    ).filter(EngineeringDepartmentModel.id.is_(None))
+                else:
+                    query = query.join(
+                        EngineeringDepartmentModel,
+                        CommentModel.department_id == EngineeringDepartmentModel.id
+                    ).filter(EngineeringDepartmentModel.name == department_name)
             
             results = query.all()
             total = sum(count for _, count in results)
@@ -132,8 +147,13 @@ class AnalyticsService:
                 for b in buckets
             ]
 
-    def get_pareto_analysis(self, drawing_id: Optional[str] = None, top_n: int = 10) -> List[CategoryDistributionDTO]:
-        distribution = self.get_category_distribution(drawing_id)
+    def get_pareto_analysis(
+        self,
+        drawing_id: Optional[str] = None,
+        department_name: Optional[str] = None,
+        top_n: int = 10,
+    ) -> List[CategoryDistributionDTO]:
+        distribution = self.get_category_distribution(drawing_id=drawing_id, department_name=department_name)
         return distribution[:top_n]
 
     def get_reviewer_metrics(self) -> List[ReviewerMetricsDTO]:

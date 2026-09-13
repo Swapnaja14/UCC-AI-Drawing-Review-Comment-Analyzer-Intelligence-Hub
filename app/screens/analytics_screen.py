@@ -66,6 +66,14 @@ class AnalyticsPage(QWidget):
         self._proj_cb.setFixedHeight(36)
         fb.addWidget(self._proj_cb)
 
+        # Department combobox (for per-department Pareto analysis)
+        d_lbl = QLabel("Department:")
+        d_lbl.setObjectName("SubCaption")
+        fb.addWidget(d_lbl)
+        self._dept_cb = QComboBox()
+        self._dept_cb.setFixedHeight(36)
+        fb.addWidget(self._dept_cb)
+
         # Category combobox
         c_lbl = QLabel("Category:")
         c_lbl.setObjectName("SubCaption")
@@ -75,6 +83,9 @@ class AnalyticsPage(QWidget):
         fb.addWidget(self._cat_cb)
 
         self._populate_filters()
+
+        # Connect department dropdown change to auto-update charts
+        self._dept_cb.currentIndexChanged.connect(self._apply_filters)
 
         from_lbl = QLabel("From:")
         from_lbl.setObjectName("SubCaption")
@@ -112,7 +123,7 @@ class AnalyticsPage(QWidget):
         root.addLayout(self._grid, 1)
 
     def _populate_filters(self) -> None:
-        """Populate project and category filter dropdowns."""
+        """Populate project, department, and category filter dropdowns."""
         self._proj_cb.clear()
         projects = ["All Projects"]
         if self._controller:
@@ -124,6 +135,30 @@ class AnalyticsPage(QWidget):
             except Exception:
                 pass
         self._proj_cb.addItems(projects)
+
+        self._dept_cb.clear()
+        departments = ["All Departments"]
+        if self._controller:
+            try:
+                records = self._controller.get_all_departments()
+                for d in records:
+                    name = d.get("name") if isinstance(d, dict) else getattr(d, "name", "")
+                    if name and name not in departments:
+                        departments.append(name)
+            except Exception:
+                pass
+        if len(departments) == 1:
+            departments.extend([
+                "Electrical Engineering",
+                "GPD",
+                "Pipe Support Engineering",
+                "Piping Engineering",
+                "Plakon",
+                "Structural & Physical Design",
+                "System Engineering",
+                "Unassigned",
+            ])
+        self._dept_cb.addItems(departments)
 
         self._cat_cb.clear()
         categories = ["All Categories"]
@@ -185,15 +220,19 @@ class AnalyticsPage(QWidget):
             self._kpi_row.addWidget(card, 1)
 
     def _build_charts(self) -> None:
-        """Fetch real data for charts and populate the grid."""
+        """Fetch real data for charts and populate the grid, filtering by department if selected."""
         while self._grid.count():
             item = self._grid.takeAt(0)
             w = item.widget()
             if w:
                 w.deleteLater()
 
-        pareto_data = self._controller.get_pareto_analysis() if self._controller else None
-        category_data = self._controller.get_category_distribution() if self._controller else None
+        dept_name = None
+        if hasattr(self, "_dept_cb") and self._dept_cb.currentText() != "All Departments":
+            dept_name = self._dept_cb.currentText()
+
+        pareto_data = self._controller.get_pareto_analysis(department_name=dept_name) if self._controller else None
+        category_data = self._controller.get_category_distribution(department_name=dept_name) if self._controller else None
         trend_data = self._controller.get_status_trend() if self._controller else None
 
         pareto_view  = build_pareto_chart(pareto_data)
