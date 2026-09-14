@@ -18,6 +18,7 @@ with a reload_comments() method are called automatically so their data
 reflects the newly loaded drawing.
 """
 from __future__ import annotations
+from pathlib import Path
 from PySide6.QtWidgets import (QMainWindow, QWidget, QHBoxLayout, QVBoxLayout,
                                 QStackedWidget)
 from PySide6.QtCore import Qt
@@ -93,9 +94,10 @@ class MainWindow(QMainWindow):
         self.pdf_viewer_page = PdfViewerPage(controller=self.controller)
         self.dashboard_page = DashboardPage(controller=self.controller)
 
-        # Connect Upload controller signals to navigate to PDF Viewer
+        # Connect Upload and Dashboard controller signals to navigate to PDF Viewer
         self.controller.document_loaded_signal.connect(self._on_document_loaded)
         self.upload_page.open_viewer_requested.connect(self._open_pdf_viewer)
+        self.dashboard_page.open_drawing.connect(self._on_dashboard_open_drawing)
 
         self._pages = [
             self.dashboard_page,
@@ -155,3 +157,11 @@ class MainWindow(QMainWindow):
                 page.reload_comments()
         # Navigate to PDF Viewer screen (Index 2)
         self._open_pdf_viewer()
+
+    def _on_dashboard_open_drawing(self, dwg_dict: dict):
+        """Callback when a user double clicks a drawing in the Dashboard."""
+        fpath = dwg_dict.get("file_path")
+        if fpath:
+            p = Path(fpath)
+            if p.exists():
+                self.controller.load_pdf_file(p)

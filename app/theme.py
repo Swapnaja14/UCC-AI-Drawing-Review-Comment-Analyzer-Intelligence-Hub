@@ -341,7 +341,7 @@ QProgressBar {{
     border-radius: 4px;
     height: 8px;
     text-align: center;
-    font-size: 0px;
+    color: transparent;
 }}
 QProgressBar::chunk {{
     background-color: {t['accent']};

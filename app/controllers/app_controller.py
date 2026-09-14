@@ -475,6 +475,86 @@ class AppController(QObject):
         """Return all project records from the database."""
         return self.project_repo.get_all_projects()
 
+    def get_recent_drawings(self, limit: int = 10) -> List[Dict[str, Any]]:
+        """Return recent drawings with comment counts and departments."""
+        if hasattr(self, 'drawing_repo'):
+            return self.drawing_repo.get_recent_drawings(limit=limit)
+        return []
+
+    def get_recent_activity(self, limit: int = 10) -> List[Dict[str, Any]]:
+        """Return merged real-time activity events across drawing uploads, reviews, and system events."""
+        activities: List[Dict[str, Any]] = []
+
+        # 1. Audit logs (review actions, approvals, edits)
+        audit_logs = self.audit_repo.get_recent_audit_logs(limit=limit) if hasattr(self, 'audit_repo') else []
+        for a in audit_logs:
+            action = a.get("action", "Updated")
+            reviewer = a.get("reviewer_name") or "Reviewer"
+            cmt_id = a.get("comment_id", "")
+            time_str = a.get("timestamp", "")
+
+            if action == "Approved":
+                icon = "fa5s.check-circle"
+                color = "#4ADE80"
+                text = f"{reviewer} approved comment {cmt_id}"
+            elif action == "Rejected":
+                icon = "fa5s.times-circle"
+                color = "#F87171"
+                text = f"{reviewer} rejected comment {cmt_id}"
+            elif action == "Flagged":
+                icon = "fa5s.flag"
+                color = "#FBBF24"
+                text = f"{reviewer} flagged comment {cmt_id}"
+            elif action == "Edited":
+                icon = "fa5s.edit"
+                color = "#3E9BFF"
+                text = f"{reviewer} updated text on {cmt_id}"
+            else:
+                icon = "fa5s.history"
+                color = "#8B9CFF"
+                text = f"{reviewer}: {action} on {cmt_id}"
+
+            activities.append({
+                "text": text,
+                "time": time_str,
+                "icon": icon,
+                "color": color,
+                "type": "audit",
+                "raw_time": time_str,
+            })
+
+        # 2. Recent drawings uploaded / processed
+        recent_dwgs = self.drawing_repo.get_recent_drawings(limit=limit) if hasattr(self, 'drawing_repo') else []
+        for d in recent_dwgs:
+            fname = d.get("file_name", "Drawing")
+            cmts = d.get("comments_count", 0)
+            dept = d.get("department_name", "General")
+            time_str = d.get("uploaded_at", "")
+
+            text = f"Processed '{fname}' • {cmts} comments ({dept})"
+            activities.append({
+                "text": text,
+                "time": time_str,
+                "icon": "fa5s.file-pdf",
+                "color": "#3E9BFF",
+                "type": "drawing",
+                "raw_time": time_str,
+            })
+
+        # 3. Baseline system readiness event if activities list is small
+        activities.append({
+            "text": "System initialized • 7 Engineering Departments ready",
+            "time": "System Ready",
+            "icon": "fa5s.shield-alt",
+            "color": "#4ADE80",
+            "type": "system",
+            "raw_time": "1970-01-01 00:00:00",
+        })
+
+        # Sort by raw_time descending
+        activities.sort(key=lambda x: str(x.get("raw_time", "")), reverse=True)
+        return activities[:limit]
+
     # ── Comment operations ─────────────────────────────────────────
     #
     # These methods are the ONLY way UI screens should access comment data.

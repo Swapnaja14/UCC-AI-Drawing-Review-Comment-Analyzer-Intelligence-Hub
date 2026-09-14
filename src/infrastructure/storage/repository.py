@@ -234,7 +234,7 @@ class DrawingRepository:
             return _drawing_to_dict(drawing)
 
     def get_recent_drawings(self, limit: int = 10) -> List[Dict[str, Any]]:
-        """Return the most recently uploaded drawings."""
+        """Return the most recently uploaded drawings enriched with comment counts."""
         with self._db.get_session() as session:
             rows = (
                 session.query(DrawingModel)
@@ -242,7 +242,24 @@ class DrawingRepository:
                 .limit(limit)
                 .all()
             )
-            return [_drawing_to_dict(d) for d in rows]
+            result = []
+            for d in rows:
+                d_dict = _drawing_to_dict(d)
+                cmts = d.comments if hasattr(d, "comments") and d.comments else []
+                d_dict["comments_count"] = len(cmts)
+                d_dict["total_comments"] = len(cmts)
+                if cmts:
+                    conf_vals = [c.confidence for c in cmts if c.confidence is not None]
+                    d_dict["avg_confidence"] = (sum(conf_vals) / len(conf_vals)) if conf_vals else 0.0
+                    approved_or_rej = sum(1 for c in cmts if c.status in ("Approved", "Rejected"))
+                    d_dict["progress"] = int(round((approved_or_rej / len(cmts)) * 100))
+                    d_dict["status"] = "Reviewed" if approved_or_rej > 0 else "Analyzed"
+                else:
+                    d_dict["avg_confidence"] = 0.0
+                    d_dict["progress"] = 0
+                    d_dict["status"] = "Ready"
+                result.append(d_dict)
+            return result
 
     def get_drawing_by_id(self, drawing_id: str) -> Optional[Dict[str, Any]]:
         """Return a single drawing record by primary key, or None."""
@@ -262,20 +279,72 @@ class ProjectRepository:
         self._db = db_engine
 
     def get_all_projects(self) -> List[Dict[str, Any]]:
-        """Return all projects ordered by creation date (newest first)."""
+        """Return all projects ordered by creation date (newest first) with aggregated drawing/comment counts."""
         with self._db.get_session() as session:
+            total_projects_count = session.query(ProjectModel).count()
             rows = (
                 session.query(ProjectModel)
                 .order_by(ProjectModel.created_at.desc())
                 .all()
             )
-            return [_project_to_dict(p) for p in rows]
+            result = []
+            for p in rows:
+                p_dict = _project_to_dict(p)
+                # Count drawings belonging to this project (or unassigned for default project)
+                if total_projects_count == 1 or p.name == "Default Project":
+                    dwg_query = session.query(DrawingModel).filter(
+                        (DrawingModel.project_id == p.id) | (DrawingModel.project_id.is_(None))
+                    )
+                else:
+                    dwg_query = session.query(DrawingModel).filter(DrawingModel.project_id == p.id)
+
+                dwgs = dwg_query.all()
+                dwg_ids = [d.id for d in dwgs]
+                dwg_count = len(dwgs)
+
+                if dwg_ids:
+                    comments = session.query(CommentModel).filter(CommentModel.drawing_id.in_(dwg_ids)).all()
+                    comment_count = len(comments)
+                    reviewed_count = sum(1 for c in comments if c.status in ("Approved", "Rejected"))
+                    progress = int(round((reviewed_count / comment_count * 100))) if comment_count > 0 else (100 if dwg_count > 0 else 0)
+                else:
+                    comment_count = 0
+                    progress = p.progress or 0
+
+                p_dict["drawings"] = dwg_count
+                p_dict["total_drawings"] = dwg_count
+                p_dict["comments"] = comment_count
+                p_dict["total_comments"] = comment_count
+                p_dict["progress"] = progress
+                p_dict["lead_engineer"] = p.lead_engineer or "Lead Reviewer"
+                result.append(p_dict)
+            return result
 
     def get_project_by_id(self, project_id: str) -> Optional[Dict[str, Any]]:
-        """Return a single project, or None if not found."""
+        """Return a single project with enriched drawing and comment metrics, or None."""
         with self._db.get_session() as session:
             row = session.get(ProjectModel, project_id)
-            return _project_to_dict(row) if row else None
+            if not row:
+                return None
+            p_dict = _project_to_dict(row)
+            dwgs = session.query(DrawingModel).filter(DrawingModel.project_id == project_id).all()
+            dwg_ids = [d.id for d in dwgs]
+            dwg_count = len(dwgs)
+            if dwg_ids:
+                comments = session.query(CommentModel).filter(CommentModel.drawing_id.in_(dwg_ids)).all()
+                comment_count = len(comments)
+                reviewed_count = sum(1 for c in comments if c.status in ("Approved", "Rejected"))
+                progress = int(round((reviewed_count / comment_count * 100))) if comment_count > 0 else 0
+            else:
+                comment_count = 0
+                progress = row.progress or 0
+            p_dict["drawings"] = dwg_count
+            p_dict["total_drawings"] = dwg_count
+            p_dict["comments"] = comment_count
+            p_dict["total_comments"] = comment_count
+            p_dict["progress"] = progress
+            p_dict["lead_engineer"] = row.lead_engineer or "Lead Reviewer"
+            return p_dict
 
     def create_project(
         self,
