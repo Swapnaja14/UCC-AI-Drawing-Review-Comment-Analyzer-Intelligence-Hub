@@ -318,8 +318,10 @@ class AppController(QObject):
         logger.info(f"AppController launching workflow pipeline for: {path.name}")
 
         if self._workflow_worker and self._workflow_worker.isRunning():
-            self._workflow_worker.terminate()
-            self._workflow_worker.wait()
+            self._workflow_worker.quit()
+            if not self._workflow_worker.wait(2000):
+                self._workflow_worker.terminate()
+                self._workflow_worker.wait(1000)
 
         self._workflow_worker = WorkflowWorker(self.workflow_engine, path)
         self._workflow_worker.step_signal.connect(self._on_workflow_step)
