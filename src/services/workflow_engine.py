@@ -7,6 +7,8 @@ from pathlib import Path
 from typing import Callable, Optional, List
 import time
 import io
+import re
+import numpy as np
 from datetime import datetime, timezone
 import pymupdf as fitz
 from PIL import Image
@@ -136,15 +138,17 @@ class ProcessingWorkflowEngine:
                             continue
                         p_obj = pdf_doc[p_idx]
                         
+                        # Cache title block and review status stamp envelopes ONCE per page
+                        page_envs = AnnotationDetectionServiceEnhanced._get_title_block_and_stamp_envelopes(p_obj)
+                        
                         for reg in page_res.regions:
-                            # Prioritize reviewer comments and colored markups
+                            # Prioritize reviewer comments and colored markups (red, blue, green)
                             is_comment_markup = (
                                 "red" in reg.label.lower() or
                                 "blue" in reg.label.lower() or
-                                "yellow" in reg.label.lower() or
                                 "green" in reg.label.lower() or
-                                reg.label in ("native_annotation", "native_text_block", "native_freetext", "native_ink", "native_redline") or
-                                reg.confidence >= 0.80
+                                "yellow" in reg.label.lower() or
+                                reg.label in ("native_annotation", "native_text_block", "native_freetext", "native_ink", "native_redline")
                             )
                             if not is_comment_markup:
                                 continue
@@ -157,65 +161,120 @@ class ProcessingWorkflowEngine:
                                 min(p_obj.rect.height, reg.y1 + pad)
                             )
                             
-                            raw_ocr_text = ""
-                            # 1. Check for targeted colored spans (e.g. red or blue reviewer markup text)
-                            try:
-                                colored_spans_text = []
-                                annot_text_dict = p_obj.get_text("dict", clip=crop_rect)
-                                for b in annot_text_dict.get("blocks", []):
-                                    if b.get("type") == 0:
-                                        for l in b.get("lines", []):
-                                            for s in l.get("spans", []):
-                                                txt = s.get("text", "").strip()
-                                                if not txt:
-                                                    continue
-                                                color = s.get("color", 0)
-                                                sr = (color >> 16) & 0xFF
-                                                sg = (color >> 8) & 0xFF
-                                                sb = color & 0xFF
-                                                is_red = (sr > 130 and sr > max(sg, sb) * 1.25) or (sr > 150 and (sr - max(sg, sb)) > 25)
-                                                is_blue = (sb > 120 and sb > max(sr, sg) * 1.20) or (sb > 140 and (sb - max(sr, sg)) > 25)
-                                                
-                                                if ("red" in reg.label.lower() and is_red) or ("blue" in reg.label.lower() and is_blue):
-                                                    colored_spans_text.append(txt)
+                            # Strictly filter out Title Blocks and Review Status Stamps
+                            if AnnotationDetectionServiceEnhanced._is_title_block_or_status_stamp(p_obj, crop_rect, envelopes=page_envs):
+                                continue
                                 
-                                if colored_spans_text:
-                                    raw_ocr_text = " ".join(colored_spans_text)
+                            raw_ocr_text = ""
+                            
+                            # 1. Check for native annotation content (FreeText callouts, Stamps, Notes)
+                            try:
+                                for annot in p_obj.annots():
+                                    if annot.rect.intersects(crop_rect):
+                                        c_text = (annot.info.get('content') or '').strip()
+                                        if len(c_text) >= 3 and not (len(c_text) <= 2 and c_text.upper() in ['A','B','C','D','E','F','G','H','1','2','3','4','5','6','7','8']):
+                                            raw_ocr_text = c_text
+                                            break
                             except Exception:
                                 raw_ocr_text = ""
 
-                            # 2. Fall back to direct digital text in crop if no colored spans matched
+                            # 2. Check for targeted colored spans (Red, Blue, or Green reviewer markup text)
                             if not raw_ocr_text:
                                 try:
-                                    direct_text = p_obj.get_text("text", clip=crop_rect).strip()
-                                    if direct_text:
-                                        raw_ocr_text = direct_text
+                                    colored_spans_text = []
+                                    annot_text_dict = p_obj.get_text("dict", clip=crop_rect)
+                                    for b in annot_text_dict.get("blocks", []):
+                                        if b.get("type") == 0:
+                                            for l in b.get("lines", []):
+                                                for s in l.get("spans", []):
+                                                    txt = s.get("text", "").strip()
+                                                    if not txt:
+                                                        continue
+                                                    color = s.get("color", 0)
+                                                    sr = (color >> 16) & 0xFF
+                                                    sg = (color >> 8) & 0xFF
+                                                    sb = color & 0xFF
+                                                    
+                                                    is_red = AnnotationDetectionServiceEnhanced._is_red_rgb(sr, sg, sb)
+                                                    is_blue = AnnotationDetectionServiceEnhanced._is_blue_rgb(sr, sg, sb)
+                                                    is_green = AnnotationDetectionServiceEnhanced._is_green_rgb(sr, sg, sb)
+                                                    
+                                                    if is_red or is_blue or is_green:
+                                                        colored_spans_text.append(txt)
+                                    
+                                    if colored_spans_text:
+                                        raw_ocr_text = " ".join(colored_spans_text)
                                 except Exception:
                                     raw_ocr_text = ""
 
-                            # 3. Fall back to high-resolution OCR (for scanned drawings / handwriting / raster text)
+                            # 3. Check for enclosed digital text inside revision clouds and redline markups
+                            if not raw_ocr_text:
+                                try:
+                                    enclosed_digital_text = p_obj.get_text("text", clip=crop_rect).strip()
+                                    if enclosed_digital_text:
+                                        # Normalize multiple spaces and line breaks
+                                        clean_candidate = " ".join(enclosed_digital_text.split())
+                                        cand_words = [w for w in clean_candidate.split() if any(c.isalnum() for c in w)]
+                                        if len(cand_words) > 0 and not (len(clean_candidate) <= 2 and clean_candidate.upper() in [
+                                            'A', 'B', 'C', 'D', 'E', 'F', 'G', 'H', '1', '2', '3', '4', '5', '6', '7', '8', '.', '-'
+                                        ]):
+                                            raw_ocr_text = clean_candidate
+                                except Exception:
+                                    raw_ocr_text = ""
+
+                            # 4. Fall back to high-resolution OCR (for scanned drawings, clouds & handwriting)
                             if not raw_ocr_text and crop_rect.width > 2 and crop_rect.height > 2:
                                 try:
-                                    zoom = 300.0 / 72.0
+                                    zoom = 200.0 / 72.0
                                     mat = fitz.Matrix(zoom, zoom)
                                     pix = p_obj.get_pixmap(matrix=mat, clip=crop_rect)
                                     if pix.width > 0 and pix.height > 0:
                                         img_bytes = pix.tobytes("png")
-                                        img = Image.open(io.BytesIO(img_bytes))
+                                        pil_img = Image.open(io.BytesIO(img_bytes)).convert("RGB")
                                         
-                                        raw_ocr_text = pytesseract.image_to_string(img, config='--psm 6').strip()
-                                        if not raw_ocr_text:
-                                            raw_ocr_text = pytesseract.image_to_string(img, config='--psm 11').strip()
+                                        # Single fast OCR pass with PSM 6
+                                        ocr_full = pytesseract.image_to_string(pil_img, config='--psm 6').strip()
+                                        if ocr_full and len([w for w in ocr_full.split() if any(c.isalnum() for c in w)]) > 0:
+                                            raw_ocr_text = ocr_full
+                                        else:
+                                            # Optional color-isolated OCR if colored pixels exist
+                                            np_img = np.array(pil_img)
+                                            nr = np_img[:, :, 0].astype(int)
+                                            ng = np_img[:, :, 1].astype(int)
+                                            nb = np_img[:, :, 2].astype(int)
+                                            
+                                            mask_red = (nr >= 120) & ((nr - np.maximum(ng, nb)) >= 24)
+                                            mask_blue = (nb >= 110) & ((nb - np.maximum(nr, ng)) >= 24)
+                                            mask_green = (ng >= 100) & ((ng - np.maximum(nr, nb)) >= 24)
+                                            colored_mask = mask_red | mask_blue | mask_green
+                                            
+                                            if np.count_nonzero(colored_mask) >= 15:
+                                                ocr_input_arr = np.full((np_img.shape[0], np_img.shape[1]), 255, dtype=np.uint8)
+                                                ocr_input_arr[colored_mask] = 0
+                                                ocr_input_pil = Image.fromarray(ocr_input_arr)
+                                                
+                                                raw_ocr_text = pytesseract.image_to_string(ocr_input_pil, config='--psm 6').strip()
                                 except Exception as ocr_err:
                                     logger.debug(f"OCR failed for region {reg}: {ocr_err}")
                                     raw_ocr_text = ""
                             
-                            # Filter out single/small letter fragments and noise
-                            clean_text_check = raw_ocr_text.strip()
+                            # Filter out single/small letter fragments, noise, and title block boilerplate
+                            clean_text_check = raw_ocr_text.strip().upper()
                             words = [w for w in clean_text_check.split() if any(c.isalnum() for c in w)]
                             if len(words) == 0:
                                 continue
-                            if len(clean_text_check) <= 2 and not any(k in clean_text_check.upper() for k in ["NO", "OK", "RE"]):
+                            if any(phrase in clean_text_check for phrase in AnnotationDetectionServiceEnhanced.TITLE_BLOCK_PHRASES):
+                                continue
+                            # Reject review stamp sign-off sub-lines like "BY BreKol", "DATE 2/5/2026", "EXP. 06/30/2026"
+                            if re.match(r'^(BY\s+[A-Z0-9_]+|DATE\s+[0-9\/\-]+|EXP[\.\:\s]+[0-9\/\-]+)$', clean_text_check):
+                                continue
+                            # Reject title block label clusters
+                            tb_label_hits = sum(1 for label in AnnotationDetectionServiceEnhanced.TITLE_BLOCK_FIELD_LABELS if re.search(r'\b' + re.escape(label) + r'\b', clean_text_check))
+                            if tb_label_hits >= 2:
+                                continue
+                            if len(clean_text_check) <= 2 and clean_text_check in [
+                                'A', 'B', 'C', 'D', 'E', 'F', 'G', 'H', '1', '2', '3', '4', '5', '6', '7', '8', '.', '-'
+                            ]:
                                 continue
 
                             cleaned_dto = self.text_cleaning_service.clean_text(raw_ocr_text)
@@ -233,19 +292,33 @@ class ProcessingWorkflowEngine:
                 except Exception as e:
                     logger.error(f"OCR processing failed: {e}")
 
-            # ── Step 5: AI Category Classification ────────────────
-            notify("AI Classification", WorkflowState.AI_CLASSIFYING, 90, f"Classifying review comments.")
+            # ── Step 5: Batched AI Category Classification ─────────
+            notify("AI Classification", WorkflowState.AI_CLASSIFYING, 90, f"Classifying review comments with AI.")
             
-            for item in extracted_comments_data:
+            if extracted_comments_data:
+                texts_to_classify = [
+                    item.get("cleaned_text") or item.get("raw_text", "")
+                    for item in extracted_comments_data
+                ]
                 try:
-                    text_to_classify = item.get("cleaned_text") or item.get("raw_text", "")
-                    class_res = self.classification_service.classify_comment(text_to_classify)
-                    item["category_name"] = class_res.primary_category.category_name
-                    if class_res.primary_category.confidence > 0:
-                        item["confidence"] = round((item["confidence"] + class_res.primary_category.confidence) / 2.0, 2)
-                except Exception as class_err:
-                    logger.debug(f"Classification failed for '{item.get('raw_text')}': {class_err}")
-                    item["category_name"] = "Uncategorized"
+                    batch_dto = self.classification_service.classify_batch(texts_to_classify)
+                    class_results = batch_dto.results
+                    for item, class_res in zip(extracted_comments_data, class_results):
+                        item["category_name"] = class_res.primary_category.category_name
+                        if class_res.primary_category.confidence > 0:
+                            item["confidence"] = round((item["confidence"] + class_res.primary_category.confidence) / 2.0, 2)
+                except Exception as batch_err:
+                    logger.warning(f"Batched classification failed, falling back to item-by-item: {batch_err}")
+                    for item in extracted_comments_data:
+                        try:
+                            text_to_classify = item.get("cleaned_text") or item.get("raw_text", "")
+                            class_res = self.classification_service.classify_comment(text_to_classify)
+                            item["category_name"] = class_res.primary_category.category_name
+                            if class_res.primary_category.confidence > 0:
+                                item["confidence"] = round((item["confidence"] + class_res.primary_category.confidence) / 2.0, 2)
+                        except Exception as class_err:
+                            logger.debug(f"Classification failed for '{item.get('raw_text')}': {class_err}")
+                            item["category_name"] = "Uncategorized"
 
             # ── Step 6: Database Persistence ─────────────────────
             notify("Data Persistence", WorkflowState.PERSISTING, 95, f"Saving drawing records to SQLite database.")

@@ -333,8 +333,10 @@ class AppController(QObject):
         )
 
         if self._workflow_worker and self._workflow_worker.isRunning():
-            self._workflow_worker.terminate()
-            self._workflow_worker.wait()
+            self._workflow_worker.quit()
+            if not self._workflow_worker.wait(2000):
+                self._workflow_worker.terminate()
+                self._workflow_worker.wait(1000)
 
         self._workflow_worker = WorkflowWorker(
             self.workflow_engine, path, department_id=department_id

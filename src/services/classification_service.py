@@ -1,12 +1,24 @@
+import threading
+import math
+from pathlib import Path
 from typing import List, Dict, Any, Optional
+
+try:
+    import torch
+    from transformers import AutoTokenizer, AutoModelForSequenceClassification
+    TRANSFORMERS_AVAILABLE = True
+except (ImportError, OSError, Exception):
+    torch = None
+    AutoTokenizer = None
+    AutoModelForSequenceClassification = None
+    TRANSFORMERS_AVAILABLE = False
+
 from src.core.dtos.classification_dtos import (
     CategoryPredictionDTO,
     ClassificationResultDTO,
     BatchClassificationDTO
 )
 from src.infrastructure.logging.logger import get_logger
-from pathlib import Path
-import math
 
 logger = get_logger(__name__)
 
@@ -20,6 +32,9 @@ class ClassificationService:
         self._ai_tokenizer = None
         self._ai_device = None
         self._model_load_failed = False
+        self._model_lock = threading.Lock()
+        # Asynchronously pre-warm the PyTorch model in the background
+        threading.Thread(target=self._ensure_model_loaded, daemon=True).start()
         
     def _build_category_keywords(self) -> Dict[str, List[str]]:
         return {
@@ -160,30 +175,37 @@ class ClassificationService:
                 
         return sorted(predictions, key=lambda x: x.confidence, reverse=True)
 
-    def _try_ai_classify(self, text: str) -> Optional[List[CategoryPredictionDTO]]:
-        """
-        AI model classification using fine-tuned DistilBERT if available.
-        """
-        if not text or self._model_load_failed:
-            return None
-
-        # Lazy load model
-        if self._ai_model is None:
-            if not self.model_dir.exists() or not (self.model_dir / "model.safetensors").exists():
-                return None
+    def _ensure_model_loaded(self) -> bool:
+        """Helper to ensure DistilBERT is loaded once on target device in a thread-safe manner."""
+        if self._ai_model is not None:
+            return True
+        if self._model_load_failed or not TRANSFORMERS_AVAILABLE:
+            return False
+        if not self.model_dir.exists() or not (self.model_dir / "model.safetensors").exists():
+            return False
+            
+        with self._model_lock:
+            if self._ai_model is not None:
+                return True
             try:
-                import torch
-                from transformers import AutoTokenizer, AutoModelForSequenceClassification
                 self._ai_device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
-                self._ai_tokenizer = AutoTokenizer.from_pretrained(self.model_dir)
-                self._ai_model = AutoModelForSequenceClassification.from_pretrained(self.model_dir)
+                self._ai_tokenizer = AutoTokenizer.from_pretrained(str(self.model_dir))
+                self._ai_model = AutoModelForSequenceClassification.from_pretrained(str(self.model_dir))
                 self._ai_model.to(self._ai_device)
                 self._ai_model.eval()
                 logger.info(f"Loaded fine-tuned DistilBERT classifier from: {self.model_dir}")
+                return True
             except Exception as e:
                 logger.warning(f"Could not load DistilBERT model: {e}")
                 self._model_load_failed = True
-                return None
+                return False
+
+    def _try_ai_classify(self, text: str) -> Optional[List[CategoryPredictionDTO]]:
+        """
+        AI model classification using fine-tuned DistilBERT for a single text.
+        """
+        if not text or not self._ensure_model_loaded():
+            return None
 
         try:
             import torch
@@ -211,6 +233,52 @@ class ClassificationService:
         except Exception as inf_err:
             logger.debug(f"DistilBERT inference failed for '{text}': {inf_err}")
             return None
+
+    def _try_ai_classify_batch(self, texts: List[str]) -> List[Optional[List[CategoryPredictionDTO]]]:
+        """
+        High-performance batched AI classification using fine-tuned DistilBERT.
+        Executes a single forward pass for all inputs simultaneously.
+        """
+        if not texts or not self._ensure_model_loaded():
+            return [None] * len(texts)
+
+        try:
+            import torch
+            # Filter valid texts while preserving indices
+            valid_indices = [i for i, t in enumerate(texts) if t and t.strip()]
+            if not valid_indices:
+                return [None] * len(texts)
+
+            valid_texts = [texts[i].strip() for i in valid_indices]
+            encoding = self._ai_tokenizer(
+                valid_texts,
+                padding=True,
+                truncation=True,
+                max_length=128,
+                return_tensors="pt"
+            ).to(self._ai_device)
+
+            with torch.no_grad():
+                outputs = self._ai_model(**encoding)
+                probs_batch = torch.softmax(outputs.logits, dim=1).cpu().detach().numpy()
+
+            results: List[Optional[List[CategoryPredictionDTO]]] = [None] * len(texts)
+            for batch_idx, original_idx in enumerate(valid_indices):
+                probs = probs_batch[batch_idx]
+                predictions = []
+                for cat_idx, prob in enumerate(probs):
+                    cat_name = self._ai_model.config.id2label.get(cat_idx) or self._ai_model.config.id2label.get(str(cat_idx), str(cat_idx))
+                    predictions.append(CategoryPredictionDTO(
+                        category_name=cat_name,
+                        confidence=float(round(prob, 4)),
+                        matched_keywords=[]
+                    ))
+                results[original_idx] = sorted(predictions, key=lambda x: x.confidence, reverse=True)
+
+            return results
+        except Exception as batch_err:
+            logger.debug(f"Batched DistilBERT inference failed: {batch_err}")
+            return [None] * len(texts)
 
     def classify_comment(self, comment_text: str, comment_id: str = '') -> ClassificationResultDTO:
         """Classify a single comment into categories with AI inference and keyword-grounded calibration"""
@@ -246,7 +314,6 @@ class ClassificationService:
                 if kws and p.category_name != 'Documentation':
                     combined_conf = min(1.0, 0.45 * p.confidence + 0.35 * rule_conf + 0.10 * len(kws))
                 elif total_keywords_matched > 0 and p.category_name == 'Documentation':
-                    # If specific domain keywords are present, penalize generic documentation category
                     combined_conf = max(0.01, p.confidence * 0.30)
                 else:
                     combined_conf = p.confidence * 0.85
@@ -282,25 +349,115 @@ class ClassificationService:
             requires_human_review=requires_review
         )
         
-    def classify_batch(self, comments: List[Dict[str, Any]], drawing_id: str = '') -> BatchClassificationDTO:
-        """Classify multiple comments in batch"""
+    def classify_batch(self, comments: List[Any], drawing_id: str = '') -> BatchClassificationDTO:
+        """Classify multiple comments in batch using accelerated single-pass tensor inference"""
+        if not comments:
+            return BatchClassificationDTO(
+                drawing_id=drawing_id,
+                total_classified=0,
+                results=[],
+                high_confidence_count=0,
+                low_confidence_count=0,
+                flagged_count=0
+            )
+
+        texts = []
+        ids = []
+        for i, c in enumerate(comments):
+            if isinstance(c, dict):
+                texts.append(c.get('text', ''))
+                ids.append(str(c.get('id', '')))
+            elif isinstance(c, str):
+                texts.append(c)
+                ids.append(str(i))
+            else:
+                texts.append(str(c))
+                ids.append(str(i))
+
+        # 1. Fast Batched AI predictions (1 forward pass)
+        batch_ai_preds = self._try_ai_classify_batch(texts)
+
         results = []
         high = 0
         low = 0
         flagged = 0
-        
-        for c in comments:
-            res = self.classify_comment(c.get('text', ''), str(c.get('id', '')))
+
+        for i, comment_text in enumerate(texts):
+            comment_id = ids[i]
+            clean_text = comment_text.strip() if comment_text else ""
+            if not clean_text:
+                res = ClassificationResultDTO(
+                    comment_id=comment_id,
+                    text=comment_text,
+                    primary_category=CategoryPredictionDTO('Documentation', 0.0, []),
+                    alternative_categories=[],
+                    classification_method='rule_based',
+                    requires_human_review=True
+                )
+                results.append(res)
+                flagged += 1
+                low += 1
+                continue
+
+            words = clean_text.lower().split()
+            rule_preds = self._rule_based_classify(clean_text)
+            rule_map = {p.category_name: p for p in rule_preds}
+            total_keywords_matched = sum(len(p.matched_keywords) for p in rule_preds)
+
+            ai_preds = batch_ai_preds[i]
+            if ai_preds:
+                method = 'ai_model'
+                final_predictions = []
+                for p in ai_preds:
+                    kws = rule_map.get(p.category_name, CategoryPredictionDTO('', 0, [])).matched_keywords
+                    rule_conf = rule_map.get(p.category_name, CategoryPredictionDTO('', 0, [])).confidence
+
+                    if kws and p.category_name != 'Documentation':
+                        combined_conf = min(1.0, 0.45 * p.confidence + 0.35 * rule_conf + 0.10 * len(kws))
+                    elif total_keywords_matched > 0 and p.category_name == 'Documentation':
+                        combined_conf = max(0.01, p.confidence * 0.30)
+                    else:
+                        combined_conf = p.confidence * 0.85
+
+                    final_predictions.append(CategoryPredictionDTO(
+                        category_name=p.category_name,
+                        confidence=float(round(combined_conf, 4)),
+                        matched_keywords=kws
+                    ))
+
+                final_predictions = sorted(final_predictions, key=lambda x: x.confidence, reverse=True)
+                primary = final_predictions[0]
+                alts = final_predictions[1:]
+
+                if len(words) <= 3 and total_keywords_matched == 0:
+                    primary.confidence = min(primary.confidence, 0.50)
+                    requires_review = True
+                else:
+                    requires_review = primary.confidence < self.LOW_CONFIDENCE
+            else:
+                method = 'rule_based'
+                primary = rule_preds[0] if rule_preds else CategoryPredictionDTO('Documentation', 0.0, [])
+                alts = rule_preds[1:] if len(rule_preds) > 1 else []
+                requires_review = (primary.confidence < self.LOW_CONFIDENCE) or (total_keywords_matched == 0)
+
+            res = ClassificationResultDTO(
+                comment_id=comment_id,
+                text=comment_text,
+                primary_category=primary,
+                alternative_categories=alts,
+                classification_method=method,
+                requires_human_review=requires_review
+            )
             results.append(res)
-            
+
             if res.primary_category.confidence >= self.HIGH_CONFIDENCE:
                 high += 1
             else:
                 low += 1
-                
+
             if res.requires_human_review:
                 flagged += 1
-                
+
         return BatchClassificationDTO(
             drawing_id=drawing_id,
             total_classified=len(results),

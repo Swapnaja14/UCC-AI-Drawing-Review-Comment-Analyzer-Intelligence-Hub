@@ -9,14 +9,22 @@ import pymupdf as fitz
 from PIL import Image
 import pytesseract
 import io
-import os
-import torch
-from transformers import (
-    TrOCRProcessor, 
-    VisionEncoderDecoderModel,
-    RobertaTokenizer,
-    ViTImageProcessor
-)
+try:
+    import torch
+    from transformers import (
+        TrOCRProcessor, 
+        VisionEncoderDecoderModel,
+        RobertaTokenizer,
+        ViTImageProcessor
+    )
+    TROCR_AVAILABLE = True
+except (ImportError, OSError, Exception):
+    torch = None
+    TrOCRProcessor = None
+    VisionEncoderDecoderModel = None
+    RobertaTokenizer = None
+    ViTImageProcessor = None
+    TROCR_AVAILABLE = False
 
 
 logger = logging.getLogger(__name__)
