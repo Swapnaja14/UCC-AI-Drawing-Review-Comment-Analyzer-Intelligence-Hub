@@ -20,6 +20,12 @@ from app.components.upload_widget import DropZone
 from app.components.dialogs import open_pdf_file
 from src.infrastructure.logging.logger import get_logger
 
+try:
+    import qtawesome as qta
+    _HAS_QTA = True
+except ImportError:
+    _HAS_QTA = False
+
 logger = get_logger("UploadScreen")
 
 
@@ -102,10 +108,10 @@ class UploadPage(QWidget):
         browse_btn.clicked.connect(self._browse)
         inner.addWidget(browse_btn, 0, Qt.AlignmentFlag.AlignCenter)
 
-        recent_btn = QPushButton("Recent Files ▾")
-        recent_btn.setObjectName("GhostBtn")
-        recent_btn.clicked.connect(self._show_recent)
-        inner.addWidget(recent_btn, 0, Qt.AlignmentFlag.AlignCenter)
+        self._recent_btn = QPushButton("Recent Files ▾")
+        self._recent_btn.setObjectName("GhostBtn")
+        self._recent_btn.clicked.connect(self._show_recent)
+        inner.addWidget(self._recent_btn, 0, Qt.AlignmentFlag.AlignCenter)
 
         root.addWidget(self._drop)
 
@@ -174,6 +180,14 @@ class UploadPage(QWidget):
         self._populate_departments()
         if self._controller:
             self._connect_controller_signals()
+
+    def showEvent(self, event):
+        super().showEvent(event)
+        self.reload_data()
+
+    def reload_data(self) -> None:
+        if self._dept_combo.count() <= 1:
+            self._populate_departments()
 
     def _populate_departments(self) -> None:
         """Populate department selection dropdown from the controller/database."""
@@ -258,9 +272,112 @@ class UploadPage(QWidget):
 
     def _show_recent(self) -> None:
         menu = QMenu(self)
-        for name in ["UCC-E-101.pdf", "LNG-T-501.pdf", "RU7-P-201.pdf"]:
-            menu.addAction(name)
-        menu.exec(self.mapToGlobal(self._drop.geometry().bottomLeft()))
+        menu.setStyleSheet(
+            "QMenu { background-color: #252830; color: #F2F3F5; border: 1px solid #3A3D46; "
+            "border-radius: 6px; padding: 6px; }"
+            "QMenu::item { padding: 8px 16px; border-radius: 4px; font-size: 12px; }"
+            "QMenu::item:selected { background-color: #3E9BFF; color: #FFFFFF; }"
+            "QMenu::separator { height: 1px; background: #3A3D46; margin: 4px 0px; }"
+        )
+
+        recent_drawings = []
+        if self._controller:
+            try:
+                recent_drawings = self._controller.get_recent_drawings(limit=15)
+            except Exception as e:
+                logger.warning(f"Error fetching recent drawings: {e}")
+
+        added_paths = set()
+        actions_count = 0
+
+        # Helper to find file on disk
+        def _resolve_file_path(raw_path: str, fname: str) -> Path | None:
+            if raw_path and Path(raw_path).exists():
+                return Path(raw_path)
+            if raw_path and Path(raw_path).is_file():
+                return Path(raw_path).resolve()
+            p_rel = Path(raw_path) if raw_path else None
+            if p_rel and p_rel.exists():
+                return p_rel.resolve()
+            dataset_dir = Path("dataset/raw_drawings")
+            if dataset_dir.exists() and fname:
+                for found in dataset_dir.rglob(fname):
+                    if found.is_file():
+                        return found.resolve()
+            return None
+
+        # 1. Add drawings from database
+        for d in recent_drawings:
+            fname = d.get("file_name", "")
+            raw_path = d.get("file_path", "")
+            dept_name = d.get("department_name")
+            dept_id = d.get("department_id")
+            pages = d.get("total_pages", 1)
+
+            resolved = _resolve_file_path(raw_path, fname)
+            if not resolved or str(resolved) in added_paths:
+                continue
+
+            added_paths.add(str(resolved))
+            actions_count += 1
+
+            dept_display = dept_name if dept_name and dept_name != "Unassigned" else "General"
+            label = f"{fname}  •  {dept_display} ({pages}p)"
+            action = menu.addAction(label)
+            if _HAS_QTA:
+                try:
+                    action.setIcon(qta.icon("fa5s.file-pdf", color="#3E9BFF"))
+                except Exception:
+                    pass
+
+            def _make_handler(target_path=str(resolved), target_dept=dept_name, target_id=dept_id):
+                return lambda: self._select_recent_file(target_path, target_dept, target_id)
+
+            action.triggered.connect(_make_handler())
+
+        # 2. Fallback to dataset/raw_drawings if no DB records found
+        if actions_count == 0:
+            dataset_dir = Path("dataset/raw_drawings")
+            if dataset_dir.exists():
+                for sample_pdf in sorted(dataset_dir.rglob("*.pdf"))[:10]:
+                    if sample_pdf.is_file() and str(sample_pdf.resolve()) not in added_paths:
+                        dept_hint = sample_pdf.parent.name
+                        label = f"{sample_pdf.name}  •  {dept_hint}"
+                        action = menu.addAction(label)
+                        if _HAS_QTA:
+                            try:
+                                action.setIcon(qta.icon("fa5s.file-pdf", color="#8B9CFF"))
+                            except Exception:
+                                pass
+
+                        def _make_handler(target_path=str(sample_pdf.resolve()), target_dept=dept_hint):
+                            return lambda: self._select_recent_file(target_path, target_dept, None)
+
+                        action.triggered.connect(_make_handler())
+                        actions_count += 1
+
+        if actions_count == 0:
+            empty_act = menu.addAction("No recent PDF files found")
+            empty_act.setEnabled(False)
+
+        # Position menu right below the Recent Files button
+        btn_pos = self._recent_btn.mapToGlobal(self._recent_btn.rect().bottomLeft())
+        menu.exec(btn_pos)
+
+    def _select_recent_file(self, file_path: str, dept_name: str | None = None, dept_id: str | None = None) -> None:
+        """Handle user selecting a recent file from the dropdown."""
+        self._on_file(file_path)
+
+        # Auto-match department in dropdown if known
+        if dept_id or dept_name:
+            for idx in range(1, self._dept_combo.count()):
+                item_id = self._dept_combo.itemData(idx, Qt.ItemDataRole.UserRole)
+                item_text = self._dept_combo.itemText(idx)
+                if (dept_id and item_id == dept_id) or (dept_name and item_text.strip().lower() == dept_name.strip().lower()):
+                    self._dept_combo.setCurrentIndex(idx)
+                    break
+
+        self._validate_form()
 
     def _on_file(self, path: str) -> None:
         self._filepath = path
