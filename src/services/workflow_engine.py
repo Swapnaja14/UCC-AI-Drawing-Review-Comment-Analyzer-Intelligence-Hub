@@ -62,7 +62,8 @@ class ProcessingWorkflowEngine:
     def execute_workflow(
         self,
         file_path: Path,
-        progress_callback: Optional[Callable[[WorkflowStepDTO], None]] = None
+        progress_callback: Optional[Callable[[WorkflowStepDTO], None]] = None,
+        department_id: Optional[str] = None,
     ) -> WorkflowResultDTO:
         """
         Executes complete multi-step processing workflow for an engineering drawing PDF.
@@ -70,6 +71,7 @@ class ProcessingWorkflowEngine:
         Args:
             file_path: Path to drawing PDF file.
             progress_callback: Optional callback function receiving WorkflowStepDTO snapshots.
+            department_id: Optional engineering department ID selected during upload.
 
         Returns:
             WorkflowResultDTO: Summary result of completed processing pipeline.
@@ -79,7 +81,7 @@ class ProcessingWorkflowEngine:
         """
         start_time = time.time()
         path = Path(file_path).resolve()
-        logger.info(f"Starting processing workflow execution for: {path.name}")
+        logger.info(f"Starting processing workflow execution for: {path.name} (department_id={department_id})")
 
         def notify(step_name: str, state: WorkflowState, pct: int, msg: str):
             self._current_state = state
@@ -247,8 +249,9 @@ class ProcessingWorkflowEngine:
 
             # ── Step 6: Database Persistence ─────────────────────
             notify("Data Persistence", WorkflowState.PERSISTING, 95, f"Saving drawing records to SQLite database.")
-            db_record = self.drawing_repo.save_drawing_from_dto(doc_dto)
+            db_record = self.drawing_repo.save_drawing_from_dto(doc_dto, department_id=department_id)
             drawing_id = db_record.get("id", "DWG-000")
+            effective_dept_id = db_record.get("department_id") or department_id
 
             if self.comment_repo and extracted_comments_data:
                 try:
@@ -265,6 +268,7 @@ class ProcessingWorkflowEngine:
                             bbox=c_item["bbox"],
                             confidence=c_item.get("confidence", 0.0),
                             category_name=c_item.get("category_name", "Uncategorized"),
+                            department_id=effective_dept_id,
                             label=c_item.get("label", "comment_red"),
                         )
                     except Exception as save_err:

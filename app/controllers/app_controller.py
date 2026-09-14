@@ -76,10 +76,16 @@ class WorkflowWorker(QThread):
     completed_signal = Signal(object)   # Emits WorkflowResultDTO
     error_signal     = Signal(str)      # Emits error string
 
-    def __init__(self, workflow_engine: ProcessingWorkflowEngine, file_path: Path):
+    def __init__(
+        self,
+        workflow_engine: ProcessingWorkflowEngine,
+        file_path: Path,
+        department_id: Optional[str] = None,
+    ):
         super().__init__()
         self.workflow_engine = workflow_engine
         self.file_path       = file_path
+        self.department_id   = department_id
 
     def run(self):
         try:
@@ -87,7 +93,9 @@ class WorkflowWorker(QThread):
                 self.step_signal.emit(step_snapshot)
 
             result = self.workflow_engine.execute_workflow(
-                self.file_path, progress_callback=on_progress
+                self.file_path,
+                progress_callback=on_progress,
+                department_id=self.department_id,
             )
             self.completed_signal.emit(result)
         except Exception as e:
@@ -314,20 +322,33 @@ class AppController(QObject):
         """Validates an uploaded PDF drawing file before processing."""
         return self.file_service.validate_pdf_file(file_path)
 
-    def start_processing_workflow(self, file_path: str | Path) -> None:
+    def start_processing_workflow(
+        self, file_path: str | Path, department_id: Optional[str] = None
+    ) -> None:
         """Triggers non-blocking background multi-step workflow execution."""
         path = Path(file_path).resolve()
-        logger.info(f"AppController launching workflow pipeline for: {path.name}")
+        logger.info(
+            f"AppController launching workflow pipeline for: {path.name} "
+            f"(department_id={department_id})"
+        )
 
         if self._workflow_worker and self._workflow_worker.isRunning():
             self._workflow_worker.terminate()
             self._workflow_worker.wait()
 
-        self._workflow_worker = WorkflowWorker(self.workflow_engine, path)
+        self._workflow_worker = WorkflowWorker(
+            self.workflow_engine, path, department_id=department_id
+        )
         self._workflow_worker.step_signal.connect(self._on_workflow_step)
         self._workflow_worker.completed_signal.connect(self._on_workflow_completed)
         self._workflow_worker.error_signal.connect(self._on_doc_error)
         self._workflow_worker.start()
+
+    def get_all_departments(self) -> List[Dict[str, Any]]:
+        """Returns all active engineering departments from the repository."""
+        if self.department_repo:
+            return self.department_repo.get_all_departments()
+        return []
 
     def _on_workflow_step(self, step_snapshot: WorkflowStepDTO) -> None:
         self.workflow_step_signal.emit(step_snapshot)

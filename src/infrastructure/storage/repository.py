@@ -163,6 +163,7 @@ class DrawingRepository:
         self,
         dto: PDFDocumentDTO,
         project_id: Optional[str] = None,
+        department_id: Optional[str] = None,
     ) -> Dict[str, Any]:
         """
         Persist a PDFDocumentDTO as a DrawingModel + PageModel records.
@@ -174,7 +175,7 @@ class DrawingRepository:
         Returns
         -------
         dict with keys: id, file_name, file_path, total_pages,
-                        is_scanned, file_hash
+                        is_scanned, file_hash, department_id
         """
         with self._db.get_session() as session:
             existing = (
@@ -184,10 +185,12 @@ class DrawingRepository:
             )
             if existing:
                 existing.uploaded_at = datetime.now(timezone.utc)
+                if department_id and not existing.department_id:
+                    existing.department_id = department_id
                 session.commit()
                 logger.info(
                     f"Drawing already in DB (hash={dto.file_hash_sha256[:8]}, "
-                    f"id={existing.id}) — timestamp refreshed."
+                    f"id={existing.id}) — timestamp refreshed, department_id={existing.department_id}."
                 )
                 return _drawing_to_dict(existing)
 
@@ -195,6 +198,7 @@ class DrawingRepository:
             drawing = DrawingModel(
                 id=drawing_id,
                 project_id=project_id,
+                department_id=department_id,
                 file_path=str(dto.file_path),
                 file_name=dto.file_name,
                 file_size_bytes=dto.file_size_bytes,
@@ -225,7 +229,7 @@ class DrawingRepository:
             session.commit()
             logger.info(
                 f"Saved drawing '{dto.file_name}' -> id={drawing_id}, "
-                f"{dto.total_pages} page(s)."
+                f"department_id={department_id}, {dto.total_pages} page(s)."
             )
             return _drawing_to_dict(drawing)
 
@@ -821,14 +825,16 @@ class AuditLogRepository:
 
 def _drawing_to_dict(d: DrawingModel) -> Dict[str, Any]:
     return {
-        "id":           d.id,
-        "file_name":    d.file_name,
-        "file_path":    d.file_path,
-        "total_pages":  d.total_pages,
-        "is_scanned":   d.is_scanned,
-        "file_hash":    d.file_hash_sha256,
-        "project_id":   d.project_id,
-        "uploaded_at":  (
+        "id":              d.id,
+        "file_name":       d.file_name,
+        "file_path":       d.file_path,
+        "total_pages":     d.total_pages,
+        "is_scanned":      d.is_scanned,
+        "file_hash":       d.file_hash_sha256,
+        "project_id":      d.project_id,
+        "department_id":   d.department_id,
+        "department_name": d.department_rel.name if d.department_rel else "Unassigned",
+        "uploaded_at":     (
             d.uploaded_at.strftime("%Y-%m-%d %H:%M:%S")
             if d.uploaded_at else ""
         ),
