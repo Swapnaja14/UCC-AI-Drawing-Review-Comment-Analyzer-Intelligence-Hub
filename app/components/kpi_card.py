@@ -65,10 +65,20 @@ class KpiCard(QFrame):
         cap.setObjectName("SubCaption")
         row.addWidget(cap)
         if trend:
-            is_up = trend.startswith("+")
+            is_down = trend.startswith("-") or any(neg in trend.lower() for neg in ["error", "fail", "rejected"])
+            if is_down:
+                trend_color = "#F87171"
+            elif trend.startswith("+"):
+                trend_color = "#4ADE80"
+            else:
+                trend_color = color
+
             t_lbl = QLabel(trend)
-            t_lbl.setFont(QFont("Segoe UI", 12, QFont.Weight.Bold))
-            t_lbl.setStyleSheet(f"color: {'#4ADE80' if is_up else '#F87171'};")
+            t_lbl.setFont(QFont("Segoe UI", 11, QFont.Weight.DemiBold))
+            t_lbl.setStyleSheet(
+                f"color: {trend_color}; "
+                f"border-radius: 4px; padding: 1px 6px; font-weight: 600;"
+            )
             row.addWidget(t_lbl)
         row.addStretch()
         root.addLayout(row)

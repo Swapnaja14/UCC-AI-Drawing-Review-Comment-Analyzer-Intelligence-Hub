@@ -5,16 +5,32 @@ from PySide6.QtCore import Qt
 from PySide6.QtGui import QFont
 
 _STATUS_COLORS = {
-    "Pending":  ("#A6A9B1", "#3A3C42"),
-    "Approved": ("#4ADE80", "#1a3d26"),
-    "Rejected": ("#F87171", "#3d1a1a"),
-    "Flagged":  ("#FBBF24", "#3d2e0a"),
+    "Pending":    ("#A6A9B1", "#3A3C42"),
+    "Approved":   ("#4ADE80", "#1a3d26"),
+    "Rejected":   ("#F87171", "#3d1a1a"),
+    "Flagged":    ("#FBBF24", "#3d2e0a"),
+    "Ready":      ("#4ADE80", "#1a3d26"),
+    "Active":     ("#3E9BFF", "#0f2b48"),
+    "Running":    ("#38BDF8", "#0d2a3d"),
+    "Processing": ("#FBBF24", "#3d2e0a"),
+    "Completed":  ("#4ADE80", "#1a3d26"),
+    "Done":       ("#4ADE80", "#1a3d26"),
+    "Analyzed":   ("#8B9CFF", "#1c204d"),
+    "Reviewed":   ("#4ADE80", "#1a3d26"),
 }
 _STATUS_COLORS_LIGHT = {
-    "Pending":  ("#5B5F6A", "#E8E9EC"),
-    "Approved": ("#1E8E3E", "#D4F2DC"),
-    "Rejected": ("#D93025", "#FAD5D3"),
-    "Flagged":  ("#E8A000", "#FDF0CD"),
+    "Pending":    ("#5B5F6A", "#E8E9EC"),
+    "Approved":   ("#1E8E3E", "#D4F2DC"),
+    "Rejected":   ("#D93025", "#FAD5D3"),
+    "Flagged":    ("#E8A000", "#FDF0CD"),
+    "Ready":      ("#1E8E3E", "#D4F2DC"),
+    "Active":     ("#0284C7", "#E0F2FE"),
+    "Running":    ("#0284C7", "#E0F2FE"),
+    "Processing": ("#D97706", "#FEF3C7"),
+    "Completed":  ("#1E8E3E", "#D4F2DC"),
+    "Done":       ("#1E8E3E", "#D4F2DC"),
+    "Analyzed":   ("#4F46E5", "#EEF2FF"),
+    "Reviewed":   ("#1E8E3E", "#D4F2DC"),
 }
 
 _CATEGORY_COLORS = {
