@@ -122,7 +122,13 @@ class MainWindow(QMainWindow):
     def _navigate(self, idx: int):
         self._stack.setCurrentIndex(idx)
         self._topbar.set_breadcrumb(_PAGE_TITLES[idx])
-        self._pages[idx].setFocus()
+        page = self._pages[idx]
+        # Auto-refresh the target page so it always shows the latest DB state
+        if hasattr(page, "reload_data"):
+            page.reload_data()
+        elif hasattr(page, "reload_comments"):
+            page.reload_comments()
+        page.setFocus()
 
     def _open_pdf_viewer(self):
         self._navigate(2)

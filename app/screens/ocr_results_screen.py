@@ -191,11 +191,12 @@ class OcrResultsPage(QWidget):
         tb.addWidget(search)
         tb.addStretch()
 
-        filt = QComboBox()
-        filt.addItems(["All Status", "Pending", "Approved", "Rejected", "Flagged"])
-        filt.setFixedHeight(36)
-        filt.setFixedWidth(160)
-        tb.addWidget(filt)
+        self._status_filt = QComboBox()
+        self._status_filt.addItems(["All Status", "Pending", "Approved", "Rejected", "Flagged"])
+        self._status_filt.setFixedHeight(36)
+        self._status_filt.setFixedWidth(160)
+        self._status_filt.currentTextChanged.connect(self._on_status_filter_changed)
+        tb.addWidget(self._status_filt)
 
         clean_btn = QPushButton("✨ Clean Text")
         clean_btn.setObjectName("PrimaryBtn")
@@ -218,8 +219,13 @@ class OcrResultsPage(QWidget):
         tc_lay.setContentsMargins(0, 0, 0, 0)
 
         self._model = self._build_model()
+        
+        self._status_proxy = QSortFilterProxyModel()
+        self._status_proxy.setSourceModel(self._model)
+        self._status_proxy.setFilterKeyColumn(3)
+        
         self._proxy = QSortFilterProxyModel()
-        self._proxy.setSourceModel(self._model)
+        self._proxy.setSourceModel(self._status_proxy)
         self._proxy.setFilterKeyColumn(-1)
         self._proxy.setFilterCaseSensitivity(Qt.CaseSensitivity.CaseInsensitive)
         search.search_changed.connect(self._proxy.setFilterFixedString)
@@ -377,7 +383,8 @@ class OcrResultsPage(QWidget):
         else:
             proxy_row = selection[0].row()
 
-        source_idx = self._proxy.mapToSource(self._proxy.index(proxy_row, 0))
+        status_idx = self._proxy.mapToSource(self._proxy.index(proxy_row, 0))
+        source_idx = self._status_proxy.mapToSource(status_idx)
         source_row = source_idx.row()
 
         id_item = self._model.item(source_row, 0)
@@ -451,3 +458,9 @@ class OcrResultsPage(QWidget):
         # Skip mock data — IDs in mock data use "C-NNNN" format
         if self._controller and comment_id and not comment_id.startswith("C-"):
             self._controller.update_comment_text(comment_id, new_text)
+
+    def _on_status_filter_changed(self, text: str) -> None:
+        if text == "All Status":
+            self._status_proxy.setFilterRegularExpression("")
+        else:
+            self._status_proxy.setFilterRegularExpression(f"^{text}$")

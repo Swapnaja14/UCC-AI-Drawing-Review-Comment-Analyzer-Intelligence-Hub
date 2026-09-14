@@ -44,6 +44,7 @@ from src.infrastructure.storage.repository import (
     CommentRepository,
     AuditLogRepository,
     EngineeringDepartmentRepository,
+    CategoryRepository
 )
 from src.core.dtos.pdf_dtos import PDFDocumentDTO, RenderedPageDTO
 from src.core.dtos.auth_dtos import UserDTO, SessionTokenDTO
@@ -75,10 +76,16 @@ class WorkflowWorker(QThread):
     completed_signal = Signal(object)   # Emits WorkflowResultDTO
     error_signal     = Signal(str)      # Emits error string
 
-    def __init__(self, workflow_engine: ProcessingWorkflowEngine, file_path: Path):
+    def __init__(
+        self,
+        workflow_engine: ProcessingWorkflowEngine,
+        file_path: Path,
+        department_id: Optional[str] = None,
+    ):
         super().__init__()
         self.workflow_engine = workflow_engine
         self.file_path       = file_path
+        self.department_id   = department_id
 
     def run(self):
         try:
@@ -86,7 +93,9 @@ class WorkflowWorker(QThread):
                 self.step_signal.emit(step_snapshot)
 
             result = self.workflow_engine.execute_workflow(
-                self.file_path, progress_callback=on_progress
+                self.file_path,
+                progress_callback=on_progress,
+                department_id=self.department_id,
             )
             self.completed_signal.emit(result)
         except Exception as e:
@@ -239,6 +248,7 @@ class AppController(QObject):
         self.comment_repo    = CommentRepository(self.db_engine)
         self.audit_repo      = AuditLogRepository(self.db_engine)
         self.department_repo = EngineeringDepartmentRepository(self.db_engine)
+        self.category_repo   = CategoryRepository(self.db_engine)
 
         # Auth and workflow services that depend on db_engine
         self.auth_service    = AuthService(self.db_engine)
@@ -312,10 +322,15 @@ class AppController(QObject):
         """Validates an uploaded PDF drawing file before processing."""
         return self.file_service.validate_pdf_file(file_path)
 
-    def start_processing_workflow(self, file_path: str | Path) -> None:
+    def start_processing_workflow(
+        self, file_path: str | Path, department_id: Optional[str] = None
+    ) -> None:
         """Triggers non-blocking background multi-step workflow execution."""
         path = Path(file_path).resolve()
-        logger.info(f"AppController launching workflow pipeline for: {path.name}")
+        logger.info(
+            f"AppController launching workflow pipeline for: {path.name} "
+            f"(department_id={department_id})"
+        )
 
         if self._workflow_worker and self._workflow_worker.isRunning():
             self._workflow_worker.quit()
@@ -323,11 +338,19 @@ class AppController(QObject):
                 self._workflow_worker.terminate()
                 self._workflow_worker.wait(1000)
 
-        self._workflow_worker = WorkflowWorker(self.workflow_engine, path)
+        self._workflow_worker = WorkflowWorker(
+            self.workflow_engine, path, department_id=department_id
+        )
         self._workflow_worker.step_signal.connect(self._on_workflow_step)
         self._workflow_worker.completed_signal.connect(self._on_workflow_completed)
         self._workflow_worker.error_signal.connect(self._on_doc_error)
         self._workflow_worker.start()
+
+    def get_all_departments(self) -> List[Dict[str, Any]]:
+        """Returns all active engineering departments from the repository."""
+        if self.department_repo:
+            return self.department_repo.get_all_departments()
+        return []
 
     def _on_workflow_step(self, step_snapshot: WorkflowStepDTO) -> None:
         self.workflow_step_signal.emit(step_snapshot)
@@ -435,13 +458,22 @@ class AppController(QObject):
     def get_status_trend(self, drawing_id: str = None) -> List[Any]:
         return self.analytics_service.get_status_trend(drawing_id=drawing_id)
 
+    def get_all_departments(self) -> List[Dict[str, Any]]:
+        """Return all engineering departments for UI dropdowns."""
+        return self.department_repo.get_all_departments() if hasattr(self, 'department_repo') else []
+
+    def get_all_categories(self) -> List[Dict[str, Any]]:
+        """Return all classifications categories from DB."""
+        return self.category_repo.get_all_categories() if hasattr(self, 'category_repo') else []
+
+    def add_category(self, name: str, description: str = "", color_hex: str = "#808080") -> None:
+        """Add a new classification category."""
+        if hasattr(self, 'category_repo'):
+            self.category_repo.get_or_create_category(name, description, color_hex)
+
     def get_all_projects(self) -> List[Dict[str, Any]]:
         """Return all project records from the database."""
         return self.project_repo.get_all_projects()
-
-    def get_all_departments(self) -> List[Dict[str, Any]]:
-        """Return all active engineering department records from the database."""
-        return self.department_repo.get_all_departments()
 
     # ── Comment operations ─────────────────────────────────────────
     #
@@ -626,8 +658,9 @@ class AppController(QObject):
         Export drawing review comments to Error Tracker Excel, JSON, or CSV.
         Auto-populates drawing and project metadata if omitted.
         """
-        if not config.drawing_id and self._current_drawing_id:
+        if not config.drawing_id and self._current_drawing_id and getattr(config, 'scope', 'drawing') == 'drawing':
             config.drawing_id = self._current_drawing_id
+
 
         if not config.drawing_no and self._active_doc:
             config.drawing_no = self._active_doc.file_name.rsplit(".", 1)[0]

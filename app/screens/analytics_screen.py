@@ -84,14 +84,18 @@ class AnalyticsPage(QWidget):
 
         self._populate_filters()
 
-        # Connect department dropdown change to auto-update charts
+        # Connect ALL filter widgets to auto-update charts
         self._dept_cb.currentIndexChanged.connect(self._apply_filters)
+        self._proj_cb.currentIndexChanged.connect(self._apply_filters)
+        self._cat_cb.currentIndexChanged.connect(self._apply_filters)
 
         from_lbl = QLabel("From:")
         from_lbl.setObjectName("SubCaption")
         fb.addWidget(from_lbl)
         self._date_from = QDateEdit(QDate(2026, 1, 1))
         self._date_from.setFixedHeight(36)
+        self._date_from.setCalendarPopup(True)
+        self._date_from.dateChanged.connect(self._apply_filters)
         fb.addWidget(self._date_from)
 
         to_lbl = QLabel("To:")
@@ -99,6 +103,8 @@ class AnalyticsPage(QWidget):
         fb.addWidget(to_lbl)
         self._date_to = QDateEdit(QDate.currentDate())
         self._date_to.setFixedHeight(36)
+        self._date_to.setCalendarPopup(True)
+        self._date_to.dateChanged.connect(self._apply_filters)
         fb.addWidget(self._date_to)
 
         fb.addStretch()
@@ -219,21 +225,36 @@ class AnalyticsPage(QWidget):
             self._kpi_cards.append(card)
             self._kpi_row.addWidget(card, 1)
 
+    def _get_active_filters(self) -> dict:
+        """Read current filter state from all widgets."""
+        dept = self._dept_cb.currentText() if hasattr(self, "_dept_cb") else "All Departments"
+        cat = self._cat_cb.currentText() if hasattr(self, "_cat_cb") else "All Categories"
+        return {
+            "department_name": None if dept == "All Departments" else dept,
+            "category_name": None if cat == "All Categories" else cat,
+        }
+
     def _build_charts(self) -> None:
-        """Fetch real data for charts and populate the grid, filtering by department if selected."""
+        """Fetch real data for charts and populate the grid, using all active filters."""
         while self._grid.count():
             item = self._grid.takeAt(0)
             w = item.widget()
             if w:
                 w.deleteLater()
 
-        dept_name = None
-        if hasattr(self, "_dept_cb") and self._dept_cb.currentText() != "All Departments":
-            dept_name = self._dept_cb.currentText()
+        filters = self._get_active_filters()
+        dept_name = filters["department_name"]
 
         pareto_data = self._controller.get_pareto_analysis(department_name=dept_name) if self._controller else None
         category_data = self._controller.get_category_distribution(department_name=dept_name) if self._controller else None
         trend_data = self._controller.get_status_trend() if self._controller else None
+
+        # Client-side category filter on chart data
+        cat_filter = filters["category_name"]
+        if cat_filter and pareto_data:
+            pareto_data = [d for d in pareto_data if getattr(d, "category_name", "") == cat_filter]
+        if cat_filter and category_data:
+            category_data = [d for d in category_data if getattr(d, "category_name", "") == cat_filter]
 
         pareto_view  = build_pareto_chart(pareto_data)
         monthly_view = build_monthly_chart(trend_data)
@@ -252,7 +273,7 @@ class AnalyticsPage(QWidget):
         self._grid.addWidget(_wrap(monthly_view, 220), 0, 1)
         self._grid.addWidget(_wrap(pie_view,     220), 1, 1)
 
-    def _apply_filters(self) -> None:
+    def _apply_filters(self, *args) -> None:
         """Trigger reload of KPIs and charts based on current filter state."""
         self.reload_data()
 

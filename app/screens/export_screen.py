@@ -605,7 +605,17 @@ class ExportPage(QWidget):
         self._prog_bar.setValue(50)
 
         try:
+            scope_text = self._scope_grp.checkedButton().text()
             drawing_id = getattr(self._controller, "current_drawing_id", None) or None
+            
+            if scope_text == "All Historical Comments":
+                scope_val = "all"
+                drawing_id = None
+            elif scope_text == "Current Project (All Drawings)":
+                scope_val = "project"
+                drawing_id = None
+            else:
+                scope_val = "drawing"
             
             # Read standard input metadata fields
             contract_no     = self._contract_input.text().strip()
@@ -619,6 +629,7 @@ class ExportPage(QWidget):
                 output_path=out_path,
                 format=fmt_code,
                 drawing_id=drawing_id,
+                scope=scope_val,
                 contract_no=contract_no,
                 plant_name=plant_name,
                 epod_wo_no=epod_wo_no,

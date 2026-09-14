@@ -1,94 +1,52 @@
-# ==============================================================================
-# UCC AI Drawing Review Comment Analyzer — Configuration File
-# ==============================================================================
-# This YAML configuration controls database paths, logging policies, PDF rendering,
-# OCR extraction engines, AI classification models, and user interface preferences.
-#
-# Environment variables prefixed with UCC_ can override any of these values:
-# Examples:
-#   UCC_DATABASE_DB_PATH=data/custom.db
-#   UCC_LOGGING_LOG_LEVEL=DEBUG
-#   UCC_UI_THEME=dark
-#   UCC_OCR_ENGINE=hybrid
-# ==============================================================================
-
 app_name: UCC AI Drawing Review Comment Analyzer
 version: 1.0.0
 environment: development
-
-# ------------------------------------------------------------------------------
-# 1. Database Storage Configuration
-# ------------------------------------------------------------------------------
 database:
   db_path: data/ucc_database.db
   wal_mode: true
   echo_sql: false
   timeout_seconds: 30.0
   pool_size: 5
-
-# ------------------------------------------------------------------------------
-# 2. Application Logging Configuration
-# ------------------------------------------------------------------------------
 logging:
   log_level: INFO
   log_to_console: true
   log_to_file: true
   log_file_path: data/logs/ucc_app.log
-  max_bytes: 10485760   # 10 MB
+  max_bytes: 10485760
   backup_count: 5
-  log_format: "[%(asctime)s] [%(levelname)s] [%(name)s]: %(message)s"
-  date_format: "%Y-%m-%d %H:%M:%S"
-
-# ------------------------------------------------------------------------------
-# 3. PDF Processing & Rendering Configuration
-# ------------------------------------------------------------------------------
+  log_format: '[%(asctime)s] [%(levelname)s] [%(name)s]: %(message)s'
+  date_format: '%Y-%m-%d %H:%M:%S'
 pdf:
   display_dpi: 150
   ocr_dpi: 300
   thumbnail_dpi: 30
   max_file_size_mb: 500
   allowed_extensions:
-    - .pdf
-
-# ------------------------------------------------------------------------------
-# 4. OCR & Annotation Detection Configuration
-# ------------------------------------------------------------------------------
+  - .pdf
 ocr:
-  engine: auto                  # auto | tesseract | trocr | hybrid
-  tesseract_psm: 6              # PSM 6: Assume uniform block of text
-  fallback_psm: 11              # PSM 11: Sparse text with no OSD
-  confidence_threshold: 0.50
-  annotation_method: hybrid     # hybrid | color | native
+  engine: auto
+  tesseract_psm: 6
+  fallback_psm: 11
+  confidence_threshold: 0.5
+  annotation_method: hybrid
   filter_template_regions: false
-
-# ------------------------------------------------------------------------------
-# 5. AI Classification Configuration
-# ------------------------------------------------------------------------------
 ai:
-  classifier_type: hybrid_nlp   # hybrid_nlp | distilbert | rule_fallback
+  classifier_type: hybrid_nlp
   model_path: models/distilbert_classifier
-  confidence_threshold: 0.70
+  confidence_threshold: 0.7
   fallback_to_rules: true
-
-# ------------------------------------------------------------------------------
-# 6. User Interface & Preferences Configuration
-# ------------------------------------------------------------------------------
 ui:
-  theme: dark                   # dark | light
+  theme: dark
   language: English (US)
   font_family: Segoe UI Variable
-  font_size_scale: 1            # 0: Small | 1: Medium | 2: Large
+  font_size_scale: 1
   default_projects_dir: dataset/raw_drawings
   rows_per_page: 25
   auto_save: true
   enable_notifications: true
   window_maximized: true
-
-# ------------------------------------------------------------------------------
-# 7. Data Export Configuration
-# ------------------------------------------------------------------------------
 export:
-  default_format: Excel         # Excel | JSON | CSV
+  default_format: Excel
   include_summary_sheet: true
   include_confidence_scores: true
   default_export_dir: exports
