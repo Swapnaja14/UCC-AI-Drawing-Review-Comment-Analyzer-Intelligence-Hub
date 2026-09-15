@@ -26,15 +26,17 @@ class DropZone(QFrame):
     """
 
     file_dropped = Signal(str)
+    files_dropped = Signal(list)
 
     _DASH_COLOR_IDLE   = "#3A3C42"
     _DASH_COLOR_ACTIVE = "#3E9BFF"
 
-    def __init__(self, parent=None):
+    def __init__(self, parent=None, allow_zips: bool = False):
         super().__init__(parent)
         self.setAcceptDrops(True)
-        self.setMinimumHeight(300)
+        self.setMinimumHeight(240)
         self._active = False
+        self._allow_zips = allow_zips
 
     # ── Drag helpers ──────────────────────────────────────────────
 
@@ -55,10 +57,19 @@ class DropZone(QFrame):
     def dropEvent(self, e: QDropEvent) -> None:
         self._set_active(False)
         urls = e.mimeData().urls()
-        if urls:
-            path = urls[0].toLocalFile()
-            if path.lower().endswith(".pdf"):
-                self.file_dropped.emit(path)
+        if not urls:
+            return
+
+        valid_paths = []
+        for url in urls:
+            path = url.toLocalFile()
+            ext = path.lower()
+            if ext.endswith(".pdf") or (self._allow_zips and ext.endswith(".zip")):
+                valid_paths.append(path)
+
+        if valid_paths:
+            self.file_dropped.emit(valid_paths[0])
+            self.files_dropped.emit(valid_paths)
 
     def paintEvent(self, _) -> None:
         p = QPainter(self)

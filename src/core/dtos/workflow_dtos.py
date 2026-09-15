@@ -53,3 +53,26 @@ class WorkflowResultDTO:
     status: str
     total_comments_found: int = 0
     processing_duration_seconds: float = 0.0
+
+
+@dataclass(frozen=True)
+class BatchWorkflowProgressDTO:
+    """Progress snapshot for a batch workflow run across multiple drawing files."""
+    overall_progress_percentage: int   # 0-100%
+    current_file_index: int            # 1-indexed (e.g. file 2 of 5)
+    total_files: int
+    current_file_name: str
+    step_snapshot: WorkflowStepDTO
+
+
+@dataclass(frozen=True)
+class BatchWorkflowResultDTO:
+    """Summary container of a completed multi-file/zip batch processing workflow."""
+    total_files_processed: int
+    successful_files_count: int
+    failed_files_count: int
+    total_comments_found: int
+    total_duration_seconds: float
+    results: List[WorkflowResultDTO] = field(default_factory=list)
+    failed_files: List[Dict[str, str]] = field(default_factory=list)  # list of {"file_name": ..., "error": ...}
+

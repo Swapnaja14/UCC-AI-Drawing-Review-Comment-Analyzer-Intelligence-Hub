@@ -55,6 +55,8 @@ class ExportService:
 
             if config.filter_status:
                 comments = [c for c in comments if c.get('status') == config.filter_status]
+            else:
+                comments = [c for c in comments if c.get('status') != 'Rejected']
 
             # Resolve drawing/project metadata fallbacks if not explicitly provided
             self._enrich_config_metadata(config)
@@ -365,7 +367,7 @@ class ExportService:
                     c.border = THIN_BORDER
         else:
             for idx, comment in enumerate(comments, start_row):
-                desc = comment.get('raw_text') or comment.get('cleaned_text') or ""
+                desc = comment.get('cleaned_text') or comment.get('raw_text') or ""
                 cat  = comment.get('category_name') or comment.get('category') or "Uncategorized"
                 reviewer = comment.get('reviewer_id') or designer_val
 

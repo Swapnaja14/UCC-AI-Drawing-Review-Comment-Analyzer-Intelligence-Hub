@@ -64,20 +64,21 @@ class AnnotationDetectionServiceEnhanced:
             doc = fitz.open(pdf_path)
             if 0 <= page_number < len(doc):
                 page = doc[page_number]
+                page_envelopes = self._get_title_block_and_stamp_envelopes(page)
                 
                 if method == 'native':
-                    regions.extend(self._extract_native_annotations(page, page_number))
-                    regions.extend(self._extract_text_regions(page, page_number))
-                    regions.extend(self._detect_redline_regions(page, page_number))
+                    regions.extend(self._extract_native_annotations(page, page_number, envelopes=page_envelopes))
+                    regions.extend(self._extract_text_regions(page, page_number, envelopes=page_envelopes))
+                    regions.extend(self._detect_redline_regions(page, page_number, envelopes=page_envelopes))
                     
                 elif method == 'color':
-                    regions = self._detect_by_color_segmentation(page, page_number)
+                    regions = self._detect_by_color_segmentation(page, page_number, envelopes=page_envelopes)
                     
                 elif method == 'connected':
                     regions = self._detect_by_connected_components(page, page_number)
                     
                 elif method == 'region':
-                    regions = self._detect_by_region_proposals(page, page_number)
+                    regions = self._detect_by_region_proposals(page, page_number, envelopes=page_envelopes)
                     
                 elif method == 'hybrid':
                     # Fast & comprehensive markup detection:
@@ -85,18 +86,17 @@ class AnnotationDetectionServiceEnhanced:
                     # 2. Vector text colored markup (red / blue / yellow / green text)
                     # 3. Vector path redlines, clouds & leaders
                     # 4. Rasterized high-sensitivity color segmentation (HSV/RGB)
-                    native = self._extract_native_annotations(page, page_number)
-                    native.extend(self._extract_text_regions(page, page_number))
-                    native.extend(self._detect_redline_regions(page, page_number))
+                    native = self._extract_native_annotations(page, page_number, envelopes=page_envelopes)
+                    native.extend(self._extract_text_regions(page, page_number, envelopes=page_envelopes))
+                    native.extend(self._detect_redline_regions(page, page_number, envelopes=page_envelopes))
                     
-                    color = self._detect_by_color_segmentation(page, page_number)
+                    color = self._detect_by_color_segmentation(page, page_number, envelopes=page_envelopes)
                     
                     # Merge and deduplicate
                     all_regions = native + color
                     regions = self._deduplicate_regions(all_regions)
                     
                     # Final safety pass: strictly filter out title blocks and review status stamps
-                    page_envelopes = self._get_title_block_and_stamp_envelopes(page)
                     regions = [
                         r for r in regions 
                         if not self._is_title_block_or_status_stamp(page, fitz.Rect(r.x0, r.y0, r.x1, r.y1), envelopes=page_envelopes)
@@ -155,8 +155,8 @@ class AnnotationDetectionServiceEnhanced:
                     total_regions=0
                 )
 
-            # Use thread pool to parallelize across pages (PyMuPDF and OpenCV release the GIL)
-            num_workers = min(4, max(1, (os.cpu_count() or 2)))
+            # Use thread pool with bounded workers (prevents CPU oversubscription with OpenCV SIMD)
+            num_workers = min(6, max(1, os.cpu_count() or 2))
             if total_pages == 1 or num_workers == 1:
                 for page_num in range(total_pages):
                     result = self.detect_annotations_on_page(pdf_path, page_num, method)
@@ -533,7 +533,7 @@ class AnnotationDetectionServiceEnhanced:
     # METHOD 1: NATIVE PDF ANNOTATION EXTRACTION
     # ========================================================================
     
-    def _extract_native_annotations(self, page: fitz.Page, page_num: int) -> List[BoundingBoxDTO]:
+    def _extract_native_annotations(self, page: fitz.Page, page_num: int, envelopes: Optional[List[fitz.Rect]] = None) -> List[BoundingBoxDTO]:
         """
         Extract genuine native PDF review markup annotations (callouts, comments, stamps, redlines).
         Strictly rejects AutoCAD grid markers (A, B, C, 1, 2), SHX text boxes, and monochrome elements.
@@ -544,7 +544,7 @@ class AnnotationDetectionServiceEnhanced:
             info = annot.info or {}
             
             # Filter out Title Blocks and Review Status Stamps (e.g. DOCUMENT RETURN REVIEW STATUS)
-            if self._is_title_block_or_status_stamp(page, rect, annot):
+            if self._is_title_block_or_status_stamp(page, rect, annot, envelopes=envelopes):
                 continue
                 
             # Filter out AutoCAD SHX text font placeholder boxes
@@ -651,7 +651,7 @@ class AnnotationDetectionServiceEnhanced:
             )
         return regions
 
-    def _extract_text_regions(self, page: fitz.Page, page_num: int) -> List[BoundingBoxDTO]:
+    def _extract_text_regions(self, page: fitz.Page, page_num: int, envelopes: Optional[List[fitz.Rect]] = None) -> List[BoundingBoxDTO]:
         """
         Extract whole comment text blocks (paragraphs/lines) representing reviewer markup
         specifically in Red, Blue, or Green text.
@@ -744,7 +744,7 @@ class AnnotationDetectionServiceEnhanced:
             pad_x = 2.0
             pad_y = 2.0
             r_rect = fitz.Rect(c["bbox"][0] - pad_x, c["bbox"][1] - pad_y, c["bbox"][2] + pad_x, c["bbox"][3] + pad_y)
-            if self._is_title_block_or_status_stamp(page, r_rect):
+            if self._is_title_block_or_status_stamp(page, r_rect, envelopes=envelopes):
                 continue
             regions.append(
                 BoundingBoxDTO(
@@ -759,7 +759,7 @@ class AnnotationDetectionServiceEnhanced:
             )
         return regions
 
-    def _detect_redline_regions(self, page: fitz.Page, page_num: int) -> List[BoundingBoxDTO]:
+    def _detect_redline_regions(self, page: fitz.Page, page_num: int, envelopes: Optional[List[fitz.Rect]] = None) -> List[BoundingBoxDTO]:
         """Detect red, blue, and green vector markup (paths, clouds, arrows, leaders)"""
         raw_paths = []
         paths = page.get_drawings()
@@ -843,7 +843,7 @@ class AnnotationDetectionServiceEnhanced:
             # Minimum substantial markup geometry (e.g. at least 10 pt wide/high or multiple clustered strokes)
             if (w >= 10 and h >= 6) or c["count"] >= 2:
                 r_rect = fitz.Rect(cbox[0], cbox[1], cbox[2], cbox[3])
-                if self._is_title_block_or_status_stamp(page, r_rect):
+                if self._is_title_block_or_status_stamp(page, r_rect, envelopes=envelopes):
                     continue
                 regions.append(
                     BoundingBoxDTO(
@@ -862,7 +862,7 @@ class AnnotationDetectionServiceEnhanced:
     # METHOD 2: COLOR SEGMENTATION (RED, BLUE, GREEN MARKUP)
     # ========================================================================
     
-    def _detect_by_color_segmentation(self, page: fitz.Page, page_num: int) -> List[BoundingBoxDTO]:
+    def _detect_by_color_segmentation(self, page: fitz.Page, page_num: int, envelopes: Optional[List[fitz.Rect]] = None) -> List[BoundingBoxDTO]:
         """
         Detect annotations using strict RGB + HSV color segmentation.
         Precisely targets Red, Blue, and Green reviewer comments while rejecting
@@ -885,12 +885,22 @@ class AnnotationDetectionServiceEnhanced:
             px_scale = detection_dpi / 72.0      # 1.0 at 72 DPI
             regions = []
             
-            # Identify title block & review status stamp envelopes to prevent false positives
-            envelopes = self._get_title_block_and_stamp_envelopes(page)
+            # Identify title block & review status stamp envelopes if not passed
+            if envelopes is None:
+                envelopes = self._get_title_block_and_stamp_envelopes(page)
 
             hsv = cv2.cvtColor(img_bgr, cv2.COLOR_BGR2HSV)
-            h, s, v = cv2.split(hsv)
-            b, g, r = cv2.split(img_bgr)
+            s = hsv[:, :, 1]
+            
+            # Ultra fast-path: if page has no color saturation (max s < 35), skip heavy contour search
+            max_s_val = cv2.minMaxLoc(s)[1]
+            if max_s_val < 35:
+                return []
+
+            b = img_bgr[:, :, 0]
+            g = img_bgr[:, :, 1]
+            r = img_bgr[:, :, 2]
+            v = hsv[:, :, 2]
             
             h_px, w_px = img_bgr.shape[:2]
             max_area_px = int(h_px * w_px * 0.70)
@@ -944,6 +954,11 @@ class AnnotationDetectionServiceEnhanced:
                     red_mask[ey0:ey1, ex0:ex1] = 0
                     blue_mask[ey0:ey1, ex0:ex1] = 0
                     green_mask[ey0:ey1, ex0:ex1] = 0
+
+            # SIMD Fast-path: if total colored markup pixels < 10, bypass morphology & contour finding
+            total_colored_px = cv2.countNonZero(red_mask) + cv2.countNonZero(blue_mask) + cv2.countNonZero(green_mask)
+            if total_colored_px < 10:
+                return []
 
             color_masks = [
                 ("comment_red", red_mask),
@@ -1082,10 +1097,10 @@ class AnnotationDetectionServiceEnhanced:
     # METHOD 4: ADVANCED REGION DETECTION (COLOR GATED)
     # ========================================================================
     
-    def _detect_by_region_proposals(self, page: fitz.Page, page_num: int) -> List[BoundingBoxDTO]:
+    def _detect_by_region_proposals(self, page: fitz.Page, page_num: int, envelopes: Optional[List[fitz.Rect]] = None) -> List[BoundingBoxDTO]:
         """Color-gated region proposals to avoid full drawing clutter."""
         # Color segmentation and native methods provide superior precision for engineering markups
-        return self._detect_by_color_segmentation(page, page_num)
+        return self._detect_by_color_segmentation(page, page_num, envelopes=envelopes)
 
     # ========================================================================
     # UTILITY METHODS (DEDUPLICATION & MERGING)
