@@ -45,6 +45,30 @@ def test_domain_safe_spell_correction():
     res3 = service.clean_text("THIS IS NOT THE NEST LOCATION")
     assert "BEST LOCATION" in res3.cleaned_text
 
+def test_ocr_spelling_corrections():
+    service = TextCleaningService()
+
+    # OCR character misreads from real drawing reviews
+    res1 = service.clean_text("AIN ACUEIVERN A IOULATIUN VALVE OULENVID")
+    assert "AIR RECEIVER" in res1.cleaned_text
+    assert "ISOLATION VALVE" in res1.cleaned_text
+    assert "SOLENOID" in res1.cleaned_text
+
+    res2 = service.clean_text("TEMPERATUR SENSOR SECHEMATICS")
+    assert "TEMPERATURE" in res2.cleaned_text
+    assert "SCHEMATICS" in res2.cleaned_text
+
+    res3 = service.clean_text("TERMINAL  BLOCK ARANGEMENT")
+    assert "TERMINAL BLOCK ARRANGEMENT" in res3.cleaned_text
+
+def test_preserve_ground_bar_and_common_terms():
+    service = TextCleaningService(expand_acronyms=True)
+    
+    # GROUND BAR should NOT be expanded to "Barometric Pressure"
+    res = service.clean_text("Change to GROUND BAR MOUNTING.")
+    assert "Barometric Pressure" not in res.cleaned_text
+    assert "GROUND BAR MOUNTING" in res.cleaned_text.upper()
+
 def test_preserve_dimensions_and_tags():
     service = TextCleaningService()
     
@@ -54,6 +78,15 @@ def test_preserve_dimensions_and_tags():
     assert "345'-11 3/4\"" in res.cleaned_text
     assert "174005-S12-04-P08" in res.cleaned_text
     assert res.reviewer_initials == "JDM"
+
+def test_preserve_complex_part_numbers():
+    service = TextCleaningService()
+    
+    raw = "Change these to either Z-ISTPHCH1MTL, Z-ISTPHCH2MTL, or Z-ISTPHCH4MTL in AX."
+    res = service.clean_text(raw)
+    assert "Z-ISTPHCH1MTL" in res.cleaned_text
+    assert "Z-ISTPHCH2MTL" in res.cleaned_text
+    assert "Z-ISTPHCH4MTL" in res.cleaned_text
 
 def test_multi_action_comment_segmentation():
     service = TextCleaningService()

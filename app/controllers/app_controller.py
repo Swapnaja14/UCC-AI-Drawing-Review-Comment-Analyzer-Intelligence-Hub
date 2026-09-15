@@ -326,6 +326,7 @@ class AppController(QObject):
         # when querying or saving comments for the active drawing.
         # Value is "" (empty string) when no PDF has been loaded this session.
         self._current_drawing_id: str = ""
+        self.last_annotation_result: Optional[Any] = None
 
         self._current_session: Optional[SessionTokenDTO] = None
 
@@ -440,6 +441,8 @@ class AppController(QObject):
 
     def _on_workflow_completed(self, result_dto: WorkflowResultDTO) -> None:
         logger.info(f"AppController: Workflow finished for '{result_dto.file_name}'.")
+        if hasattr(result_dto, "annotation_result") and result_dto.annotation_result:
+            self.last_annotation_result = result_dto.annotation_result
         self.workflow_completed_signal.emit(result_dto)
         # Also auto-load document for viewer after workflow completes
         if self._workflow_worker:
@@ -817,21 +820,27 @@ class AppController(QObject):
         if doc is not None:
             drawing_no = doc.file_name.rsplit(".", 1)[0]
 
+        cleaned_text = db_dict.get("cleaned_text") or ""
+        raw_text     = db_dict.get("raw_text") or ""
+        display_text = cleaned_text if cleaned_text.strip() else raw_text
+
         return {
-            "id":          db_dict.get("id", ""),
-            "drawing_id":  db_dict.get("drawing_id", ""),
-            "drawing_no":  drawing_no,
-            "page":        db_dict.get("page_number", 1),
-            "ocr_text":    db_dict.get("raw_text", ""),
-            "category":    db_dict.get("category_name") or "Uncategorized",
-            "department":  db_dict.get("department_name") or "Unassigned",
-            "confidence":  db_dict.get("confidence", 0.0),
-            "status":      db_dict.get("status", "Pending"),
-            "label":       db_dict.get("label", "comment_red"),
-            "bbox":        normalised_bbox,
-            "reviewer":    db_dict.get("user_id"),
-            "timestamp":   db_dict.get("created_at", ""),
-            "is_verified": db_dict.get("is_verified_by_human", False),
+            "id":           db_dict.get("id", ""),
+            "drawing_id":   db_dict.get("drawing_id", ""),
+            "drawing_no":   drawing_no,
+            "page":         db_dict.get("page_number", 1),
+            "ocr_text":     display_text,
+            "cleaned_text": cleaned_text,
+            "raw_text":     raw_text,
+            "category":     db_dict.get("category_name") or "Uncategorized",
+            "department":   db_dict.get("department_name") or "Unassigned",
+            "confidence":   db_dict.get("confidence", 0.0),
+            "status":       db_dict.get("status", "Pending"),
+            "label":        db_dict.get("label", "comment_red"),
+            "bbox":         normalised_bbox,
+            "reviewer":     db_dict.get("user_id"),
+            "timestamp":    db_dict.get("created_at", ""),
+            "is_verified":  db_dict.get("is_verified_by_human", False),
         }
 
     # ── Export Operations ──────────────────────────────────────────

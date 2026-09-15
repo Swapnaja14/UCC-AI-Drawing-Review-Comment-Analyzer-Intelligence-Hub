@@ -8,12 +8,12 @@ Provides:
 """
 from __future__ import annotations
 from pathlib import Path
-from typing import Any, List
+from typing import Any, List, Optional
 from PySide6.QtWidgets import (QWidget, QVBoxLayout, QHBoxLayout,
                                 QGraphicsView, QGraphicsScene,
                                 QListWidget, QListWidgetItem,
                                 QSizePolicy)
-from PySide6.QtCore import Qt, QRectF, QSize
+from PySide6.QtCore import Qt, QRectF, QSize, QThread, Signal
 from PySide6.QtGui import QPainter, QPixmap, QIcon
 
 from app import mock_data as md
@@ -21,6 +21,28 @@ from app.components.pdf_toolbar    import PdfToolbar
 from app.components.pdf_canvas     import make_page_pixmap, draw_bounding_boxes, draw_annotation_regions
 from app.components.metadata_panel import DrawingMetadataPanel
 from src.core.dtos.pdf_dtos import PDFDocumentDTO
+
+
+class AnnotationWorker(QThread):
+    """Background worker for non-blocking annotation detection."""
+    finished_signal = Signal(object)
+    error_signal = Signal(str)
+
+    def __init__(self, annotation_service, file_path: Path, parent=None):
+        super().__init__(parent)
+        self._service = annotation_service
+        self._file_path = file_path
+
+    def run(self):
+        try:
+            result = self._service.detect_all_pages(
+                self._file_path,
+                method='hybrid',
+                filter_template_regions=False
+            )
+            self.finished_signal.emit(result)
+        except Exception as e:
+            self.error_signal.emit(str(e))
 
 
 class PdfViewerPage(QWidget):
@@ -34,6 +56,7 @@ class PdfViewerPage(QWidget):
         self._doc_dto: PDFDocumentDTO | None = None
         self._annotation_result = None  # NEW: Store annotation detection result
         self._show_annotations = False  # NEW: Toggle for annotation visualization
+        self._annotation_worker: Optional[AnnotationWorker] = None
         self._zoom         = 1.0
         self._current_page = 1
         self._total_pages  = 1
@@ -90,31 +113,14 @@ class PdfViewerPage(QWidget):
         self._total_pages = doc_dto.total_pages
         self._current_page = 1
         
-        # Try to get annotation results from workflow if available
-        if self._controller and hasattr(self._controller, 'annotation_service'):
-            try:
-                print(f"Running annotation detection on {doc_dto.file_name}...")
-                # Run annotation detection on the PDF
-                # Use COLOR method WITHOUT template filtering for maximum coverage
-                # COLOR method works best for scanned drawings with colored annotations/markup
-                self._annotation_result = self._controller.annotation_service.detect_all_pages(
-                    doc_dto.file_path,
-                    method='hybrid',  # HYBRID finds native PDF markups, text blocks, and colored segmentation
-                    filter_template_regions=False  # DON'T filter - we want ALL detected regions
-                )
-                print(f"✓ Detected {self._annotation_result.total_regions} annotation regions across {self._annotation_result.total_pages} pages")
-                
-                # Show breakdown by page
-                for page_result in self._annotation_result.page_results:
-                    print(f"  Page {page_result.page_number + 1}: {len(page_result.regions)} regions")
-                
-            except Exception as e:
-                print(f"⚠ Could not run annotation detection: {e}")
-                import traceback
-                traceback.print_exc()
+        # Check if controller already has cached annotation results from workflow
+        if self._controller and getattr(self._controller, 'last_annotation_result', None):
+            last_res = self._controller.last_annotation_result
+            if getattr(last_res, 'file_name', '') == doc_dto.file_name:
+                self._annotation_result = last_res
+            else:
                 self._annotation_result = None
         else:
-            print("⚠ Annotation service not available")
             self._annotation_result = None
         
         # Update toolbar page count
@@ -132,13 +138,22 @@ class PdfViewerPage(QWidget):
             ("File Digest", f"{doc_dto.file_hash_sha256[:12]}..."),
         ]
         
-        # Add annotation count if available
+        # Add annotation count if available, or comments found in DB
         if self._annotation_result:
             fields.append(("Detected Regions", f"{self._annotation_result.total_regions} annotation boxes"))
             fields.append(("Detection Method", "Color Segmentation (HSV)"))
             fields.append(("Coverage", "All colored markup and annotations"))
         else:
-            fields.append(("Detected Regions", "Click 🔍 to enable annotation detection"))
+            db_comments = []
+            if self._controller and self._controller.current_drawing_id:
+                try:
+                    db_comments = self._controller.get_comments_for_drawing(self._controller.current_drawing_id) or []
+                except Exception:
+                    db_comments = []
+            if db_comments:
+                fields.append(("Review Comments", f"{len(db_comments)} comments saved in database"))
+            else:
+                fields.append(("Detected Regions", "Click 🔍 to inspect raw markup"))
         
         self._meta_panel.update_fields(fields)
 
@@ -273,8 +288,41 @@ class PdfViewerPage(QWidget):
     def _toggle_annotations(self, enabled: bool) -> None:
         """Toggle annotation region visualization on/off."""
         self._show_annotations = enabled
-        self._load_page(self._current_page)  # Redraw current page
-        # Note: thumbnails not redrawn to avoid performance hit
+        if enabled and self._annotation_result is None and self._doc_dto and self._controller:
+            self._start_background_annotation_detection()
+        else:
+            self._load_page(self._current_page)  # Redraw current page
+
+    def _start_background_annotation_detection(self) -> None:
+        """Runs annotation detection in a non-blocking background worker."""
+        if not (self._controller and hasattr(self._controller, 'annotation_service')):
+            return
+        if self._annotation_worker and self._annotation_worker.isRunning():
+            return
+
+        self._meta_panel.update_fields([
+            ("File Name", self._doc_dto.file_name if self._doc_dto else ""),
+            ("Detected Regions", "Detecting markup in background..."),
+        ])
+
+        self._annotation_worker = AnnotationWorker(
+            self._controller.annotation_service,
+            self._doc_dto.file_path,
+            parent=self
+        )
+        self._annotation_worker.finished_signal.connect(self._on_annotations_detected)
+        self._annotation_worker.error_signal.connect(lambda err: print(f"Annotation worker error: {err}"))
+        self._annotation_worker.start()
+
+    def _on_annotations_detected(self, result) -> None:
+        """Callback when background annotation worker completes."""
+        self._annotation_result = result
+        if self._controller:
+            self._controller.last_annotation_result = result
+        if self._doc_dto:
+            self.set_document(self._doc_dto)
+        else:
+            self._load_page(self._current_page)
 
     # ── Thumbnail strip ───────────────────────────────────────────
 

@@ -137,21 +137,32 @@ class ClassificationPage(QWidget):
         tb.addWidget(search)
         tb.addStretch()
 
-        dept_filt = QComboBox()
-        dept_filt.addItems([
-            "All Departments",
-            "Electrical Engineering",
-            "GPD",
-            "Pipe Support Engineering",
-            "Piping Engineering",
-            "Plakon",
-            "Structural & Physical Design",
-            "System Engineering",
-            "Unassigned",
-        ])
-        dept_filt.setFixedHeight(36)
-        dept_filt.currentTextChanged.connect(self._on_dept_filter_changed)
-        tb.addWidget(dept_filt)
+        self._dept_filt = QComboBox()
+        dept_options = ["All Departments"]
+        if self._controller and hasattr(self._controller, "get_all_departments"):
+            try:
+                db_depts = self._controller.get_all_departments()
+                for d in db_depts:
+                    if d.get("name") and d.get("name") not in dept_options:
+                        dept_options.append(d.get("name"))
+            except Exception:
+                pass
+        if len(dept_options) <= 1:
+            dept_options = [
+                "All Departments",
+                "Electrical Engineering",
+                "GPD",
+                "Pipe Support Engineering",
+                "Piping Engineering",
+                "Plakon",
+                "Structural & Physical Design",
+                "System Engineering",
+                "Unassigned",
+            ]
+        self._dept_filt.addItems(dept_options)
+        self._dept_filt.setFixedHeight(36)
+        self._dept_filt.currentTextChanged.connect(self._on_dept_filter_changed)
+        tb.addWidget(self._dept_filt)
 
         self._cat_filt = QComboBox()
         self._cat_filt.addItems(["All Categories"] + list(category_counts.keys()))
@@ -220,6 +231,20 @@ class ClassificationPage(QWidget):
                 self._controller.current_drawing_id
             )
             category_counts = db_counts if db_counts else {}
+
+            # Auto-select the drawing's department if available
+            if hasattr(self, "_dept_filt") and self._controller.drawing_repo:
+                try:
+                    dwg = self._controller.drawing_repo.get_drawing_by_id(self._controller.current_drawing_id)
+                    if dwg and dwg.get("department_name") and dwg.get("department_name") != "Unassigned":
+                        dept_name = dwg.get("department_name")
+                        idx = self._dept_filt.findText(dept_name)
+                        if idx >= 0:
+                            self._dept_filt.blockSignals(True)
+                            self._dept_filt.setCurrentIndex(idx)
+                            self._dept_filt.blockSignals(False)
+                except Exception:
+                    pass
         elif self._controller:
             self._comments_data = []
             category_counts = self._controller.get_category_counts() or {}
@@ -233,6 +258,9 @@ class ClassificationPage(QWidget):
         if hasattr(self, "_cat_cards"):
             for cat, card in self._cat_cards.items():
                 card.set_count(category_counts.get(cat, 0))
+
+        # Re-apply combined filters to match current department/category/status selections
+        self._apply_table_filter()
 
     # ── Model / drawer helpers ────────────────────────────────────
 
@@ -275,9 +303,20 @@ class ClassificationPage(QWidget):
         fragile when a QSortFilterProxyModel filter was active.
         """
         source_row = self._proxy.mapToSource(index).row()
-        if source_row < 0 or source_row >= len(self._comments_data):
-            return
-        c = self._comments_data[source_row]
+        item = self._model.item(source_row, 0)
+        cid = item.data(Qt.ItemDataRole.UserRole) if item else None
+
+        c = None
+        if cid:
+            for cand in self._comments_data:
+                if _get(cand, "id") == cid:
+                    c = cand
+                    break
+        if not c:
+            if 0 <= source_row < len(self._comments_data):
+                c = self._comments_data[source_row]
+            else:
+                return
 
         cid        = _get(c, "id", "")
         drawing_no = _get(c, "drawing_no", _get(c, "drawing_id", ""))
@@ -332,9 +371,20 @@ class ClassificationPage(QWidget):
         self._drawer.open_drawer()
 
     def _apply_table_filter(self) -> None:
-        """Apply combined category + status filter. Department is not a table column so skip."""
+        """Apply combined department + category + status filter."""
+        dept_text = self._dept_filt.currentText() if hasattr(self, "_dept_filt") else "All Departments"
         cat_text = self._cat_filt.currentText() if hasattr(self, "_cat_filt") else "All Categories"
         st_text = self._st_filt.currentText() if hasattr(self, "_st_filt") else "All Status"
+
+        # Determine current drawing department if available
+        drawing_dept = ""
+        if self._controller and self._controller.current_drawing_id and self._controller.drawing_repo:
+            try:
+                dwg = self._controller.drawing_repo.get_drawing_by_id(self._controller.current_drawing_id)
+                if dwg:
+                    drawing_dept = dwg.get("department_name", "") or ""
+            except Exception:
+                drawing_dept = ""
 
         # Rebuild the model from self._comments_data with combined filters
         self._model.removeRows(0, self._model.rowCount())
@@ -344,6 +394,12 @@ class ClassificationPage(QWidget):
             category   = _get(c, "category", "Other")
             confidence = _get(c, "confidence", 0.0)
             status     = _get(c, "status", "Pending")
+
+            # Check department
+            c_dept = _get(c, "department_name", "") or _get(c, "department_id", "") or drawing_dept
+            if dept_text != "All Departments" and dept_text:
+                if str(c_dept).strip().lower() != dept_text.strip().lower() and dept_text.strip().lower() not in str(c_dept).strip().lower():
+                    continue
 
             # Apply category filter
             if cat_text != "All Categories" and str(category) != cat_text:
@@ -365,11 +421,8 @@ class ClassificationPage(QWidget):
             self._model.appendRow([text_item, cat_item, conf_item, st_item])
 
     def _on_dept_filter_changed(self, text: str) -> None:
-        """Department filter — filters across all columns via proxy."""
-        if text == "All Departments" or not text:
-            self._proxy.setFilterFixedString("")
-        else:
-            self._proxy.setFilterFixedString(text)
+        """Department filter — rebuilds table with only matching departments."""
+        self._apply_table_filter()
 
     def _on_cat_filter_changed(self, text: str) -> None:
         """Category filter — rebuilds table with only matching categories."""
