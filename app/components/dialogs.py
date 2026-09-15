@@ -85,3 +85,22 @@ def open_folder(parent: QWidget | None = None) -> str:
         Selected directory path, or an empty string if cancelled.
     """
     return QFileDialog.getExistingDirectory(parent, "Select Folder")
+
+
+def open_multiple_pdf_or_zip_files(parent: QWidget | None = None) -> list[str]:
+    """
+    Open a file-chooser allowing multi-selection of PDF files and/or Zip archives.
+
+    Returns
+    -------
+    list[str]
+        List of selected file paths, or empty list if cancelled.
+    """
+    paths, _ = QFileDialog.getOpenFileNames(
+        parent,
+        "Select PDF Drawings or Zipped Folders",
+        "",
+        "PDF Files & Zip Archives (*.pdf *.zip);;PDF Files (*.pdf);;Zip Archives (*.zip);;All Files (*)",
+    )
+    return paths
+

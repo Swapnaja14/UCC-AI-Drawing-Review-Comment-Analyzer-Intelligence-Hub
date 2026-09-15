@@ -25,6 +25,10 @@ logger = get_logger(__name__)
 class ClassificationService:
     def __init__(self, model_dir: Optional[Path] = None):
         self.keywords = self._build_category_keywords()
+        self.keywords_tuples = {
+            cat: [(kw, kw.lower()) for kw in kws]
+            for cat, kws in self.keywords.items()
+        }
         self.HIGH_CONFIDENCE = 0.80
         self.LOW_CONFIDENCE = 0.60
         self.model_dir = model_dir or (Path(__file__).resolve().parent.parent.parent / "models" / "distilbert_engineering_classifier")
@@ -146,13 +150,12 @@ class ClassificationService:
         text_lower = text.lower()
         words = text_lower.split()
         
-        for category, kws in self.keywords.items():
+        for category, kw_pairs in self.keywords_tuples.items():
             # Find keyword matches with quality scoring
             matches = []
             match_score = 0.0
             
-            for kw in kws:
-                kw_lower = kw.lower()
+            for kw, kw_lower in kw_pairs:
                 # Exact word match (higher weight)
                 if kw_lower in words:
                     if kw not in matches:

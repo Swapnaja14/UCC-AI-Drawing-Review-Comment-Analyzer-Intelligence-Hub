@@ -48,7 +48,13 @@ from src.infrastructure.storage.repository import (
 )
 from src.core.dtos.pdf_dtos import PDFDocumentDTO, RenderedPageDTO
 from src.core.dtos.auth_dtos import UserDTO, SessionTokenDTO
-from src.core.dtos.workflow_dtos import WorkflowStepDTO, WorkflowResultDTO, FileValidationResultDTO
+from src.core.dtos.workflow_dtos import (
+    WorkflowStepDTO,
+    WorkflowResultDTO,
+    FileValidationResultDTO,
+    BatchWorkflowProgressDTO,
+    BatchWorkflowResultDTO
+)
 from src.core.dtos.export_dtos import ExportConfigDTO
 
 # Import new backend services
@@ -101,6 +107,41 @@ class WorkflowWorker(QThread):
         except Exception as e:
             logger.error(f"Error in WorkflowWorker: {e}")
             self.error_signal.emit(str(e))
+
+
+class BatchWorkflowWorker(QThread):
+    """Background QThread executing processing workflow across multiple drawings / zip folders."""
+
+    step_signal      = Signal(object)   # Emits BatchWorkflowProgressDTO
+    completed_signal = Signal(object)   # Emits BatchWorkflowResultDTO
+    error_signal     = Signal(str)      # Emits error string
+
+    def __init__(
+        self,
+        workflow_engine: ProcessingWorkflowEngine,
+        file_paths: List[str | Path],
+        department_id: Optional[str] = None,
+    ):
+        super().__init__()
+        self.workflow_engine = workflow_engine
+        self.file_paths      = file_paths
+        self.department_id   = department_id
+
+    def run(self):
+        try:
+            def on_progress(batch_snapshot: BatchWorkflowProgressDTO):
+                self.step_signal.emit(batch_snapshot)
+
+            result = self.workflow_engine.execute_batch_workflow(
+                self.file_paths,
+                progress_callback=on_progress,
+                department_id=self.department_id,
+            )
+            self.completed_signal.emit(result)
+        except Exception as e:
+            logger.error(f"Error in BatchWorkflowWorker: {e}")
+            self.error_signal.emit(str(e))
+
 
 
 class PDFLoadWorker(QThread):
@@ -224,6 +265,8 @@ class AppController(QObject):
     # Workflow pipeline signals
     workflow_step_signal      = Signal(object)   # WorkflowStepDTO
     workflow_completed_signal = Signal(object)   # WorkflowResultDTO
+    batch_workflow_step_signal      = Signal(object)   # BatchWorkflowProgressDTO
+    batch_workflow_completed_signal = Signal(object)   # BatchWorkflowResultDTO
 
     # Auth signals
     user_signed_in_signal  = Signal(object)   # SessionTokenDTO
@@ -288,9 +331,10 @@ class AppController(QObject):
         self._current_session: Optional[SessionTokenDTO] = None
 
         # ── Worker references ─────────────────────────────────────
-        self._load_worker:     Optional[PDFLoadWorker]   = None
-        self._render_worker:   Optional[PDFRenderWorker] = None
-        self._workflow_worker: Optional[WorkflowWorker]  = None
+        self._load_worker:           Optional[PDFLoadWorker]       = None
+        self._render_worker:         Optional[PDFRenderWorker]     = None
+        self._workflow_worker:       Optional[WorkflowWorker]      = None
+        self._batch_workflow_worker: Optional[BatchWorkflowWorker] = None
 
     # ── Properties ────────────────────────────────────────────────
 
@@ -348,6 +392,41 @@ class AppController(QObject):
         self._workflow_worker.error_signal.connect(self._on_doc_error)
         self._workflow_worker.start()
 
+    def start_single_processing(
+        self, file_path: str | Path, department_id: Optional[str] = None
+    ) -> None:
+        """Explicit single drawing processing workflow invocation."""
+        self.start_processing_workflow(file_path, department_id=department_id)
+
+    def start_batch_processing_workflow(
+        self, file_paths: List[str | Path], department_id: Optional[str] = None
+    ) -> None:
+        """Triggers non-blocking background batch workflow execution across multiple PDFs/zip folders."""
+        logger.info(
+            f"AppController launching batch workflow pipeline for {len(file_paths)} item(s) "
+            f"(department_id={department_id})"
+        )
+
+        if self._batch_workflow_worker and self._batch_workflow_worker.isRunning():
+            self._batch_workflow_worker.quit()
+            if not self._batch_workflow_worker.wait(2000):
+                self._batch_workflow_worker.terminate()
+                self._batch_workflow_worker.wait(1000)
+
+        self._batch_workflow_worker = BatchWorkflowWorker(
+            self.workflow_engine, file_paths, department_id=department_id
+        )
+        self._batch_workflow_worker.step_signal.connect(self._on_batch_workflow_step)
+        self._batch_workflow_worker.completed_signal.connect(self._on_batch_workflow_completed)
+        self._batch_workflow_worker.error_signal.connect(self._on_doc_error)
+        self._batch_workflow_worker.start()
+
+    def start_batch_processing(
+        self, file_paths: List[str | Path], department_id: Optional[str] = None
+    ) -> None:
+        """Explicit batch processing workflow invocation."""
+        self.start_batch_processing_workflow(file_paths, department_id=department_id)
+
     def get_all_departments(self) -> List[Dict[str, Any]]:
         """Returns all active engineering departments from the repository."""
         if self.department_repo:
@@ -356,6 +435,9 @@ class AppController(QObject):
 
     def _on_workflow_step(self, step_snapshot: WorkflowStepDTO) -> None:
         self.workflow_step_signal.emit(step_snapshot)
+
+    def _on_batch_workflow_step(self, batch_snapshot: BatchWorkflowProgressDTO) -> None:
+        self.batch_workflow_step_signal.emit(batch_snapshot)
 
     def _on_workflow_completed(self, result_dto: WorkflowResultDTO) -> None:
         logger.info(f"AppController: Workflow finished for '{result_dto.file_name}'.")
@@ -370,6 +452,26 @@ class AppController(QObject):
                 self._active_doc = doc_dto
                 self._current_drawing_id = result_dto.drawing_id
                 self.document_loaded_signal.emit(doc_dto)
+
+    def _on_batch_workflow_completed(self, batch_result_dto: BatchWorkflowResultDTO) -> None:
+        logger.info(
+            f"AppController: Batch workflow finished ({batch_result_dto.successful_files_count}/"
+            f"{batch_result_dto.total_files_processed} drawings processed)."
+        )
+        self.batch_workflow_completed_signal.emit(batch_result_dto)
+        # Auto-load the first successfully processed drawing for the viewer if available
+        if batch_result_dto.results:
+            first_res = batch_result_dto.results[0]
+            if hasattr(self._batch_workflow_worker, "file_paths"):
+                expanded = self.file_service.expand_file_sources(self._batch_workflow_worker.file_paths)
+                if expanded:
+                    first_path = expanded[0]
+                    if first_path.exists():
+                        doc_dto = self.pdf_service.process_pdf_document(first_path)
+                        self._active_doc = doc_dto
+                        self._current_drawing_id = first_res.drawing_id
+                        self.document_loaded_signal.emit(doc_dto)
+
 
     # ── Authentication API ─────────────────────────────────────────
 

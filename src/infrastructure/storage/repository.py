@@ -15,7 +15,7 @@ from pathlib import Path
 from typing import Any, Dict, List, Optional
 
 from sqlalchemy import create_engine, event, text
-from sqlalchemy.orm import Session, sessionmaker
+from sqlalchemy.orm import Session, sessionmaker, selectinload
 
 from src.core.dtos.pdf_dtos import PDFDocumentDTO
 from src.infrastructure.logging.logger import get_logger
@@ -87,11 +87,14 @@ class DatabaseEngine:
             connect_args={"check_same_thread": False},
         )
 
-        # Enable WAL mode and foreign-key enforcement for every new connection
+        # Enable WAL mode, high-performance caching, and foreign-key enforcement
         @event.listens_for(self.engine, "connect")
         def _set_sqlite_pragmas(dbapi_conn, _connection_record):
             cursor = dbapi_conn.cursor()
             cursor.execute("PRAGMA journal_mode=WAL;")
+            cursor.execute("PRAGMA synchronous=NORMAL;")
+            cursor.execute("PRAGMA cache_size=-64000;")  # 64MB RAM cache
+            cursor.execute("PRAGMA temp_store=MEMORY;")
             cursor.execute("PRAGMA foreign_keys=ON;")
             cursor.close()
 
@@ -126,7 +129,7 @@ class DatabaseEngine:
         logger.info(f"SQLite database ready at: {self.db_path}")
 
     def _run_migrations(self) -> None:
-        """Ensure newly added columns exist in existing SQLite databases."""
+        """Ensure newly added columns exist in existing SQLite databases and indexes are present."""
         try:
             with self.engine.begin() as conn:
                 # Check columns in comments table
@@ -145,6 +148,14 @@ class DatabaseEngine:
                 if dwg_columns and "department_id" not in dwg_columns:
                     logger.info("Migrating database: adding 'department_id' column to 'drawings' table")
                     conn.execute(text("ALTER TABLE drawings ADD COLUMN department_id VARCHAR(50);"))
+
+                # Ensure performance indexes exist for high-speed queries
+                conn.execute(text("CREATE INDEX IF NOT EXISTS idx_comments_drawing_id ON comments(drawing_id);"))
+                conn.execute(text("CREATE INDEX IF NOT EXISTS idx_comments_dept_id ON comments(department_id);"))
+                conn.execute(text("CREATE INDEX IF NOT EXISTS idx_comments_status ON comments(status);"))
+                conn.execute(text("CREATE INDEX IF NOT EXISTS idx_comments_category ON comments(category_name);"))
+                conn.execute(text("CREATE INDEX IF NOT EXISTS idx_drawings_dept_id ON drawings(department_id);"))
+                conn.execute(text("CREATE INDEX IF NOT EXISTS idx_drawings_proj_id ON drawings(project_id);"))
         except Exception as exc:
             logger.warning(f"Database migration check failed: {exc}")
 
@@ -238,6 +249,7 @@ class DrawingRepository:
         with self._db.get_session() as session:
             rows = (
                 session.query(DrawingModel)
+                .options(selectinload(DrawingModel.comments))
                 .order_by(DrawingModel.uploaded_at.desc())
                 .limit(limit)
                 .all()
