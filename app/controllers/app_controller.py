@@ -714,21 +714,27 @@ class AppController(QObject):
         if doc is not None:
             drawing_no = doc.file_name.rsplit(".", 1)[0]
 
+        cleaned_text = db_dict.get("cleaned_text") or ""
+        raw_text     = db_dict.get("raw_text") or ""
+        display_text = cleaned_text if cleaned_text.strip() else raw_text
+
         return {
-            "id":          db_dict.get("id", ""),
-            "drawing_id":  db_dict.get("drawing_id", ""),
-            "drawing_no":  drawing_no,
-            "page":        db_dict.get("page_number", 1),
-            "ocr_text":    db_dict.get("raw_text", ""),
-            "category":    db_dict.get("category_name") or "Uncategorized",
-            "department":  db_dict.get("department_name") or "Unassigned",
-            "confidence":  db_dict.get("confidence", 0.0),
-            "status":      db_dict.get("status", "Pending"),
-            "label":       db_dict.get("label", "comment_red"),
-            "bbox":        normalised_bbox,
-            "reviewer":    db_dict.get("user_id"),
-            "timestamp":   db_dict.get("created_at", ""),
-            "is_verified": db_dict.get("is_verified_by_human", False),
+            "id":           db_dict.get("id", ""),
+            "drawing_id":   db_dict.get("drawing_id", ""),
+            "drawing_no":   drawing_no,
+            "page":         db_dict.get("page_number", 1),
+            "ocr_text":     display_text,
+            "cleaned_text": cleaned_text,
+            "raw_text":     raw_text,
+            "category":     db_dict.get("category_name") or "Uncategorized",
+            "department":   db_dict.get("department_name") or "Unassigned",
+            "confidence":   db_dict.get("confidence", 0.0),
+            "status":       db_dict.get("status", "Pending"),
+            "label":        db_dict.get("label", "comment_red"),
+            "bbox":         normalised_bbox,
+            "reviewer":     db_dict.get("user_id"),
+            "timestamp":    db_dict.get("created_at", ""),
+            "is_verified":  db_dict.get("is_verified_by_human", False),
         }
 
     # ── Export Operations ──────────────────────────────────────────
