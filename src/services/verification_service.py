@@ -56,21 +56,48 @@ class VerificationService:
                 logger.warning(f"Could not persist audit log to database: {e}")
 
     def approve_comment(self, comment_id: str, reviewer_id: str = '', notes: str = '') -> bool:
+        old_status = 'Pending'
+        try:
+            if hasattr(self.comment_repo, 'get_comment_by_id'):
+                c_data = self.comment_repo.get_comment_by_id(comment_id)
+                if c_data:
+                    old_status = c_data.get('status', 'Pending')
+        except Exception:
+            pass
         success = self.comment_repo.update_comment_status(comment_id, 'Approved', True)
         if success:
-            self._log_audit(comment_id, AuditAction.APPROVE, reviewer_id, 'Pending', 'Approved', notes)
+            audit_note = notes or ('Confirmed by reviewer' if old_status == 'Approved' else '')
+            self._log_audit(comment_id, AuditAction.APPROVE, reviewer_id, old_status, 'Approved', audit_note)
         return success
 
     def reject_comment(self, comment_id: str, reviewer_id: str = '', notes: str = '') -> bool:
+        old_status = 'Pending'
+        try:
+            if hasattr(self.comment_repo, 'get_comment_by_id'):
+                c_data = self.comment_repo.get_comment_by_id(comment_id)
+                if c_data:
+                    old_status = c_data.get('status', 'Pending')
+        except Exception:
+            pass
         success = self.comment_repo.update_comment_status(comment_id, 'Rejected', True)
         if success:
-            self._log_audit(comment_id, AuditAction.REJECT, reviewer_id, 'Pending', 'Rejected', notes)
+            audit_note = notes or ('Overridden by reviewer' if old_status == 'Approved' else '')
+            self._log_audit(comment_id, AuditAction.REJECT, reviewer_id, old_status, 'Rejected', audit_note)
         return success
 
     def flag_comment(self, comment_id: str, reviewer_id: str = '', notes: str = '') -> bool:
+        old_status = 'Pending'
+        try:
+            if hasattr(self.comment_repo, 'get_comment_by_id'):
+                c_data = self.comment_repo.get_comment_by_id(comment_id)
+                if c_data:
+                    old_status = c_data.get('status', 'Pending')
+        except Exception:
+            pass
         success = self.comment_repo.update_comment_status(comment_id, 'Flagged', True)
         if success:
-            self._log_audit(comment_id, AuditAction.FLAG, reviewer_id, 'Pending', 'Flagged', notes)
+            audit_note = notes or ('Flagged for follow-up' if old_status == 'Approved' else '')
+            self._log_audit(comment_id, AuditAction.FLAG, reviewer_id, old_status, 'Flagged', audit_note)
         return success
 
     def edit_comment_text(self, comment_id: str, new_text: str, reviewer_id: str = '') -> bool:

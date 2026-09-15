@@ -41,6 +41,12 @@ class MockCommentRepository(CommentRepository):
                 return True
         return False
 
+    def get_comment_by_id(self, comment_id):
+        for c in self.comments:
+            if c['id'] == comment_id:
+                return c
+        return None
+
 def setup_repo():
     # Helper simulating the in-memory SQLite repo requirement
     return MockCommentRepository()

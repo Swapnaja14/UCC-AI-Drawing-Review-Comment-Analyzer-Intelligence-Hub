@@ -33,6 +33,7 @@ class TextCleaningService:
         self.engineering_dict = self._build_engineering_dictionary()
         self.discipline_taxonomies = self._build_discipline_taxonomies()
         self.known_typos = self._build_known_typos_map()
+        self._standard_vocab = self._build_standard_vocab()
         self.action_verbs = self._build_action_verbs_set()
         self.vocabulary = self._build_comprehensive_vocabulary()
         self.vocab_lookup = {word.upper(): word for word in self.vocabulary}
@@ -61,6 +62,24 @@ class TextCleaningService:
         are deliberately excluded to avoid corrupting standard reviewer comments.
         """
         return {
+            # Drawing & General Documentation
+            'DWG': 'Drawing',
+            'REV': 'Revision',
+            'REQD': 'Required',
+            "REQ'D": 'Required',
+            'QTY': 'Quantity',
+            'DIA': 'Diameter',
+            'THK': 'Thickness',
+            'MIN': 'Minimum',
+            'MAX': 'Maximum',
+            'ELEV': 'Elevation',
+            'COORD': 'Coordinate',
+            'SPECS': 'Specifications',
+            'DTL': 'Detail',
+            'SECT': 'Section',
+            'CTR': 'Center',
+            'REF': 'Reference',
+
             # Piping & Process
             'P&ID': 'Piping and Instrumentation Diagram',
             'P&I': 'Piping and Instrumentation',
@@ -230,6 +249,29 @@ class TextCleaningService:
             'DIMENSIO': 'DIMENSION',
             'DIMENSIOS': 'DIMENSIONS',
             'DIMESION': 'DIMENSION',
+            'DIMENION': 'DIMENSION',
+            'FLNAGE': 'FLANGE',
+            'VAVLE': 'VALVE',
+            'PIPNG': 'PIPING',
+            'ISOMETRC': 'ISOMETRIC',
+            'SPECFICATION': 'SPECIFICATION',
+            'SPECIFCATION': 'SPECIFICATION',
+            'SCHEDUL': 'SCHEDULE',
+            'CONECT': 'CONNECT',
+            'PRESSUR': 'PRESSURE',
+            'TEMPATURE': 'TEMPERATURE',
+            'ELEVATON': 'ELEVATION',
+            'FOUNDATON': 'FOUNDATION',
+            'STRUCTUR': 'STRUCTURE',
+            'ELECTIC': 'ELECTRIC',
+            'TOLERENCE': 'TOLERANCE',
+            'DIAMETR': 'DIAMETER',
+            'THICKNES': 'THICKNESS',
+            'CLEARNCE': 'CLEARANCE',
+            'INSTALATION': 'INSTALLATION',
+            'CORRECTON': 'CORRECTION',
+            'MODIFCATION': 'MODIFICATION',
+            'ALIGNMNT': 'ALIGNMENT',
             'NEST LOCATION': 'BEST LOCATION',
             'SPETTER': 'SPLITTER',
             'APROVED': 'APPROVED',
@@ -274,6 +316,30 @@ class TextCleaningService:
             'TYPICALY': 'TYPICALLY',
             'N.T.': 'N.T.S.',
             'NTS': 'N.T.S.',
+        }
+
+    def _build_standard_vocab(self) -> Set[str]:
+        """Core engineering terms for fuzzy spell correction."""
+        return {
+            "FLANGE", "FLANGES", "DIMENSION", "DIMENSIONS", "VALVE", "VALVES", "PIPING", "PIPE", "PIPES",
+            "ISOMETRIC", "SPECIFICATION", "SPECIFICATIONS", "SCHEDULE", "SCHEDULES", "PRESSURE", "TEMPERATURE",
+            "ELEVATION", "ELEVATIONS", "FOUNDATION", "FOUNDATIONS", "STRUCTURE", "STRUCTURES",
+            "TOLERANCE", "TOLERANCES", "CLEARANCE", "CLEARANCES", "INSTALLATION", "ALIGNMENT",
+            "MATERIAL", "MATERIALS", "CALCULATION", "CALCULATIONS", "REQUIREMENT", "REQUIREMENTS",
+            "ARRANGEMENT", "LOCATION", "LOCATIONS", "DESCRIPTION", "DESCRIPTIONS", "EXISTING", "APPROXIMATE",
+            "DRAWING", "DRAWINGS", "SECTION", "SECTIONS", "RECEIVER", "FEEDER", "SPLITTER", "APPROVED",
+            "VERIFY", "UPDATE", "CONFIRM", "REMOVE", "CHECK", "ROTATE", "REVISE",
+            "CORRECTION", "CORRECTIONS", "MODIFICATION", "MODIFICATIONS",
+            "EQUIPMENT", "INSTRUMENT", "INSTRUMENTS", "TRANSMITTER", "TRANSMITTERS"
+        }
+
+    def _build_action_verbs_set(self) -> Set[str]:
+        """Core engineering review action verbs."""
+        return {
+            "VERIFY", "UPDATE", "CONFIRM", "REMOVE", "CHECK", "ROTATE", 
+            "REVISE", "ADD", "SHOW", "INDICATE", "REFERENCE", "LOCATE",
+            "SPECIFY", "MATCH", "SWITCH", "CORRECT", "PROVIDE", "INCLUDE",
+            "CHANGE", "DELETE", "ALIGN", "EXTEND", "CONNECT", "INSTALL"
         }
 
     def _build_comprehensive_vocabulary(self) -> Set[str]:
@@ -781,6 +847,7 @@ class TextCleaningService:
             return initials, text
 
         return None, text
+
 
     def _segment_actions(self, text: str) -> List[str]:
         """Detects multi-action punch list items (e.g. '1. ... 2. ... 3. ...' or '(A) ... (B) ...')."""

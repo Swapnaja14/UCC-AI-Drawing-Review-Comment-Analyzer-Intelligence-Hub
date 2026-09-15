@@ -324,6 +324,21 @@ class SettingsPage(QWidget):
         ai_combo.currentTextChanged.connect(self._on_ai_classifier_changed)
         form.addRow(self._form_label("AI Classifier:"), ai_combo)
 
+        # AI Auto-Approval for High Confidence
+        auto_chk = QCheckBox("Automatically mark high-confidence comments as Approved")
+        auto_chk.setChecked(getattr(self._config.ai, "auto_approve_high_confidence", True))
+        auto_chk.toggled.connect(self._on_auto_approve_toggled)
+        form.addRow(self._form_label("Auto-Approval:"), auto_chk)
+
+        thresh_combo = QComboBox()
+        thresh_combo.addItems(["75%", "80%", "85%", "90%", "95%"])
+        cur_pct = f"{int(getattr(self._config.ai, 'auto_approve_threshold', 0.85) * 100)}%"
+        thresh_combo.setCurrentText(cur_pct if cur_pct in ["75%", "80%", "85%", "90%", "95%"] else "85%")
+        thresh_combo.setFixedHeight(36)
+        thresh_combo.setFixedWidth(200)
+        thresh_combo.currentTextChanged.connect(self._on_auto_approve_threshold_changed)
+        form.addRow(self._form_label("Auto-Approve Threshold:"), thresh_combo)
+
         # Default Export Format
         export_combo = QComboBox()
         export_combo.addItems(["Excel", "JSON", "CSV"])
@@ -355,6 +370,18 @@ class SettingsPage(QWidget):
     def _on_export_format_changed(self, text: str) -> None:
         self._config.export.default_format = text
         self._persist()
+
+    def _on_auto_approve_toggled(self, checked: bool) -> None:
+        self._config.ai.auto_approve_high_confidence = checked
+        self._persist()
+
+    def _on_auto_approve_threshold_changed(self, text: str) -> None:
+        try:
+            val = float(text.replace("%", "").strip()) / 100.0
+            self._config.ai.auto_approve_threshold = val
+            self._persist()
+        except ValueError:
+            pass
 
     def _build_categories(self) -> QWidget:
         page = QWidget()

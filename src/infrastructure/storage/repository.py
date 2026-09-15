@@ -667,6 +667,11 @@ class CommentRepository:
             )
             return [_comment_to_dict(c) for c in rows]
 
+    def get_comment_by_id(self, comment_id: str) -> Optional[Dict[str, Any]]:
+        with self._db.get_session() as session:
+            row = session.get(CommentModel, comment_id)
+            return _comment_to_dict(row) if row else None
+
     def update_comment_status(
         self,
         comment_id: str,

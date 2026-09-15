@@ -26,7 +26,7 @@ from src.services.pdf_service import PDFService
 from src.services.annotation_service_enhanced import AnnotationDetectionServiceEnhanced
 from src.services.text_cleaning_service import TextCleaningService
 from src.services.classification_service import ClassificationService
-from src.infrastructure.storage.repository import DrawingRepository, CommentRepository
+from src.infrastructure.storage.repository import DrawingRepository, CommentRepository, AuditLogRepository
 from src.infrastructure.logging.logger import get_logger
 
 logger = get_logger("WorkflowEngine")
@@ -47,6 +47,7 @@ class ProcessingWorkflowEngine:
         comment_repo: Optional[CommentRepository] = None,
         text_cleaning_service: Optional[TextCleaningService] = None,
         classification_service: Optional[ClassificationService] = None,
+        audit_repo: Optional[AuditLogRepository] = None,
     ) -> None:
         self.file_service = file_service
         self.pdf_service = pdf_service
@@ -55,6 +56,7 @@ class ProcessingWorkflowEngine:
         self.comment_repo = comment_repo
         self.text_cleaning_service = text_cleaning_service or TextCleaningService()
         self.classification_service = classification_service or ClassificationService()
+        self.audit_repo = audit_repo
         self._current_state = WorkflowState.IDLE
 
     @property
@@ -333,17 +335,45 @@ class ProcessingWorkflowEngine:
                     logger.debug(f"Error clearing previous comments: {del_err}")
                 for c_item in extracted_comments_data:
                     try:
-                        self.comment_repo.save_comment(
+                        conf = c_item.get("confidence", 0.0)
+                        auto_approve = True
+                        auto_threshold = 0.85
+                        try:
+                            from src.config import get_config
+                            cfg = get_config()
+                            auto_approve = getattr(cfg.ai, "auto_approve_high_confidence", True)
+                            auto_threshold = getattr(cfg.ai, "auto_approve_threshold", 0.85)
+                        except Exception:
+                            pass
+
+                        initial_status = "Approved" if (auto_approve and conf >= auto_threshold) else "Pending"
+
+                        saved_c = self.comment_repo.save_comment(
                             drawing_id=drawing_id,
                             page_number=c_item["page_number"],
                             raw_text=c_item["raw_text"],
                             cleaned_text=c_item.get("cleaned_text", ""),
                             bbox=c_item["bbox"],
-                            confidence=c_item.get("confidence", 0.0),
+                            confidence=conf,
                             category_name=c_item.get("category_name", "Uncategorized"),
                             department_id=effective_dept_id,
                             label=c_item.get("label", "comment_red"),
+                            status=initial_status,
                         )
+
+                        if initial_status == "Approved" and self.audit_repo and saved_c:
+                            try:
+                                self.audit_repo.create_audit_entry(
+                                    comment_id=saved_c.get("id"),
+                                    action="APPROVE",
+                                    reviewer_id="system_ai",
+                                    reviewer_name="AI Auto-Approval",
+                                    old_value="Pending",
+                                    new_value="Approved",
+                                    notes=f"Auto-approved by AI (Confidence: {int(conf * 100)}%)",
+                                )
+                            except Exception as audit_err:
+                                logger.debug(f"Auto-approve audit log error: {audit_err}")
                     except Exception as save_err:
                         logger.error(f"Error persisting comment {c_item}: {save_err}")
 
@@ -359,7 +389,8 @@ class ProcessingWorkflowEngine:
                 is_scanned=doc_dto.is_scanned,
                 status="Completed",
                 total_comments_found=total_saved if total_saved > 0 else total_regions,
-                processing_duration_seconds=duration
+                processing_duration_seconds=duration,
+                annotation_result=annotation_result,
             )
 
         except Exception as e:

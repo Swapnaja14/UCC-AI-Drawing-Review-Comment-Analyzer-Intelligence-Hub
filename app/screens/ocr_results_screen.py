@@ -205,11 +205,6 @@ class OcrResultsPage(QWidget):
         clean_btn.clicked.connect(self.clean_selected_comment)
         tb.addWidget(clean_btn)
 
-        export_btn = QPushButton("  ↑  Export")
-        export_btn.setObjectName("SecondaryBtn")
-        export_btn.setFixedHeight(36)
-        tb.addWidget(export_btn)
-
         root.addLayout(tb)
 
         # ── Table ─────────────────────────────────────────────────

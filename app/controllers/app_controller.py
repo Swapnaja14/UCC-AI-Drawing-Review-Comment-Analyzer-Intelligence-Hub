@@ -271,6 +271,7 @@ class AppController(QObject):
             comment_repo=self.comment_repo,
             text_cleaning_service=self.text_cleaning_service,
             classification_service=self.classification_service,
+            audit_repo=self.audit_repo,
         )
 
         # ── In-session state ──────────────────────────────────────
@@ -282,6 +283,7 @@ class AppController(QObject):
         # when querying or saving comments for the active drawing.
         # Value is "" (empty string) when no PDF has been loaded this session.
         self._current_drawing_id: str = ""
+        self.last_annotation_result: Optional[Any] = None
 
         self._current_session: Optional[SessionTokenDTO] = None
 
@@ -357,6 +359,8 @@ class AppController(QObject):
 
     def _on_workflow_completed(self, result_dto: WorkflowResultDTO) -> None:
         logger.info(f"AppController: Workflow finished for '{result_dto.file_name}'.")
+        if hasattr(result_dto, "annotation_result") and result_dto.annotation_result:
+            self.last_annotation_result = result_dto.annotation_result
         self.workflow_completed_signal.emit(result_dto)
         # Also auto-load document for viewer after workflow completes
         if self._workflow_worker:

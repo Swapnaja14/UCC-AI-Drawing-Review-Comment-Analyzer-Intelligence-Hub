@@ -63,6 +63,8 @@ def test_default_config_instantiation():
     assert isinstance(config.ai, AIConfig)
     assert config.ai.classifier_type == "hybrid_nlp"
     assert config.ai.confidence_threshold == 0.70
+    assert config.ai.auto_approve_high_confidence is True
+    assert config.ai.auto_approve_threshold == 0.85
     
     # UI Config
     assert isinstance(config.ui, UIConfig)
