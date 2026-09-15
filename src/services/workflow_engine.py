@@ -389,7 +389,8 @@ class ProcessingWorkflowEngine:
                 is_scanned=doc_dto.is_scanned,
                 status="Completed",
                 total_comments_found=total_saved if total_saved > 0 else total_regions,
-                processing_duration_seconds=duration
+                processing_duration_seconds=duration,
+                annotation_result=annotation_result,
             )
 
         except Exception as e:
