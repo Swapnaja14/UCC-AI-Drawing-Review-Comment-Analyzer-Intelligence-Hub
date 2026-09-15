@@ -53,6 +53,7 @@ class WorkflowResultDTO:
     status: str
     total_comments_found: int = 0
     processing_duration_seconds: float = 0.0
+    annotation_result: Optional[Any] = None
 
 
 @dataclass(frozen=True)
