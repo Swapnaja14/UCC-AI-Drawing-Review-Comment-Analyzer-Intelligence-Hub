@@ -82,6 +82,8 @@ class AIConfig:
     model_path: str = "models/distilbert_classifier"
     confidence_threshold: float = 0.70
     fallback_to_rules: bool = True
+    auto_approve_high_confidence: bool = True
+    auto_approve_threshold: float = 0.85
 
 
 @dataclass
@@ -191,6 +193,8 @@ class AppConfig:
             "UCC_OCR_CONFIDENCE_THRESHOLD": ("ocr.confidence_threshold", float),
             "UCC_AI_CLASSIFIER_TYPE": ("ai.classifier_type", str),
             "UCC_AI_MODEL_PATH": ("ai.model_path", str),
+            "UCC_AI_AUTO_APPROVE": ("ai.auto_approve_high_confidence", lambda v: v.lower() in ("1", "true", "yes")),
+            "UCC_AI_AUTO_APPROVE_THRESHOLD": ("ai.auto_approve_threshold", float),
             "UCC_UI_THEME": ("ui.theme", str),
             "UCC_UI_LANGUAGE": ("ui.language", str),
             "UCC_UI_DEFAULT_PROJECTS_DIR": ("ui.default_projects_dir", str),

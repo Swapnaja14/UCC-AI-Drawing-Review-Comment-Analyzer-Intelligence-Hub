@@ -271,6 +271,7 @@ class AppController(QObject):
             comment_repo=self.comment_repo,
             text_cleaning_service=self.text_cleaning_service,
             classification_service=self.classification_service,
+            audit_repo=self.audit_repo,
         )
 
         # ── In-session state ──────────────────────────────────────

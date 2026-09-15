@@ -83,12 +83,15 @@ class HumanReviewPage(QWidget):
             db_comments = self._controller.get_comments_for_drawing(
                 self._controller.current_drawing_id
             )
-            self._comments: List[Any] = db_comments if db_comments else []
+            self._all_comments: List[Any] = db_comments if db_comments else []
         elif self._controller:
-            self._comments = []
+            self._all_comments = []
         else:
-            self._comments = list(md.COMMENTS)
+            self._all_comments = list(md.COMMENTS)
 
+        self._comments: List[Any] = list(self._all_comments)
+        self._current_filter: str = "Needs Attention"
+        self._is_all_auto_approved_notice: bool = False
         self._idx     = 0
         self._box_items: Dict[str, BBoxItem] = {}
         self._current_canvas_page: Optional[int] = None
@@ -96,7 +99,7 @@ class HumanReviewPage(QWidget):
         # In-memory status cache: updated immediately on action, persisted via controller
         self._statuses: Dict[str, str] = {
             _get(c, "id"): _get(c, "status", "Pending")
-            for c in self._comments
+            for c in self._all_comments
         }
         self.setFocusPolicy(Qt.FocusPolicy.StrongFocus)
 
@@ -130,7 +133,7 @@ class HumanReviewPage(QWidget):
         splitter.setStretchFactor(1, 45)
 
         root.addWidget(splitter)
-        self._load_comment()
+        self._apply_filter()
 
     def reload_comments(self) -> None:
         """
@@ -143,15 +146,80 @@ class HumanReviewPage(QWidget):
             db_comments = self._controller.get_comments_for_drawing(
                 self._controller.current_drawing_id
             )
-            self._comments = db_comments if db_comments else []
-            self._idx = 0
+            self._all_comments = db_comments if db_comments else []
             self._statuses = {
-                c["id"]: c["status"] for c in self._comments
+                c["id"]: c["status"] for c in self._all_comments
             }
-            if hasattr(self, "_prog_bar"):
-                self._prog_bar.setRange(0, max(1, len(self._comments)))
-            self._load_canvas()
-            self._load_comment()
+            self._apply_filter()
+
+    def _apply_filter(self, keep_comment_id: Optional[str] = None) -> None:
+        """Filter self._comments from self._all_comments according to selected view filter."""
+        flt = getattr(self, "_current_filter", "Needs Attention")
+
+        if flt == "Needs Attention":
+            # Show comments that need review: Pending, Flagged, or confidence < 0.85 (excluding Rejected)
+            filtered = [
+                c for c in self._all_comments
+                if self._statuses.get(_get(c, "id"), _get(c, "status", "Pending")) in ("Pending", "Flagged")
+                or (_get(c, "confidence", 0.0) < 0.85 and self._statuses.get(_get(c, "id"), _get(c, "status")) != "Rejected")
+            ]
+            if not filtered and self._all_comments:
+                self._comments = list(self._all_comments)
+                self._is_all_auto_approved_notice = True
+            else:
+                self._comments = filtered
+                self._is_all_auto_approved_notice = False
+        elif flt == "All Comments":
+            self._comments = list(self._all_comments)
+            self._is_all_auto_approved_notice = False
+        elif flt == "Approved":
+            self._comments = [
+                c for c in self._all_comments
+                if self._statuses.get(_get(c, "id"), _get(c, "status", "Pending")) == "Approved"
+            ]
+            self._is_all_auto_approved_notice = False
+        elif flt == "Pending":
+            self._comments = [
+                c for c in self._all_comments
+                if self._statuses.get(_get(c, "id"), _get(c, "status", "Pending")) == "Pending"
+            ]
+            self._is_all_auto_approved_notice = False
+        elif flt == "Rejected":
+            self._comments = [
+                c for c in self._all_comments
+                if self._statuses.get(_get(c, "id"), _get(c, "status", "Pending")) == "Rejected"
+            ]
+            self._is_all_auto_approved_notice = False
+        elif flt == "Flagged":
+            self._comments = [
+                c for c in self._all_comments
+                if self._statuses.get(_get(c, "id"), _get(c, "status", "Pending")) == "Flagged"
+            ]
+            self._is_all_auto_approved_notice = False
+        else:
+            self._comments = list(self._all_comments)
+            self._is_all_auto_approved_notice = False
+
+        if keep_comment_id:
+            found_idx = next(
+                (i for i, c in enumerate(self._comments) if _get(c, "id") == keep_comment_id),
+                0
+            )
+            self._idx = found_idx
+        else:
+            self._idx = 0
+
+        if hasattr(self, "_prog_bar"):
+            self._prog_bar.setRange(0, max(1, len(self._comments)))
+            self._prog_bar.setValue(min(self._idx + 1, len(self._comments)))
+
+        self._load_canvas()
+        self._load_comment()
+
+    def _on_filter_changed(self, text: str) -> None:
+        self._current_filter = text
+        cid = _get(self._comments[self._idx], "id") if self._comments and self._idx < len(self._comments) else None
+        self._apply_filter(keep_comment_id=cid)
 
     # ── Panel builder ─────────────────────────────────────────────
 
@@ -169,6 +237,24 @@ class HumanReviewPage(QWidget):
         self._prog_lbl.setFont(QFont("Segoe UI Variable", 14, QFont.Weight.DemiBold))
         prog_hdr.addWidget(self._prog_lbl)
         prog_hdr.addStretch()
+
+        filter_lbl = QLabel("View:")
+        filter_lbl.setObjectName("SubCaption")
+        prog_hdr.addWidget(filter_lbl)
+
+        self._filter_cb = QComboBox()
+        self._filter_cb.setFixedHeight(30)
+        self._filter_cb.setMinimumWidth(155)
+        self._filter_cb.addItems([
+            "Needs Attention",
+            "All Comments",
+            "Approved",
+            "Pending",
+            "Rejected",
+            "Flagged",
+        ])
+        self._filter_cb.currentTextChanged.connect(self._on_filter_changed)
+        prog_hdr.addWidget(self._filter_cb)
         lay.addLayout(prog_hdr)
 
         self._prog_bar = QProgressBar()
@@ -233,6 +319,15 @@ class HumanReviewPage(QWidget):
         status_row.addWidget(QLabel("Current Status:"))
         self._status_chip = StatusChip("Pending")
         status_row.addWidget(self._status_chip)
+
+        self._auto_approved_badge = QLabel("🤖 Auto-Approved (AI)")
+        self._auto_approved_badge.setStyleSheet(
+            "background: rgba(62, 155, 255, 0.15); color: #3E9BFF; border: 1px solid rgba(62, 155, 255, 0.35); "
+            "border-radius: 4px; padding: 2px 8px; font-size: 11px; font-weight: bold;"
+        )
+        self._auto_approved_badge.hide()
+        status_row.addWidget(self._auto_approved_badge)
+
         status_row.addStretch()
         lay.addLayout(status_row)
 
@@ -461,14 +556,34 @@ class HumanReviewPage(QWidget):
 
     def _load_comment(self) -> None:
         if not self._comments:
-            self._prog_lbl.setText("No comments available")
+            self._prog_lbl.setText("No comments in this view")
+            self._prog_bar.setValue(0)
+            self._comment_id_lbl.setText("")
+            self._ocr_edit.setPlainText("")
+            self._conf_lbl.setText("Confidence: —")
+            self._cat_badge.set_category("")
+            if hasattr(self, "_auto_approved_badge"):
+                self._auto_approved_badge.hide()
+            self._prev_btn.setEnabled(False)
+            self._next_btn.setEnabled(False)
+            self._approve_btn.setEnabled(False)
+            self._reject_btn.setEnabled(False)
+            self._flag_btn.setEnabled(False)
+            self._edit_btn.setEnabled(False)
             return
 
-        c     = self._comments[self._idx]
+        self._approve_btn.setEnabled(True)
+        self._reject_btn.setEnabled(True)
+        self._flag_btn.setEnabled(True)
+        self._edit_btn.setEnabled(True)
+
         total = len(self._comments)
+        self._idx = max(0, min(self._idx, total - 1))
+        c     = self._comments[self._idx]
         cid   = _get(c, "id", "")
 
-        self._prog_lbl.setText(f"Comment {self._idx + 1} of {total}")
+        notice = " (Auto-Approved Drawing)" if getattr(self, "_is_all_auto_approved_notice", False) else ""
+        self._prog_lbl.setText(f"Comment {self._idx + 1} of {total}{notice}")
         self._prog_bar.setValue(self._idx + 1)
 
         drawing_ref = _get(c, "drawing_no", _get(c, "drawing_id", ""))
@@ -482,7 +597,14 @@ class HumanReviewPage(QWidget):
 
         confidence = _get(c, "confidence", 0.0)
         self._conf_lbl.setText(f"Confidence: {int(confidence * 100)}%")
-        self._status_chip.set_status(self._statuses.get(cid, _get(c, "status", "Pending")))
+        cur_status = self._statuses.get(cid, _get(c, "status", "Pending"))
+        self._status_chip.set_status(cur_status)
+
+        is_human = _get(c, "is_verified_by_human", False)
+        if cur_status == "Approved" and not is_human and hasattr(self, "_auto_approved_badge"):
+            self._auto_approved_badge.show()
+        elif hasattr(self, "_auto_approved_badge"):
+            self._auto_approved_badge.hide()
 
         self._prev_btn.setEnabled(self._idx > 0)
         self._next_btn.setEnabled(self._idx < total - 1)
@@ -607,6 +729,27 @@ class HumanReviewPage(QWidget):
         cid = _get(c, "id", "")
         self._statuses[cid] = status
         self._status_chip.set_status(status)
+
+        # Update in-memory objects
+        if isinstance(c, dict):
+            c["status"] = status
+            c["is_verified_by_human"] = True
+        else:
+            setattr(c, "status", status)
+            setattr(c, "is_verified_by_human", True)
+
+        for ac in getattr(self, "_all_comments", []):
+            if _get(ac, "id") == cid:
+                if isinstance(ac, dict):
+                    ac["status"] = status
+                    ac["is_verified_by_human"] = True
+                else:
+                    setattr(ac, "status", status)
+                    setattr(ac, "is_verified_by_human", True)
+                break
+
+        if hasattr(self, "_auto_approved_badge"):
+            self._auto_approved_badge.hide()
 
         # INTEGRATION NOTE:
         # Status is persisted through AppController → CommentRepository.
