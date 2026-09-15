@@ -31,6 +31,7 @@ class TextCleaningService:
         self.engineering_dict = self._build_engineering_dictionary()
         self.discipline_taxonomies = self._build_discipline_taxonomies()
         self.known_typos = self._build_known_typos_map()
+        self._standard_vocab = self._build_standard_vocab()
         self.action_verbs = self._build_action_verbs_set()
         self.high_priority_keywords = {
             "DO NOT", "INCORRECT", "WRONG", "CRITICAL", "SAFETY", 
@@ -51,6 +52,24 @@ class TextCleaningService:
     def _build_engineering_dictionary(self) -> Dict[str, str]:
         """Comprehensive multi-discipline engineering acronym and terminology dictionary."""
         return {
+            # Drawing & General Documentation
+            'DWG': 'Drawing',
+            'REV': 'Revision',
+            'REQD': 'Required',
+            "REQ'D": 'Required',
+            'QTY': 'Quantity',
+            'DIA': 'Diameter',
+            'THK': 'Thickness',
+            'MIN': 'Minimum',
+            'MAX': 'Maximum',
+            'ELEV': 'Elevation',
+            'COORD': 'Coordinate',
+            'SPECS': 'Specifications',
+            'DTL': 'Detail',
+            'SECT': 'Section',
+            'CTR': 'Center',
+            'REF': 'Reference',
+
             # Piping & Process
             'P&ID': 'Piping and Instrumentation Diagram',
             'P&I': 'Piping and Instrumentation',
@@ -217,6 +236,29 @@ class TextCleaningService:
             'RECIEVER': 'RECEIVER',
             'DIMENSIO': 'DIMENSION',
             'DIMENSIOS': 'DIMENSIONS',
+            'DIMENION': 'DIMENSION',
+            'FLNAGE': 'FLANGE',
+            'VAVLE': 'VALVE',
+            'PIPNG': 'PIPING',
+            'ISOMETRC': 'ISOMETRIC',
+            'SPECFICATION': 'SPECIFICATION',
+            'SPECIFCATION': 'SPECIFICATION',
+            'SCHEDUL': 'SCHEDULE',
+            'CONECT': 'CONNECT',
+            'PRESSUR': 'PRESSURE',
+            'TEMPATURE': 'TEMPERATURE',
+            'ELEVATON': 'ELEVATION',
+            'FOUNDATON': 'FOUNDATION',
+            'STRUCTUR': 'STRUCTURE',
+            'ELECTIC': 'ELECTRIC',
+            'TOLERENCE': 'TOLERANCE',
+            'DIAMETR': 'DIAMETER',
+            'THICKNES': 'THICKNESS',
+            'CLEARNCE': 'CLEARANCE',
+            'INSTALATION': 'INSTALLATION',
+            'CORRECTON': 'CORRECTION',
+            'MODIFCATION': 'MODIFICATION',
+            'ALIGNMNT': 'ALIGNMENT',
             'NEST LOCATION': 'BEST LOCATION',
             'SPETTER': 'SPLITTER',
             'APROVED': 'APPROVED',
@@ -239,6 +281,21 @@ class TextCleaningService:
             'DRAWNG': 'DRAWING',
             'MATERIA': 'MATERIAL',
             'REQUIRMENT': 'REQUIREMENT',
+        }
+
+    def _build_standard_vocab(self) -> Set[str]:
+        """Core engineering terms for fuzzy spell correction."""
+        return {
+            "FLANGE", "FLANGES", "DIMENSION", "DIMENSIONS", "VALVE", "VALVES", "PIPING", "PIPE", "PIPES",
+            "ISOMETRIC", "SPECIFICATION", "SPECIFICATIONS", "SCHEDULE", "SCHEDULES", "PRESSURE", "TEMPERATURE",
+            "ELEVATION", "ELEVATIONS", "FOUNDATION", "FOUNDATIONS", "STRUCTURE", "STRUCTURES",
+            "TOLERANCE", "TOLERANCES", "CLEARANCE", "CLEARANCES", "INSTALLATION", "ALIGNMENT",
+            "MATERIAL", "MATERIALS", "CALCULATION", "CALCULATIONS", "REQUIREMENT", "REQUIREMENTS",
+            "ARRANGEMENT", "LOCATION", "LOCATIONS", "DESCRIPTION", "DESCRIPTIONS", "EXISTING", "APPROXIMATE",
+            "DRAWING", "DRAWINGS", "SECTION", "SECTIONS", "RECEIVER", "FEEDER", "SPLITTER", "APPROVED",
+            "VERIFY", "UPDATE", "CONFIRM", "REMOVE", "CHECK", "ROTATE", "REVISE",
+            "CORRECTION", "CORRECTIONS", "MODIFICATION", "MODIFICATIONS",
+            "EQUIPMENT", "INSTRUMENT", "INSTRUMENTS", "TRANSMITTER", "TRANSMITTERS"
         }
 
     def _build_action_verbs_set(self) -> Set[str]:
@@ -406,7 +463,7 @@ class TextCleaningService:
             if re.search(pattern, text, re.IGNORECASE):
                 text = re.sub(pattern, replacement, text, flags=re.IGNORECASE)
 
-        # 2. Word-level known typos
+        # 2. Word-level known typos and fuzzy domain spelling
         words = text.split()
         cleaned_words = []
         for w in words:
@@ -415,10 +472,26 @@ class TextCleaningService:
             
             if upper_token in self.known_typos:
                 corrected_w = self.known_typos[upper_token]
-                # Preserve original punctuation
-                replaced = w.replace(clean_token, corrected_w)
+                # Match original casing
+                if clean_token.isupper():
+                    target_replace = corrected_w
+                elif clean_token.istitle():
+                    target_replace = corrected_w.title()
+                else:
+                    target_replace = corrected_w.lower()
+                replaced = w.replace(clean_token, target_replace)
                 cleaned_words.append(replaced)
-                corrections.append(CorrectionDTO(original=clean_token, corrected=corrected_w, correction_type='spelling'))
+                corrections.append(CorrectionDTO(original=clean_token, corrected=target_replace, correction_type='spelling'))
+            elif len(upper_token) >= 5 and upper_token.isalpha() and upper_token not in self.engineering_dict and upper_token not in self._standard_vocab:
+                matches = difflib.get_close_matches(upper_token, self._standard_vocab, n=1, cutoff=0.82)
+                if matches and matches[0] != upper_token:
+                    matched = matches[0]
+                    target_replace = matched if clean_token.isupper() else (matched.title() if clean_token.istitle() else matched.lower())
+                    replaced = w.replace(clean_token, target_replace)
+                    cleaned_words.append(replaced)
+                    corrections.append(CorrectionDTO(original=clean_token, corrected=target_replace, correction_type='spelling'))
+                else:
+                    cleaned_words.append(w)
             else:
                 cleaned_words.append(w)
 
@@ -437,10 +510,22 @@ class TextCleaningService:
         expanded_words = []
         for word in words:
             clean_word = word.strip('.,!?;:()"\'')
-            if clean_word in self.engineering_dict:
-                expanded = self.engineering_dict[clean_word]
+            upper_word = clean_word.upper()
+            if upper_word in self.engineering_dict:
+                expanded = self.engineering_dict[upper_word]
                 expanded_words.append(word.replace(clean_word, expanded))
                 corrections.append(CorrectionDTO(original=clean_word, corrected=expanded, correction_type='abbreviation'))
+            elif "-" in clean_word and any(c.isalpha() for c in clean_word) and any(c.isdigit() for c in clean_word):
+                # Handle hyphenated tags like PSV-101, SCH-40, P&ID-01
+                parts = clean_word.split("-", 1)
+                prefix_upper = parts[0].upper()
+                if prefix_upper in self.engineering_dict and len(prefix_upper) >= 2:
+                    expanded_prefix = self.engineering_dict[prefix_upper]
+                    expanded_tag = f"{expanded_prefix}-{parts[1]}"
+                    expanded_words.append(word.replace(clean_word, expanded_tag))
+                    corrections.append(CorrectionDTO(original=parts[0], corrected=expanded_prefix, correction_type='abbreviation'))
+                else:
+                    expanded_words.append(word)
             else:
                 expanded_words.append(word)
 
