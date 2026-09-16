@@ -163,6 +163,18 @@ class ProcessingWorkflowEngine:
                                 min(p_obj.rect.height, reg.y1 + pad)
                             )
                             
+                            # Convert visual crop_rect to unrotated clip for PyMuPDF text & annot APIs
+                            if p_obj.rotation != 0:
+                                crop_unrot = crop_rect * p_obj.derotation_matrix
+                                unrot_clip = fitz.Rect(
+                                    min(crop_unrot.x0, crop_unrot.x1),
+                                    min(crop_unrot.y0, crop_unrot.y1),
+                                    max(crop_unrot.x0, crop_unrot.x1),
+                                    max(crop_unrot.y0, crop_unrot.y1)
+                                )
+                            else:
+                                unrot_clip = crop_rect
+
                             # Strictly filter out Title Blocks and Review Status Stamps
                             if AnnotationDetectionServiceEnhanced._is_title_block_or_status_stamp(p_obj, crop_rect, envelopes=page_envs):
                                 continue
@@ -172,7 +184,7 @@ class ProcessingWorkflowEngine:
                             # 1. Check for native annotation content (FreeText callouts, Stamps, Notes)
                             try:
                                 for annot in p_obj.annots():
-                                    if annot.rect.intersects(crop_rect):
+                                    if annot.rect.intersects(unrot_clip):
                                         c_text = (annot.info.get('content') or '').strip()
                                         if len(c_text) >= 3 and not (len(c_text) <= 2 and c_text.upper() in ['A','B','C','D','E','F','G','H','1','2','3','4','5','6','7','8']):
                                             raw_ocr_text = c_text
@@ -184,7 +196,7 @@ class ProcessingWorkflowEngine:
                             if not raw_ocr_text:
                                 try:
                                     colored_spans_text = []
-                                    annot_text_dict = p_obj.get_text("dict", clip=crop_rect)
+                                    annot_text_dict = p_obj.get_text("dict", clip=unrot_clip)
                                     for b in annot_text_dict.get("blocks", []):
                                         if b.get("type") == 0:
                                             for l in b.get("lines", []):
@@ -212,7 +224,7 @@ class ProcessingWorkflowEngine:
                             # 3. Check for enclosed digital text inside revision clouds and redline markups
                             if not raw_ocr_text:
                                 try:
-                                    enclosed_digital_text = p_obj.get_text("text", clip=crop_rect).strip()
+                                    enclosed_digital_text = p_obj.get_text("text", clip=unrot_clip).strip()
                                     if enclosed_digital_text:
                                         # Normalize multiple spaces and line breaks
                                         clean_candidate = " ".join(enclosed_digital_text.split())
@@ -293,6 +305,49 @@ class ProcessingWorkflowEngine:
                     pdf_doc.close()
                 except Exception as e:
                     logger.error(f"OCR processing failed: {e}")
+
+            # Deduplicate extracted comments on the same page
+            deduped_comments = []
+            for item in extracted_comments_data:
+                p_num = item["page_number"]
+                b = item["bbox"]
+                t = (item.get("cleaned_text") or item.get("raw_text") or "").strip().upper()
+                
+                merged = False
+                for kept in deduped_comments:
+                    if kept["page_number"] != p_num:
+                        continue
+                    kb = kept["bbox"]
+                    kt = (kept.get("cleaned_text") or kept.get("raw_text") or "").strip().upper()
+                    
+                    # Calculate spatial overlap between b and kb
+                    xi_min = max(b[0], kb[0])
+                    yi_min = max(b[1], kb[1])
+                    xi_max = min(b[2], kb[2])
+                    yi_max = min(b[3], kb[3])
+                    inter_w = max(0.0, xi_max - xi_min)
+                    inter_h = max(0.0, yi_max - yi_min)
+                    inter_area = inter_w * inter_h
+                    
+                    b_area = max(1.0, (b[2] - b[0]) * (b[3] - b[1]))
+                    kb_area = max(1.0, (kb[2] - kb[0]) * (kb[3] - kb[1]))
+                    iou = inter_area / (b_area + kb_area - inter_area) if (b_area + kb_area - inter_area) > 0 else 0.0
+                    containment = inter_area / min(b_area, kb_area)
+                    
+                    # If same text nearby OR strong spatial overlap
+                    same_text = (t == kt or t in kt or kt in t) and (abs(b[0] - kb[0]) < 60 and abs(b[1] - kb[1]) < 60)
+                    if same_text or iou > 0.35 or containment > 0.60:
+                        kept["bbox"] = (min(b[0], kb[0]), min(b[1], kb[1]), max(b[2], kb[2]), max(b[3], kb[3]))
+                        if len(item.get("cleaned_text", "")) > len(kept.get("cleaned_text", "")):
+                            kept["raw_text"] = item["raw_text"]
+                            kept["cleaned_text"] = item["cleaned_text"]
+                        kept["confidence"] = max(kept["confidence"], item["confidence"])
+                        merged = True
+                        break
+                        
+                if not merged:
+                    deduped_comments.append(item)
+            extracted_comments_data = deduped_comments
 
             # ── Step 5: Batched AI Category Classification ─────────
             notify("AI Classification", WorkflowState.AI_CLASSIFYING, 90, f"Classifying review comments with AI.")
