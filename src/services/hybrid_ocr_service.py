@@ -3,6 +3,7 @@ Hybrid OCR Service for Engineering Drawing Processing
 Uses Tesseract for printed text and TrOCR for handwritten text
 """
 import logging
+import os
 from pathlib import Path
 from typing import Dict, List, Optional, Tuple, Literal
 import pymupdf as fitz
