@@ -1,5 +1,5 @@
 from typing import List, Optional, Dict
-from sqlalchemy import func
+from sqlalchemy import func, case
 from datetime import datetime
 
 from src.infrastructure.storage.repository import DatabaseEngine
@@ -48,22 +48,35 @@ class AnalyticsService:
             total_drawings = session.query(func.count(DrawingModel.id)).scalar() or 0
             total_pages = session.query(func.count(PageModel.id)).scalar() or 0
             
-            comments = session.query(CommentModel).all()
-            total_comments = len(comments)
+            # Fast-path single SQL aggregation query
+            stats = session.query(
+                func.count(CommentModel.id),
+                func.sum(case((CommentModel.status == "Approved", 1), else_=0)),
+                func.sum(case((CommentModel.status == "Rejected", 1), else_=0)),
+                func.sum(case((CommentModel.status == "Pending", 1), else_=0)),
+                func.sum(case((CommentModel.status == "Flagged", 1), else_=0)),
+                func.avg(CommentModel.confidence),
+                func.sum(case((CommentModel.confidence >= 0.85, 1), else_=0)),
+                func.sum(case((CommentModel.confidence < 0.60, 1), else_=0)),
+                func.sum(case(((CommentModel.status == "Approved") & (CommentModel.is_verified_by_human == True), 1), else_=0))
+            ).first()
             
-            approved_count = sum(1 for c in comments if c.status == "Approved")
-            rejected_count = sum(1 for c in comments if c.status == "Rejected")
-            pending_count = sum(1 for c in comments if c.status == "Pending")
-            flagged_count = sum(1 for c in comments if c.status == "Flagged")
-            
-            approved_verified = sum(1 for c in comments if c.status == "Approved" and c.is_verified_by_human)
+            if stats:
+                total_comments = stats[0] or 0
+                approved_count = stats[1] or 0
+                rejected_count = stats[2] or 0
+                pending_count = stats[3] or 0
+                flagged_count = stats[4] or 0
+                avg_confidence = float(stats[5] or 0.0)
+                high_conf = stats[6] or 0
+                low_conf = stats[7] or 0
+                approved_verified = stats[8] or 0
+            else:
+                total_comments = approved_count = rejected_count = pending_count = flagged_count = 0
+                avg_confidence = 0.0
+                high_conf = low_conf = approved_verified = 0
+
             accuracy_rate = (approved_verified / total_comments * 100.0) if total_comments > 0 else None
-            
-            avg_confidence = sum((c.confidence or 0.0) for c in comments) / total_comments if total_comments > 0 else 0.0
-            
-            high_conf = sum(1 for c in comments if (c.confidence or 0.0) >= 0.85)
-            low_conf = sum(1 for c in comments if (c.confidence or 0.0) < 0.60)
-            
             high_confidence_pct = (high_conf / total_comments * 100.0) if total_comments > 0 else 0.0
             low_confidence_pct = (low_conf / total_comments * 100.0) if total_comments > 0 else 0.0
             
@@ -86,9 +99,13 @@ class AnalyticsService:
         self,
         drawing_id: Optional[str] = None,
         department_name: Optional[str] = None,
+        include_rejected: bool = True,
     ) -> List[CategoryDistributionDTO]:
         with self._db.get_session() as session:
-            query = session.query(CommentModel.category_name, func.count(CommentModel.id)).group_by(CommentModel.category_name)
+            query = session.query(CommentModel.category_name, func.count(CommentModel.id))
+            if not include_rejected:
+                query = query.filter(CommentModel.status != "Rejected")
+            query = query.group_by(CommentModel.category_name)
             if drawing_id:
                 query = query.filter(CommentModel.drawing_id == drawing_id)
             if department_name:
@@ -152,42 +169,48 @@ class AnalyticsService:
         drawing_id: Optional[str] = None,
         department_name: Optional[str] = None,
         top_n: int = 10,
+        include_rejected: bool = False,
     ) -> List[CategoryDistributionDTO]:
-        distribution = self.get_category_distribution(drawing_id=drawing_id, department_name=department_name)
+        distribution = self.get_category_distribution(
+            drawing_id=drawing_id,
+            department_name=department_name,
+            include_rejected=include_rejected,
+        )
         return distribution[:top_n]
 
     def get_reviewer_metrics(self) -> List[ReviewerMetricsDTO]:
         with self._db.get_session() as session:
-            comments = session.query(CommentModel).filter(CommentModel.is_verified_by_human == True, CommentModel.user_id != None).all()
-            user_ids = {c.user_id for c in comments}
-            
-            users = session.query(UserModel).filter(UserModel.id.in_(user_ids)).all()
+            rows = session.query(
+                CommentModel.user_id,
+                func.count(CommentModel.id),
+                func.sum(case((CommentModel.status == "Approved", 1), else_=0)),
+                func.sum(case((CommentModel.status == "Rejected", 1), else_=0)),
+                func.sum(case((CommentModel.status == "Flagged", 1), else_=0)),
+            ).filter(
+                CommentModel.is_verified_by_human == True,
+                CommentModel.user_id != None
+            ).group_by(CommentModel.user_id).all()
+
+            if not rows:
+                return []
+
+            user_ids = {r[0] for r in rows if r[0]}
+            users = session.query(UserModel).filter(UserModel.id.in_(user_ids)).all() if user_ids else []
             user_map = {u.id: getattr(u, 'display_name', 'Unknown User') for u in users}
-            
-            metrics_map = {}
-            for c in comments:
-                if c.user_id not in metrics_map:
-                    metrics_map[c.user_id] = {'reviewed': 0, 'approved': 0, 'rejected': 0, 'flagged': 0}
-                
-                metrics_map[c.user_id]['reviewed'] += 1
-                if c.status == 'Approved':
-                    metrics_map[c.user_id]['approved'] += 1
-                elif c.status == 'Rejected':
-                    metrics_map[c.user_id]['rejected'] += 1
-                elif c.status == 'Flagged':
-                    metrics_map[c.user_id]['flagged'] += 1
-            
+
             results = []
-            for uid, m in metrics_map.items():
+            for uid, reviewed, app_c, rej_c, flg_c in rows:
+                if not uid:
+                    continue
                 results.append(ReviewerMetricsDTO(
                     reviewer_id=uid,
                     reviewer_name=user_map.get(uid, 'Unknown User'),
-                    comments_reviewed=m['reviewed'],
-                    approved=m['approved'],
-                    rejected=m['rejected'],
-                    flagged=m['flagged']
+                    comments_reviewed=reviewed or 0,
+                    approved=app_c or 0,
+                    rejected=rej_c or 0,
+                    flagged=flg_c or 0
                 ))
-            
+
             return results
 
     def get_status_trend(self, drawing_id: Optional[str] = None) -> List[TrendDataPointDTO]:
@@ -223,28 +246,56 @@ class AnalyticsService:
             drawings = session.query(DrawingModel).filter(DrawingModel.project_id == project_id).all()
             drawing_ids = [d.id for d in drawings]
             
-            comments = session.query(CommentModel).filter(CommentModel.drawing_id.in_(drawing_ids)).all() if drawing_ids else []
-            pages = session.query(PageModel).filter(PageModel.drawing_id.in_(drawing_ids)).all() if drawing_ids else []
+            if not drawing_ids:
+                empty_kpi = KPISummaryDTO(
+                    total_projects=1, total_drawings=0, total_comments=0, total_pages=0,
+                    accuracy_rate=None, approved_count=0, rejected_count=0, pending_count=0,
+                    flagged_count=0, avg_confidence=0.0, high_confidence_pct=0.0, low_confidence_pct=0.0
+                )
+                return ProjectAnalyticsDTO(
+                    project_id=project.id,
+                    project_name=getattr(project, 'name', 'Unknown Project'),
+                    kpi_summary=empty_kpi,
+                    category_distribution=[],
+                    confidence_distribution=[],
+                    status_trend=[],
+                    reviewer_metrics=[]
+                )
+
+            total_drawings = len(drawing_ids)
+            total_pages = session.query(func.count(PageModel.id)).filter(PageModel.drawing_id.in_(drawing_ids)).scalar() or 0
             
-            total_drawings = len(drawings)
-            total_comments = len(comments)
-            total_pages = len(pages)
-            
-            approved_count = sum(1 for c in comments if c.status == "Approved")
-            rejected_count = sum(1 for c in comments if c.status == "Rejected")
-            pending_count = sum(1 for c in comments if c.status == "Pending")
-            flagged_count = sum(1 for c in comments if c.status == "Flagged")
-            
-            approved_verified = sum(1 for c in comments if c.status == "Approved" and c.is_verified_by_human)
+            stats = session.query(
+                func.count(CommentModel.id),
+                func.sum(case((CommentModel.status == "Approved", 1), else_=0)),
+                func.sum(case((CommentModel.status == "Rejected", 1), else_=0)),
+                func.sum(case((CommentModel.status == "Pending", 1), else_=0)),
+                func.sum(case((CommentModel.status == "Flagged", 1), else_=0)),
+                func.avg(CommentModel.confidence),
+                func.sum(case((CommentModel.confidence >= 0.85, 1), else_=0)),
+                func.sum(case((CommentModel.confidence < 0.60, 1), else_=0)),
+                func.sum(case(((CommentModel.status == "Approved") & (CommentModel.is_verified_by_human == True), 1), else_=0))
+            ).filter(CommentModel.drawing_id.in_(drawing_ids)).first()
+
+            if stats:
+                total_comments = stats[0] or 0
+                approved_count = stats[1] or 0
+                rejected_count = stats[2] or 0
+                pending_count = stats[3] or 0
+                flagged_count = stats[4] or 0
+                avg_confidence = float(stats[5] or 0.0)
+                high_conf = stats[6] or 0
+                low_conf = stats[7] or 0
+                approved_verified = stats[8] or 0
+            else:
+                total_comments = approved_count = rejected_count = pending_count = flagged_count = 0
+                avg_confidence = 0.0
+                high_conf = low_conf = approved_verified = 0
+
             accuracy_rate = (approved_verified / total_comments * 100.0) if total_comments > 0 else None
-            
-            avg_confidence = sum((c.confidence or 0.0) for c in comments) / total_comments if total_comments > 0 else 0.0
-            
-            high_conf = sum(1 for c in comments if (c.confidence or 0.0) >= 0.85)
-            low_conf = sum(1 for c in comments if (c.confidence or 0.0) < 0.60)
             high_confidence_pct = (high_conf / total_comments * 100.0) if total_comments > 0 else 0.0
             low_confidence_pct = (low_conf / total_comments * 100.0) if total_comments > 0 else 0.0
-            
+
             kpi_summary = KPISummaryDTO(
                 total_projects=1,
                 total_drawings=total_drawings,
@@ -259,76 +310,45 @@ class AnalyticsService:
                 high_confidence_pct=high_confidence_pct,
                 low_confidence_pct=low_confidence_pct
             )
-            
-            cat_counts = {}
-            for c in comments:
-                cat = c.category_name or 'Uncategorized'
-                cat_counts[cat] = cat_counts.get(cat, 0) + 1
-            
+
+            # Category distribution query
+            cat_rows = session.query(
+                CommentModel.category_name, func.count(CommentModel.id)
+            ).filter(CommentModel.drawing_id.in_(drawing_ids)).group_by(CommentModel.category_name).all()
+
             category_distribution = []
-            for cat, count in cat_counts.items():
+            for cat_name, count in cat_rows:
+                c_name = cat_name or 'Uncategorized'
                 pct = (count / total_comments * 100.0) if total_comments > 0 else 0.0
-                color = CATEGORY_COLORS.get(cat, '#9CA3AF')
+                color = CATEGORY_COLORS.get(c_name, '#9CA3AF')
                 category_distribution.append(CategoryDistributionDTO(
-                    category_name=cat, count=count, percentage=pct, color_hex=color
+                    category_name=c_name, count=count, percentage=pct, color_hex=color
                 ))
             category_distribution.sort(key=lambda x: x.count, reverse=True)
-            
-            buckets = [
-                {'label': '0.0-0.2', 'count': sum(1 for c in comments if 0.0 <= (c.confidence or 0.0) < 0.2)},
-                {'label': '0.2-0.4', 'count': sum(1 for c in comments if 0.2 <= (c.confidence or 0.0) < 0.4)},
-                {'label': '0.4-0.6', 'count': sum(1 for c in comments if 0.4 <= (c.confidence or 0.0) < 0.6)},
-                {'label': '0.6-0.8', 'count': sum(1 for c in comments if 0.6 <= (c.confidence or 0.0) < 0.8)},
-                {'label': '0.8-1.0', 'count': sum(1 for c in comments if 0.8 <= (c.confidence or 0.0) <= 1.0)},
-            ]
+
+            # Confidence distribution query
+            conf_rows = session.query(
+                func.sum(case((CommentModel.confidence < 0.2, 1), else_=0)),
+                func.sum(case(((CommentModel.confidence >= 0.2) & (CommentModel.confidence < 0.4), 1), else_=0)),
+                func.sum(case(((CommentModel.confidence >= 0.4) & (CommentModel.confidence < 0.6), 1), else_=0)),
+                func.sum(case(((CommentModel.confidence >= 0.6) & (CommentModel.confidence < 0.8), 1), else_=0)),
+                func.sum(case((CommentModel.confidence >= 0.8, 1), else_=0)),
+            ).filter(CommentModel.drawing_id.in_(drawing_ids)).first()
+
+            buckets_counts = conf_rows if conf_rows else (0, 0, 0, 0, 0)
+            labels = ['0.0-0.2', '0.2-0.4', '0.4-0.6', '0.6-0.8', '0.8-1.0']
             confidence_distribution = [
                 ConfidenceBucketDTO(
-                    range_label=b['label'],
-                    count=b['count'],
-                    percentage=(b['count'] / total_comments * 100.0) if total_comments > 0 else 0.0
-                ) for b in buckets
+                    range_label=labels[i],
+                    count=cnt or 0,
+                    percentage=((cnt or 0) / total_comments * 100.0) if total_comments > 0 else 0.0
+                )
+                for i, cnt in enumerate(buckets_counts)
             ]
-            
-            trends = {}
-            for c in comments:
-                if c.created_at:
-                    if isinstance(c.created_at, datetime):
-                        date_str = c.created_at.strftime('%Y-%m-%d')
-                    else:
-                        date_str = str(c.created_at).split('T')[0]
-                    trends[date_str] = trends.get(date_str, 0) + 1
-            status_trend = [TrendDataPointDTO(period_label=k, count=v) for k, v in sorted(trends.items())]
-            
-            reviewer_metrics = []
-            user_ids = {c.user_id for c in comments if c.is_verified_by_human and c.user_id}
-            if user_ids:
-                users = session.query(UserModel).filter(UserModel.id.in_(user_ids)).all()
-                user_map = {u.id: getattr(u, 'display_name', 'Unknown User') for u in users}
-                
-                metrics_map = {}
-                for c in comments:
-                    if c.is_verified_by_human and c.user_id:
-                        if c.user_id not in metrics_map:
-                            metrics_map[c.user_id] = {'reviewed': 0, 'approved': 0, 'rejected': 0, 'flagged': 0}
-                        
-                        metrics_map[c.user_id]['reviewed'] += 1
-                        if c.status == 'Approved':
-                            metrics_map[c.user_id]['approved'] += 1
-                        elif c.status == 'Rejected':
-                            metrics_map[c.user_id]['rejected'] += 1
-                        elif c.status == 'Flagged':
-                            metrics_map[c.user_id]['flagged'] += 1
-                
-                for uid, m in metrics_map.items():
-                    reviewer_metrics.append(ReviewerMetricsDTO(
-                        reviewer_id=uid,
-                        reviewer_name=user_map.get(uid, 'Unknown User'),
-                        comments_reviewed=m['reviewed'],
-                        approved=m['approved'],
-                        rejected=m['rejected'],
-                        flagged=m['flagged']
-                    ))
-            
+
+            status_trend = self.get_status_trend()
+            reviewer_metrics = self.get_reviewer_metrics()
+
             return ProjectAnalyticsDTO(
                 project_id=project.id,
                 project_name=getattr(project, 'name', 'Unknown Project'),

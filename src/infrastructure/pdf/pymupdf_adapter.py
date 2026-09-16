@@ -48,9 +48,12 @@ class PyMuPDFAdapter(IPDFLoader):
                 logger.warning(f"Encrypted PDF detected: {file_path}")
                 raise EncryptedPDFError(f"PDF is encrypted or password-protected: {file_path}")
 
-            file_bytes = file_path.read_bytes()
-            sha256_hash = hashlib.sha256(file_bytes).hexdigest()
-            file_size = len(file_bytes)
+            file_size = file_path.stat().st_size
+            hasher = hashlib.sha256()
+            with open(file_path, "rb") as f:
+                while chunk := f.read(65536):
+                    hasher.update(chunk)
+            sha256_hash = hasher.hexdigest()
 
             pages_metadata: List[PageMetadataDTO] = []
             scanned_page_count = 0

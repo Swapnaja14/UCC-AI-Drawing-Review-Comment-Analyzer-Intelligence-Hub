@@ -3,8 +3,10 @@ src/services/workflow_engine.py
 Processing Workflow Engine orchestrating end-to-end processing steps as a Finite State Machine.
 """
 
+import os
 from pathlib import Path
 from typing import Callable, Optional, List
+from concurrent.futures import ThreadPoolExecutor, as_completed
 import time
 import io
 import re
@@ -18,7 +20,9 @@ from src.core.dtos.workflow_dtos import (
     WorkflowState,
     WorkflowStepDTO,
     WorkflowResultDTO,
-    FileValidationResultDTO
+    FileValidationResultDTO,
+    BatchWorkflowProgressDTO,
+    BatchWorkflowResultDTO
 )
 from src.core.exceptions.workflow_exceptions import WorkflowProcessingError
 from src.services.file_service import FileService
@@ -236,7 +240,7 @@ class ProcessingWorkflowEngine:
                                 except Exception:
                                     raw_ocr_text = ""
 
-                            # 4. Fall back to high-resolution OCR (for scanned drawings, clouds & handwriting)
+                             # 4. Fall back to high-resolution OCR (for scanned drawings, clouds & handwriting)
                             if not raw_ocr_text and crop_rect.width > 2 and crop_rect.height > 2:
                                 try:
                                     zoom = 200.0 / 72.0
@@ -245,29 +249,32 @@ class ProcessingWorkflowEngine:
                                     if pix.width > 0 and pix.height > 0:
                                         img_bytes = pix.tobytes("png")
                                         pil_img = Image.open(io.BytesIO(img_bytes)).convert("RGB")
+                                        np_img = np.array(pil_img)
                                         
-                                        # Single fast OCR pass with PSM 6
-                                        ocr_full = pytesseract.image_to_string(pil_img, config='--psm 6').strip()
-                                        if ocr_full and len([w for w in ocr_full.split() if any(c.isalnum() for c in w)]) > 0:
-                                            raw_ocr_text = ocr_full
-                                        else:
-                                            # Optional color-isolated OCR if colored pixels exist
-                                            np_img = np.array(pil_img)
-                                            nr = np_img[:, :, 0].astype(int)
-                                            ng = np_img[:, :, 1].astype(int)
-                                            nb = np_img[:, :, 2].astype(int)
-                                            
-                                            mask_red = (nr >= 120) & ((nr - np.maximum(ng, nb)) >= 24)
-                                            mask_blue = (nb >= 110) & ((nb - np.maximum(nr, ng)) >= 24)
-                                            mask_green = (ng >= 100) & ((ng - np.maximum(nr, nb)) >= 24)
-                                            colored_mask = mask_red | mask_blue | mask_green
-                                            
-                                            if np.count_nonzero(colored_mask) >= 15:
-                                                ocr_input_arr = np.full((np_img.shape[0], np_img.shape[1]), 255, dtype=np.uint8)
-                                                ocr_input_arr[colored_mask] = 0
-                                                ocr_input_pil = Image.fromarray(ocr_input_arr)
+                                        # Fast variance/contrast check: skip Tesseract if image lacks text contrast
+                                        gray_arr = np.mean(np_img, axis=2)
+                                        if float(np.std(gray_arr)) >= 6.0:
+                                            # Single fast OCR pass with PSM 6
+                                            ocr_full = pytesseract.image_to_string(pil_img, config='--psm 6').strip()
+                                            if ocr_full and len([w for w in ocr_full.split() if any(c.isalnum() for c in w)]) > 0:
+                                                raw_ocr_text = ocr_full
+                                            else:
+                                                # Optional color-isolated OCR if colored pixels exist
+                                                nr = np_img[:, :, 0].astype(int)
+                                                ng = np_img[:, :, 1].astype(int)
+                                                nb = np_img[:, :, 2].astype(int)
                                                 
-                                                raw_ocr_text = pytesseract.image_to_string(ocr_input_pil, config='--psm 6').strip()
+                                                mask_red = (nr >= 120) & ((nr - np.maximum(ng, nb)) >= 24)
+                                                mask_blue = (nb >= 110) & ((nb - np.maximum(nr, ng)) >= 24)
+                                                mask_green = (ng >= 100) & ((ng - np.maximum(nr, nb)) >= 24)
+                                                colored_mask = mask_red | mask_blue | mask_green
+                                                
+                                                if np.count_nonzero(colored_mask) >= 15:
+                                                    ocr_input_arr = np.full((np_img.shape[0], np_img.shape[1]), 255, dtype=np.uint8)
+                                                    ocr_input_arr[colored_mask] = 0
+                                                    ocr_input_pil = Image.fromarray(ocr_input_arr)
+                                                    
+                                                    raw_ocr_text = pytesseract.image_to_string(ocr_input_pil, config='--psm 6').strip()
                                 except Exception as ocr_err:
                                     logger.debug(f"OCR failed for region {reg}: {ocr_err}")
                                     raw_ocr_text = ""
@@ -454,3 +461,144 @@ class ProcessingWorkflowEngine:
             logger.error(err_msg)
             notify("Workflow Failure", WorkflowState.FAILED, 0, err_msg)
             raise WorkflowProcessingError(err_msg) from e
+
+    def execute_batch_workflow(
+        self,
+        file_paths: List[str | Path],
+        progress_callback: Optional[Callable[[BatchWorkflowProgressDTO], None]] = None,
+        department_id: Optional[str] = None,
+    ) -> BatchWorkflowResultDTO:
+        """
+        Executes complete processing workflow across a batch of PDF drawings or extracted zip files.
+
+        Args:
+            file_paths: List of file paths (PDF files or .zip folders).
+            progress_callback: Optional callback receiving BatchWorkflowProgressDTO.
+            department_id: Optional engineering department ID.
+
+        Returns:
+            BatchWorkflowResultDTO summary.
+        """
+        batch_start_time = time.time()
+        
+        # Expand zip files into PDF file paths
+        resolved_pdfs = self.file_service.expand_file_sources(file_paths)
+        total_files = len(resolved_pdfs)
+
+        if total_files == 0:
+            logger.warning("execute_batch_workflow called with no valid PDF files resolved.")
+            return BatchWorkflowResultDTO(
+                total_files_processed=0,
+                successful_files_count=0,
+                failed_files_count=0,
+                total_comments_found=0,
+                total_duration_seconds=0.0,
+                results=[],
+                failed_files=[]
+            )
+
+        logger.info(f"Starting batch workflow execution for {total_files} file(s) (department_id={department_id})")
+
+        successful_results: List[WorkflowResultDTO] = []
+        failed_records: List[Dict[str, str]] = []
+        total_comments = 0
+
+        num_workers = min(6, max(1, os.cpu_count() or 2))
+        if total_files == 1 or num_workers == 1:
+            for idx, pdf_path in enumerate(resolved_pdfs, start=1):
+                file_name = pdf_path.name
+
+                def _on_single_step(step_dto: WorkflowStepDTO):
+                    single_pct = step_dto.progress_percentage
+                    overall_pct = int(((idx - 1) / total_files * 100) + (single_pct / total_files))
+                    overall_pct = max(0, min(100, overall_pct))
+
+                    batch_snapshot = BatchWorkflowProgressDTO(
+                        overall_progress_percentage=overall_pct,
+                        current_file_index=idx,
+                        total_files=total_files,
+                        current_file_name=file_name,
+                        step_snapshot=step_dto
+                    )
+                    if progress_callback:
+                        progress_callback(batch_snapshot)
+
+                try:
+                    result = self.execute_workflow(
+                        pdf_path,
+                        progress_callback=_on_single_step,
+                        department_id=department_id
+                    )
+                    successful_results.append(result)
+                    total_comments += result.total_comments_found
+                except Exception as exc:
+                    logger.error(f"Batch item {idx}/{total_files} ('{file_name}') failed: {exc}")
+                    failed_records.append({
+                        "file_name": file_name,
+                        "error": str(exc)
+                    })
+        else:
+            # Parallel execution across CPU cores for maximum speed
+            results_map = {}
+            completed_count = 0
+            with ThreadPoolExecutor(max_workers=num_workers) as executor:
+                future_to_file = {
+                    executor.submit(
+                        self.execute_workflow,
+                        pdf_p,
+                        department_id=department_id
+                    ): (i, pdf_p)
+                    for i, pdf_p in enumerate(resolved_pdfs, start=1)
+                }
+                for future in as_completed(future_to_file):
+                    i, pdf_p = future_to_file[future]
+                    file_name = pdf_p.name
+                    completed_count += 1
+                    overall_pct = int((completed_count / total_files) * 100)
+
+                    try:
+                        res = future.result()
+                        results_map[i] = res
+                        total_comments += res.total_comments_found
+
+                        if progress_callback:
+                            step_snapshot = WorkflowStepDTO(
+                                step_name="Complete",
+                                state=WorkflowState.COMPLETED,
+                                progress_percentage=100,
+                                message=f"Processed '{file_name}' ({res.total_comments_found} comments)"
+                            )
+                            batch_snapshot = BatchWorkflowProgressDTO(
+                                overall_progress_percentage=overall_pct,
+                                current_file_index=completed_count,
+                                total_files=total_files,
+                                current_file_name=file_name,
+                                step_snapshot=step_snapshot
+                            )
+                            progress_callback(batch_snapshot)
+                    except Exception as exc:
+                        logger.error(f"Batch item {i}/{total_files} ('{file_name}') failed: {exc}")
+                        failed_records.append({
+                            "file_name": file_name,
+                            "error": str(exc)
+                        })
+
+            for i in sorted(results_map.keys()):
+                successful_results.append(results_map[i])
+
+        total_duration = round(time.time() - batch_start_time, 2)
+        logger.info(
+            f"Batch workflow complete: {len(successful_results)}/{total_files} succeeded, "
+            f"{len(failed_records)} failed in {total_duration}s."
+        )
+
+        return BatchWorkflowResultDTO(
+            total_files_processed=total_files,
+            successful_files_count=len(successful_results),
+            failed_files_count=len(failed_records),
+            total_comments_found=total_comments,
+            total_duration_seconds=total_duration,
+            results=successful_results,
+            failed_files=failed_records
+        )
+
