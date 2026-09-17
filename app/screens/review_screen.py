@@ -32,7 +32,8 @@ from typing import Any, Dict, List, Optional, Union
 from PySide6.QtWidgets import (QWidget, QVBoxLayout, QHBoxLayout, QFrame,
                                 QLabel, QPushButton, QTextEdit, QComboBox,
                                 QProgressBar, QSplitter, QSizePolicy,
-                                QGraphicsView, QGraphicsScene, QScrollArea)
+                                QGraphicsView, QGraphicsScene, QScrollArea,
+                                QInputDialog, QMessageBox)
 from PySide6.QtCore import Qt, QTimer, Signal, QRectF
 from PySide6.QtGui import QFont, QPainter, QKeyEvent, QPixmap, QPen, QBrush, QColor
 
@@ -297,11 +298,35 @@ class HumanReviewPage(QWidget):
         cat_lbl.setObjectName("FormLabel")
         edit_lay.addWidget(cat_lbl)
 
+        cat_row = QHBoxLayout()
+        cat_row.setSpacing(6)
         self._cat_combo = QComboBox()
-        self._cat_combo.addItems(md.CATEGORIES)
+        db_cats = [c.get("name") for c in self._controller.get_all_categories()] if self._controller else []
+        self._cat_combo.addItems(db_cats if db_cats else list(md.CATEGORIES))
         self._cat_combo.setFixedHeight(36)
         self._cat_combo.currentTextChanged.connect(self._on_category_changed)
-        edit_lay.addWidget(self._cat_combo)
+        cat_row.addWidget(self._cat_combo, 1)
+
+        self._quick_add_cat_btn = QPushButton("➕")
+        self._quick_add_cat_btn.setFixedSize(36, 36)
+        self._quick_add_cat_btn.setToolTip("Add new error category for this drawing's department")
+        self._quick_add_cat_btn.setStyleSheet("""
+            QPushButton {
+                background-color: #1E222B;
+                color: #38BDF8;
+                border: 1px solid #334155;
+                border-radius: 6px;
+                font-weight: bold;
+                font-size: 14px;
+            }
+            QPushButton:hover {
+                background-color: #0284C722;
+                border-color: #38BDF8;
+            }
+        """)
+        self._quick_add_cat_btn.clicked.connect(self._on_quick_add_category)
+        cat_row.addWidget(self._quick_add_cat_btn)
+        edit_lay.addLayout(cat_row)
 
         conf_row = QHBoxLayout()
         self._conf_lbl = QLabel("Confidence: —")
@@ -435,10 +460,73 @@ class HumanReviewPage(QWidget):
         self._cat_badge.set_category(new_cat)
         if self._comments and self._idx < len(self._comments):
             c = self._comments[self._idx]
+            cid = _get(c, "id", "")
+            old_cat = _get(c, "category", "")
             if isinstance(c, dict):
                 c["category"] = new_cat
             else:
                 setattr(c, "category", new_cat)
+
+            for ac in getattr(self, "_all_comments", []):
+                if _get(ac, "id") == cid:
+                    if isinstance(ac, dict):
+                        ac["category"] = new_cat
+                    else:
+                        setattr(ac, "category", new_cat)
+                    break
+
+            if self._controller and cid and not cid.startswith("C-") and old_cat != new_cat:
+                self._controller.update_comment_category(cid, new_cat)
+                self._load_audit_trail(cid)
+
+    def _refresh_cat_combo_items(self, dept_name: Optional[str], selected_cat: str) -> None:
+        """Refresh _cat_combo items with department-scoped and universal categories."""
+        self._cat_combo.blockSignals(True)
+        self._cat_combo.clear()
+        cats = []
+        if self._controller and hasattr(self._controller, "get_categories_for_department"):
+            try:
+                cats = [item["name"] for item in self._controller.get_categories_for_department(dept_name)]
+            except Exception:
+                cats = []
+        if not cats:
+            cats = list(md.CATEGORIES)
+
+        for cat in cats:
+            self._cat_combo.addItem(cat)
+
+        if selected_cat and self._cat_combo.findText(selected_cat) == -1:
+            self._cat_combo.addItem(selected_cat)
+
+        self._cat_combo.setCurrentText(selected_cat)
+        self._cat_combo.blockSignals(False)
+
+    def _on_quick_add_category(self) -> None:
+        """Prompt reviewer to add a new category for this drawing's department."""
+        dept_name = None
+        if self._comments and self._idx < len(self._comments):
+            c = self._comments[self._idx]
+            dept_name = _get(c, "department", None)
+        if (not dept_name or dept_name in ("Unassigned", "")) and self._controller:
+            cur_dwg = self._controller.get_current_drawing()
+            if cur_dwg:
+                dept_name = cur_dwg.get("department_name")
+        dept_label = f" for {dept_name}" if dept_name else ""
+
+        name, ok = QInputDialog.getText(
+            self,
+            "Add Error Category",
+            f"Enter new error category name{dept_label}:",
+            QLineEdit.EchoMode.Normal,
+            "",
+        )
+        if ok and name.strip():
+            cat_name = name.strip()
+            if self._controller:
+                self._controller.add_category(name=cat_name, department_name=dept_name)
+            if self._cat_combo.findText(cat_name) == -1:
+                self._cat_combo.addItem(cat_name)
+            self._cat_combo.setCurrentText(cat_name)
 
     def _on_box_clicked(self, cid: str) -> None:
         """Handle user clicking directly on a bounding box on the canvas."""
@@ -592,7 +680,13 @@ class HumanReviewPage(QWidget):
 
         self._ocr_edit.setPlainText(_get(c, "ocr_text", ""))
         category = _get(c, "category", "Dimensional")
-        self._cat_combo.setCurrentText(category)
+        dept_name = _get(c, "department", None)
+        if (not dept_name or dept_name in ("Unassigned", "")) and self._controller:
+            cur_dwg = self._controller.get_current_drawing()
+            if cur_dwg:
+                dept_name = cur_dwg.get("department_name")
+
+        self._refresh_cat_combo_items(dept_name, category)
         self._cat_badge.set_category(category)
 
         confidence = _get(c, "confidence", 0.0)

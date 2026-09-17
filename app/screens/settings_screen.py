@@ -383,37 +383,170 @@ class SettingsPage(QWidget):
         except ValueError:
             pass
 
+    def reload_data(self) -> None:
+        """Auto-refresh settings data and dynamic category list from database."""
+        self._refresh_categories()
+
     def _build_categories(self) -> QWidget:
         page = QWidget()
         lay  = QVBoxLayout(page)
         lay.setContentsMargins(40, 32, 40, 32)
-        lay.setSpacing(16)
-        lay.addWidget(self._section_title("Error Classifications"))
+        lay.setSpacing(14)
         
-        desc = QLabel("Manage the dynamic error categories used by the AI classifier.")
+        hdr_row = QHBoxLayout()
+        hdr_row.addWidget(self._section_title("Error Classifications"))
+        hdr_row.addStretch()
+        self._cat_count_lbl = QLabel("0 Categories")
+        self._cat_count_lbl.setStyleSheet("color: #4ADE80; font-weight: 600; font-size: 13px;")
+        hdr_row.addWidget(self._cat_count_lbl)
+        lay.addLayout(hdr_row)
+        
+        desc = QLabel(
+            "Configure the master error categories, department scope, and trigger keywords "
+            "used by AI and rule-based classifiers."
+        )
         desc.setObjectName("SubCaption")
+        desc.setWordWrap(True)
         lay.addWidget(desc)
         
-        # Add new category form
-        form = QHBoxLayout()
+        # Add new category form container
+        form_frame = QFrame()
+        form_frame.setStyleSheet("""
+            QFrame {
+                background-color: #1A1D24;
+                border: 1px solid #2E333D;
+                border-radius: 8px;
+            }
+        """)
+        form_lay = QVBoxLayout(form_frame)
+        form_lay.setSpacing(10)
+        form_lay.setContentsMargins(14, 14, 14, 14)
+
+        # Row 1: Category Name + Department Scope dropdown
+        row1 = QHBoxLayout()
+        row1.setSpacing(12)
+
+        name_box = QVBoxLayout()
+        name_box.setSpacing(4)
+        lbl_name = QLabel("Category Name:")
+        lbl_name.setStyleSheet("color: #CBD5E1; font-size: 11px; font-weight: 600;")
+        name_box.addWidget(lbl_name)
         self._new_cat_name = QLineEdit()
-        self._new_cat_name.setPlaceholderText("New Category Name...")
+        self._new_cat_name.setPlaceholderText("e.g. Flange Rating Mismatch, Cable Tray Clash...")
         self._new_cat_name.setFixedHeight(36)
-        
-        add_btn = QPushButton("Add Category")
+        self._new_cat_name.setStyleSheet("background-color: #12141A; color: #F8FAFC; border: 1px solid #334155; border-radius: 6px; padding: 0 10px;")
+        self._new_cat_name.returnPressed.connect(self._on_add_category)
+        name_box.addWidget(self._new_cat_name)
+        row1.addLayout(name_box, 6)
+
+        scope_box = QVBoxLayout()
+        scope_box.setSpacing(4)
+        lbl_scope = QLabel("Department Scope:")
+        lbl_scope.setStyleSheet("color: #CBD5E1; font-size: 11px; font-weight: 600;")
+        scope_box.addWidget(lbl_scope)
+        self._new_cat_dept = QComboBox()
+        self._new_cat_dept.setFixedHeight(36)
+        self._new_cat_dept.setStyleSheet("background-color: #12141A; color: #F8FAFC; border: 1px solid #334155; border-radius: 6px; padding: 0 10px;")
+        self._populate_scope_combo()
+        scope_box.addWidget(self._new_cat_dept)
+        row1.addLayout(scope_box, 4)
+
+        form_lay.addLayout(row1)
+
+        # Row 2: Trigger Keywords / Phrases + Action Buttons
+        row2 = QHBoxLayout()
+        row2.setSpacing(12)
+
+        kw_box = QVBoxLayout()
+        kw_box.setSpacing(4)
+        lbl_kw = QLabel("Identifying Trigger Keywords / Phrases (Comma-separated):")
+        lbl_kw.setStyleSheet("color: #CBD5E1; font-size: 11px; font-weight: 600;")
+        kw_box.addWidget(lbl_kw)
+        self._new_cat_keywords = QLineEdit()
+        self._new_cat_keywords.setPlaceholderText("e.g. flange rating, class 150, class 300, #150, #300, rtj...")
+        self._new_cat_keywords.setFixedHeight(36)
+        self._new_cat_keywords.setStyleSheet("background-color: #12141A; color: #F8FAFC; border: 1px solid #334155; border-radius: 6px; padding: 0 10px;")
+        self._new_cat_keywords.returnPressed.connect(self._on_add_category)
+        kw_box.addWidget(self._new_cat_keywords)
+        row2.addLayout(kw_box, 7)
+
+        btn_box = QVBoxLayout()
+        btn_box.setSpacing(4)
+        lbl_btn = QLabel(" ")
+        btn_box.addWidget(lbl_btn)
+        btns_row = QHBoxLayout()
+        btns_row.setSpacing(8)
+
+        add_btn = QPushButton("  ➕  Add Category")
         add_btn.setObjectName("PrimaryBtn")
         add_btn.setFixedHeight(36)
+        add_btn.setStyleSheet("""
+            QPushButton {
+                background-color: #0284C7;
+                color: #FFFFFF;
+                font-weight: 600;
+                border-radius: 6px;
+                padding: 0 16px;
+            }
+            QPushButton:hover { background-color: #0369A1; }
+            QPushButton:pressed { background-color: #075985; }
+        """)
         add_btn.clicked.connect(self._on_add_category)
-        
-        form.addWidget(self._new_cat_name)
-        form.addWidget(add_btn)
-        lay.addLayout(form)
+        btns_row.addWidget(add_btn)
+
+        del_btn = QPushButton("  🗑  Delete Selected")
+        del_btn.setObjectName("SecondaryBtn")
+        del_btn.setFixedHeight(36)
+        del_btn.setStyleSheet("""
+            QPushButton {
+                background-color: #26272B;
+                color: #EF4444;
+                border: 1px solid #3A3C42;
+                font-weight: 600;
+                border-radius: 6px;
+                padding: 0 14px;
+            }
+            QPushButton:hover { background-color: #EF444422; border-color: #EF4444; }
+        """)
+        del_btn.clicked.connect(self._on_delete_category)
+        btns_row.addWidget(del_btn)
+
+        btn_box.addLayout(btns_row)
+        row2.addLayout(btn_box, 3)
+
+        form_lay.addLayout(row2)
+
+        kw_help = QLabel("💡 Scope determines which drawing departments use this category. Trigger keywords enable AI & rules to auto-classify Column 9 OCR text into this Category in Column 10.")
+        kw_help.setStyleSheet("color: #64748B; font-size: 11px; padding: 2px 2px 0 2px;")
+        form_lay.addWidget(kw_help)
+
+        lay.addWidget(form_frame)
+
+        # Department Filter for Categories List
+        filter_row = QHBoxLayout()
+        filter_lbl = QLabel("Filter Categories by Scope:")
+        filter_lbl.setStyleSheet("color: #94A3B8; font-size: 12px; font-weight: 600;")
+        filter_row.addWidget(filter_lbl)
+
+        self._filter_dept_combo = QComboBox()
+        self._filter_dept_combo.setFixedHeight(30)
+        self._filter_dept_combo.setStyleSheet("background-color: #161922; color: #E2E8F0; border: 1px solid #334155; border-radius: 4px; padding: 0 8px;")
+        self._filter_dept_combo.addItem("Show All Categories")
+        self._filter_dept_combo.addItem("All Departments (Universal Only)")
+        for dept in ["Piping Engineering", "Electrical Engineering", "Pipe Support Engineering", "Structural & Physical Design", "System Engineering", "GPD", "Plakon"]:
+            self._filter_dept_combo.addItem(dept)
+        self._filter_dept_combo.currentTextChanged.connect(self._refresh_categories)
+        filter_row.addWidget(self._filter_dept_combo)
+        filter_row.addStretch()
+
+        lay.addLayout(filter_row)
         
         # List widget to show categories
         self._cat_list = QListWidget()
         self._cat_list.setStyleSheet(
-            "QListWidget { background: #1B1C1F; border: 1px solid #3A3C42; border-radius: 6px; padding: 4px; }"
-            "QListWidget::item { padding: 12px; border-bottom: 1px solid #26272B; color: #E5E7EB; }"
+            "QListWidget { background: #12141A; border: 1px solid #282D37; border-radius: 8px; padding: 6px; }"
+            "QListWidget::item { padding: 10px 14px; border-bottom: 1px solid #1E222B; color: #E5E7EB; font-size: 13px; }"
+            "QListWidget::item:selected { background: rgba(2, 132, 199, 0.25); color: #38BDF8; font-weight: 600; border-radius: 6px; }"
         )
         lay.addWidget(self._cat_list, 1)
         
@@ -421,23 +554,133 @@ class SettingsPage(QWidget):
         
         return page
 
+    def _populate_scope_combo(self) -> None:
+        self._new_cat_dept.clear()
+        self._new_cat_dept.addItem("🌐 All Departments (Universal)")
+        depts = []
+        if self._controller and hasattr(self._controller, "department_repo"):
+            try:
+                dept_rows = self._controller.department_repo.get_all_departments()
+                depts = [d.get("name") for d in dept_rows if d.get("name")]
+            except Exception:
+                pass
+        if not depts:
+            depts = [
+                "Piping Engineering", "Electrical Engineering",
+                "Pipe Support Engineering", "Structural & Physical Design",
+                "System Engineering", "GPD", "Plakon"
+            ]
+        for d in depts:
+            self._new_cat_dept.addItem(f"📁 {d}")
+
     def _on_add_category(self) -> None:
         name = self._new_cat_name.text().strip()
         if not name:
+            QMessageBox.warning(self, "Input Required", "Please enter a category name.")
             return
+
+        scope_text = self._new_cat_dept.currentText().strip()
+        dept_name = None
+        if "All Departments" not in scope_text:
+            dept_name = scope_text.replace("📁", "").strip()
+
+        keywords = self._new_cat_keywords.text().strip()
+
         if self._controller:
-            self._controller.add_category(name)
+            self._controller.add_category(name=name, department_name=dept_name, keywords=keywords)
             self._new_cat_name.clear()
+            self._new_cat_keywords.clear()
             self._refresh_categories()
-            QMessageBox.information(self, "Success", f"Category '{name}' added successfully.")
+            scope_desc = f"for '{dept_name}'" if dept_name else "across 'All Departments'"
+            QMessageBox.information(self, "Success", f"Category '{name}' added successfully {scope_desc}.")
+        else:
+            QMessageBox.warning(self, "Error", "Database controller is not connected.")
+
+    def _on_delete_category(self) -> None:
+        item = self._cat_list.currentItem()
+        if not item:
+            QMessageBox.warning(self, "Selection Required", "Please select a category from the list to delete.")
+            return
+
+        cat_data = item.data(Qt.ItemDataRole.UserRole)
+        cat_name = cat_data.get("name") if isinstance(cat_data, dict) else str(cat_data)
+        dept_name = cat_data.get("department_name") if isinstance(cat_data, dict) else None
+
+        # Standard categories check
+        from src.infrastructure.storage.repository import CategoryRepository
+        if cat_name in CategoryRepository.DEFAULT_CATEGORIES and not dept_name:
+            reply = QMessageBox.question(
+                self,
+                "Standard Category",
+                f"'{cat_name}' is a universal standard category. Are you sure you want to remove it?",
+                QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
+            )
+            if reply != QMessageBox.StandardButton.Yes:
+                return
+        else:
+            scope_desc = f"from {dept_name}" if dept_name else "across all departments"
+            reply = QMessageBox.question(
+                self,
+                "Confirm Deletion",
+                f"Are you sure you want to delete category '{cat_name}' {scope_desc}?",
+                QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
+            )
+            if reply != QMessageBox.StandardButton.Yes:
+                return
+
+        if self._controller:
+            success = self._controller.delete_category(cat_name, department_name=dept_name)
+            if success:
+                self._refresh_categories()
+                QMessageBox.information(self, "Deleted", f"Category '{cat_name}' has been deleted.")
+            else:
+                QMessageBox.warning(self, "Error", f"Failed to delete category '{cat_name}'.")
             
     def _refresh_categories(self) -> None:
+        if not hasattr(self, "_cat_list"):
+            return
         self._cat_list.clear()
         if self._controller:
             cats = self._controller.get_all_categories()
+            if not cats and hasattr(self._controller, "category_repo"):
+                try:
+                    self._controller.category_repo.seed_default_categories()
+                    cats = self._controller.get_all_categories()
+                except Exception:
+                    pass
+
+            # Filter if selected
+            filter_val = self._filter_dept_combo.currentText().strip() if hasattr(self, "_filter_dept_combo") else "Show All Categories"
+            if filter_val == "All Departments (Universal Only)":
+                cats = [c for c in cats if not c.get("department_name")]
+            elif filter_val not in ("Show All Categories", ""):
+                cats = [c for c in cats if c.get("department_name") == filter_val]
+
             for c in cats:
                 name = c.get("name", "Unknown")
-                self._cat_list.addItem(name)
+                dept = c.get("department_name")
+                kws = c.get("keywords") or ""
+
+                if dept:
+                    label_str = f"🏷  {name}   [📁 {dept}]"
+                    item = QListWidgetItem(label_str)
+                    tip = f"Custom Category: {name}\nScope: {dept}"
+                    if kws:
+                        tip += f"\nTrigger Keywords: {kws}"
+                    item.setToolTip(tip)
+                else:
+                    label_str = f"🔒  {name}   [🌐 All Departments]"
+                    item = QListWidgetItem(label_str)
+                    tip = f"Universal Category: {name}\nScope: All Departments"
+                    if kws:
+                        tip += f"\nTrigger Keywords: {kws}"
+                    item.setToolTip(tip)
+
+                item.setData(Qt.ItemDataRole.UserRole, {"name": name, "department_name": dept, "keywords": kws})
+                self._cat_list.addItem(item)
+
+            if hasattr(self, "_cat_count_lbl"):
+                self._cat_count_lbl.setText(f"{len(cats)} Categories")
 
     def _build_about(self) -> QWidget:
         page = QWidget()

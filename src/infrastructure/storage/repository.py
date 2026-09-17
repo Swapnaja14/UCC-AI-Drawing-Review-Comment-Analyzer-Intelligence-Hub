@@ -126,6 +126,8 @@ class DatabaseEngine:
         # Seed official UCC departments automatically if empty
         dept_repo = EngineeringDepartmentRepository(self)
         dept_repo.seed_default_departments()
+        cat_repo = CategoryRepository(self)
+        cat_repo.seed_default_categories()
         logger.info(f"SQLite database ready at: {self.db_path}")
 
     def _run_migrations(self) -> None:
@@ -148,6 +150,16 @@ class DatabaseEngine:
                 if dwg_columns and "department_id" not in dwg_columns:
                     logger.info("Migrating database: adding 'department_id' column to 'drawings' table")
                     conn.execute(text("ALTER TABLE drawings ADD COLUMN department_id VARCHAR(50);"))
+
+                # Check columns in categories table
+                cat_result = conn.execute(text("PRAGMA table_info(categories);"))
+                cat_columns = [row[1] for row in cat_result.fetchall()]
+                if cat_columns and "department_name" not in cat_columns:
+                    logger.info("Migrating database: adding 'department_name' column to 'categories' table")
+                    conn.execute(text("ALTER TABLE categories ADD COLUMN department_name VARCHAR(100);"))
+                if cat_columns and "keywords" not in cat_columns:
+                    logger.info("Migrating database: adding 'keywords' column to 'categories' table")
+                    conn.execute(text("ALTER TABLE categories ADD COLUMN keywords TEXT;"))
 
                 # Ensure performance indexes exist for high-speed queries
                 conn.execute(text("CREATE INDEX IF NOT EXISTS idx_comments_drawing_id ON comments(drawing_id);"))
@@ -423,15 +435,79 @@ class CategoryRepository:
     def __init__(self, db_engine: DatabaseEngine) -> None:
         self._db = db_engine
 
+    DEFAULT_CATEGORIES = [
+        ("Technical", "Engineering & technical specifications", "#3E9BFF"),
+        ("Dimension", "Dimensional discrepancies & tolerances", "#10B981"),
+        ("Drafting", "Drafting symbols, line weights & formatting", "#F59E0B"),
+        ("Coordination", "Inter-disciplinary & clash coordination", "#EC4899"),
+        ("Standards", "Code & industry standards compliance", "#8B5CF6"),
+        ("BOM", "Bill of Materials & component scheduling", "#06B6D4"),
+        ("Material", "Material specifications & grades", "#F97316"),
+        ("Revision", "Revision history & change markup tracking", "#6366F1"),
+        ("Calculation", "Structural & hydraulic calculations", "#14B8A6"),
+        ("Notes", "General & specific sheet notes", "#84CC16"),
+        ("Documentation", "Documentation references & drawing registers", "#A855F7"),
+        ("Feasibility", "Constructability & fabrication feasibility", "#E11D48"),
+        ("Cosmetic", "Cosmetic, text alignment & cosmetic cleanups", "#64748B"),
+    ]
+
+    def seed_default_categories(self) -> None:
+        """Seed default engineering error categories if table is empty."""
+        with self._db.get_session() as session:
+            count = session.query(CategoryModel).count()
+            if count == 0:
+                logger.info("Seeding default classification categories into database...")
+                for name, desc, color in self.DEFAULT_CATEGORIES:
+                    cat = CategoryModel(
+                        id=f"CAT-{uuid.uuid4().hex[:8].upper()}",
+                        name=name,
+                        description=desc,
+                        color_hex=color,
+                    )
+                    session.add(cat)
+                session.commit()
+                logger.info(f"Seeded {len(self.DEFAULT_CATEGORIES)} default categories.")
+
     def get_all_categories(self) -> List[Dict[str, Any]]:
         with self._db.get_session() as session:
             rows = session.query(CategoryModel).order_by(CategoryModel.name).all()
             return [
                 {
-                    "id":          c.id,
-                    "name":        c.name,
-                    "description": c.description,
-                    "color_hex":   c.color_hex,
+                    "id":              c.id,
+                    "name":            c.name,
+                    "department_name": getattr(c, "department_name", None),
+                    "description":     c.description,
+                    "keywords":        getattr(c, "keywords", None),
+                    "color_hex":       c.color_hex,
+                }
+                for c in rows
+            ]
+
+    def get_categories_for_department(self, department_name: Optional[str] = None) -> List[Dict[str, Any]]:
+        """Return categories applicable to a department: global categories + department-scoped categories."""
+        with self._db.get_session() as session:
+            actual_names = [department_name] if department_name else []
+            if department_name and department_name.startswith("DEPT-"):
+                dept_row = session.query(EngineeringDepartmentModel).filter(EngineeringDepartmentModel.id == department_name).first()
+                if dept_row and dept_row.name:
+                    actual_names.append(dept_row.name)
+
+            query = session.query(CategoryModel)
+            if department_name and department_name not in ("All Departments", "Unassigned", ""):
+                query = query.filter(
+                    (CategoryModel.department_name.is_(None)) |
+                    (CategoryModel.department_name == "") |
+                    (CategoryModel.department_name.in_(actual_names))
+                )
+            rows = query.order_by(CategoryModel.name).all()
+            return [
+                {
+                    "id":              c.id,
+                    "name":            c.name,
+                    "department_name": getattr(c, "department_name", None),
+                    "description":     c.description,
+                    "keywords":        getattr(c, "keywords", None),
+                    "color_hex":       c.color_hex,
                 }
                 for c in rows
             ]
@@ -439,29 +515,199 @@ class CategoryRepository:
     def get_or_create_category(
         self,
         name: str,
+        department_name: Optional[str] = None,
         description: Optional[str] = None,
         color_hex: Optional[str] = None,
+        keywords: Optional[str] = None,
     ) -> Dict[str, Any]:
-        """Return an existing category by name, or create it."""
+        """Return an existing category by name and department, or create/update it."""
         with self._db.get_session() as session:
-            row = (
-                session.query(CategoryModel)
-                .filter(CategoryModel.name == name)
-                .first()
-            )
+            query = session.query(CategoryModel).filter(CategoryModel.name == name)
+            if department_name and department_name not in ("All Departments", "Unassigned", ""):
+                row = query.filter(
+                    (CategoryModel.department_name == department_name) |
+                    (CategoryModel.department_name.is_(None))
+                ).first()
+            else:
+                row = query.first()
+
             if row:
-                return {"id": row.id, "name": row.name}
+                updated = False
+                if description and not row.description:
+                    row.description = description
+                    updated = True
+                if keywords and getattr(row, "keywords", None) != keywords:
+                    row.keywords = keywords
+                    updated = True
+                if updated:
+                    session.commit()
+                return {
+                    "id":              row.id,
+                    "name":            row.name,
+                    "department_name": getattr(row, "department_name", None),
+                    "description":     row.description,
+                    "keywords":        getattr(row, "keywords", None),
+                }
 
             cat = CategoryModel(
                 id=f"CAT-{uuid.uuid4().hex[:8].upper()}",
                 name=name,
+                department_name=department_name if department_name not in ("All Departments", "Unassigned", "") else None,
                 description=description,
+                keywords=keywords,
                 color_hex=color_hex,
             )
             session.add(cat)
             session.commit()
-            logger.info(f"Created category '{name}' → id={cat.id}")
-            return {"id": cat.id, "name": cat.name}
+            logger.info(f"Created category '{name}' (dept='{department_name}', keywords='{keywords}') -> id={cat.id}")
+            return {
+                "id":              cat.id,
+                "name":            cat.name,
+                "department_name": cat.department_name,
+                "description":     cat.description,
+                "keywords":        cat.keywords,
+            }
+
+    DISCIPLINE_SUGGESTION_KEYWORDS = {
+        "Piping Clearance": "piping clearance, pipe clearance, clearance with pipe, minimum distance, pipe spacing, clearance",
+        "Flange Rating Mismatch": "flange rating, class 150, class 300, class 600, rating mismatch, flange class, pound rating",
+        "Weld Symbol Spec": "weld symbol, fillet weld, weld callout, weld spec, full penetration, butt weld",
+        "Valve Tagging Discrepancy": "valve tag, valve tagging, valve number, missing valve tag, tag discrepancy",
+        "Nozzle Orientation": "nozzle orientation, nozzle azimuth, nozzle angle, nozzle projection, nozzle degree",
+        "Pipe Schedule Error": "pipe schedule, sch 40, sch 80, schedule error, wall thickness, schedule mismatch",
+        "Slope & Drainage Detail": "slope, drainage, slope detail, fall per foot, pitch, gravity drain",
+        "Insulation Specification": "insulation, cold insulation, hot insulation, insulation spec, insulation thickness",
+        "Support Clearance": "support clearance, pipe support clearance, interference with support",
+        "Hanger Rod Length": "hanger rod, rod length, spring hanger, hanger detail",
+        "Shoe Height Mismatch": "shoe height, pipe shoe, support shoe, shoe height mismatch",
+        "Thermal Expansion Clearance": "thermal expansion, thermal clearance, expansion loop, thermal growth",
+        "Secondary Steel Tag": "secondary steel, structural attachment, clip angle tag",
+        "Clamp Torque Spec": "clamp torque, pipe clamp, torque spec, bolt torque",
+        "Cable Tray Clash": "cable tray, tray clash, tray clearance, tray conflict, cable ladder",
+        "Conduit Schedule Mismatch": "conduit schedule, conduit size, conduit tag, conduit routing",
+        "Wiring Diagram Error": "wiring diagram, wire error, schematic wiring, wire connection",
+        "Terminal Block Tag": "terminal block, terminal tag, terminal column, tb tag",
+        "Grounding Grid Detail": "grounding, grounding grid, ground loop, earthing detail",
+        "Panel Schedule Discrepancy": "panel schedule, circuit breaker, panel tag, panelboard",
+        "Hazardous Area Rating": "hazardous area, class 1 div 2, explosion proof, atex",
+        "Anchor Bolt Detail": "anchor bolt, bolt detail, bolt projection, bolt embedment, bolt template",
+        "Beam Elevation Mismatch": "beam elevation, el callout, top of steel, tos elevation",
+        "Gusset Plate Spec": "gusset plate, gusset thickness, brace connection",
+        "Baseplate Clearance": "baseplate, base plate, grout clearance, baseplate leveling",
+        "Handrail & Stair Code": "handrail, stair code, toe plate, guardrail, stair tread",
+        "Embed Plate Location": "embed plate, embedded plate, concrete embed",
+        "Weld Size Discrepancy": "weld size, weld thickness, throat thickness",
+        "P&ID Tag Discrepancy": "p&id, tag discrepancy, instrument tag, line number tag",
+        "Instrument Tag Mismatch": "instrument tag, transmitter tag, gauge tag, switch tag",
+        "Flow Direction Arrow": "flow direction, flow arrow, reverse flow",
+        "Redundant Component Tag": "redundant tag, duplicate tag, duplicate component",
+        "Process Line Sizing": "line size, process line, pipe size mismatch",
+        "General Arrangement Clash": "general arrangement, equipment clash, ga clash",
+        "Equipment Footprint Detail": "equipment footprint, equipment pad, foundation footprint",
+        "Access Clearance": "access clearance, operator clearance, maintenance access",
+        "Battery Limit Coordinates": "battery limit, bl coordinates, interface coordinate",
+        "Plot Plan Coordinates": "plot plan, coordinates, northing, easting",
+        "Substation Boundary Clearance": "substation boundary, fence clearance, boundary distance",
+        "Underground Utility Clash": "underground utility, duct bank clash, buried pipe",
+    }
+
+    @classmethod
+    def get_suggestion_keywords(cls, name: str) -> str:
+        return cls.DISCIPLINE_SUGGESTION_KEYWORDS.get(name, "")
+
+    def get_category_suggestions(self, department_name: Optional[str] = None) -> List[str]:
+        """Return smart suggestions of previously added custom categories and industry standards."""
+        # Built-in industry discipline suggestions
+        dept_suggestions = {
+            "Piping Engineering": [
+                "Piping Clearance", "Flange Rating Mismatch", "Weld Symbol Spec",
+                "Valve Tagging Discrepancy", "Nozzle Orientation", "Pipe Schedule Error",
+                "Slope & Drainage Detail", "Insulation Specification"
+            ],
+            "Pipe Support Engineering": [
+                "Support Clearance", "Hanger Rod Length", "Shoe Height Mismatch",
+                "Thermal Expansion Clearance", "Secondary Steel Tag", "Clamp Torque Spec"
+            ],
+            "Electrical Engineering": [
+                "Cable Tray Clash", "Conduit Schedule Mismatch", "Wiring Diagram Error",
+                "Terminal Block Tag", "Grounding Grid Detail", "Panel Schedule Discrepancy",
+                "Hazardous Area Rating"
+            ],
+            "Structural & Physical Design": [
+                "Anchor Bolt Detail", "Beam Elevation Mismatch", "Gusset Plate Spec",
+                "Baseplate Clearance", "Handrail & Stair Code", "Embed Plate Location",
+                "Weld Size Discrepancy"
+            ],
+            "System Engineering": [
+                "P&ID Tag Discrepancy", "Instrument Tag Mismatch", "Flow Direction Arrow",
+                "Redundant Component Tag", "Process Line Sizing"
+            ],
+            "GPD": [
+                "General Arrangement Clash", "Equipment Footprint Detail", "Access Clearance",
+                "Battery Limit Coordinates"
+            ],
+            "Plakon": [
+                "Plot Plan Coordinates", "Substation Boundary Clearance", "Underground Utility Clash"
+            ]
+        }
+
+        with self._db.get_session() as session:
+            # 1. Fetch user-added categories from DB (most recently added first)
+            recent_rows = (
+                session.query(CategoryModel)
+                .order_by(CategoryModel.created_at.desc())
+                .limit(20)
+                .all()
+            )
+            custom_suggestions = [
+                r.name for r in recent_rows
+                if r.name not in [c[0] for c in self.DEFAULT_CATEGORIES]
+            ]
+
+            # 2. Get active category names for this department so we don't suggest already added ones
+            active_cats = set()
+            for r in session.query(CategoryModel.name).all():
+                active_cats.add(r[0].lower().strip())
+
+        # Combine custom suggestions + department specific suggestions + defaults
+        combined: List[str] = []
+        # Custom user-created categories first
+        for name in custom_suggestions:
+            if name and name not in combined:
+                combined.append(name)
+
+        # Department specific recommendations
+        if department_name and department_name in dept_suggestions:
+            for name in dept_suggestions[department_name]:
+                if name not in combined:
+                    combined.append(name)
+
+        # General defaults if list is short
+        general = [
+            "Missing Dimension", "Callout Reference Error", "Revision Cloud Missing",
+            "Title Block Mismatch", "Specification Clause Discrepancy"
+        ]
+        for name in general:
+            if len(combined) < 10 and name not in combined:
+                combined.append(name)
+
+        return combined
+
+    def delete_category(self, name_or_id: str, department_name: Optional[str] = None) -> bool:
+        """Delete a category by name or ID, optionally restricted to a department."""
+        with self._db.get_session() as session:
+            query = session.query(CategoryModel).filter(
+                (CategoryModel.name == name_or_id) | (CategoryModel.id == name_or_id)
+            )
+            if department_name and department_name not in ("All Departments", "Unassigned", ""):
+                query = query.filter(CategoryModel.department_name == department_name)
+            cat = query.first()
+            if cat:
+                session.delete(cat)
+                session.commit()
+                logger.info(f"Deleted category '{name_or_id}' (dept='{department_name}')")
+                return True
+            return False
 
 
 # ---------------------------------------------------------------------------
@@ -769,6 +1015,55 @@ class CommentRepository:
             logger.info(f"Comment '{comment_id}' raw_text updated ({len(new_text)} chars).")
             return True
 
+    def update_comment_category(
+        self,
+        comment_id: str,
+        new_category: str,
+        changed_by_user_id: str = "reviewer",
+    ) -> bool:
+        """
+        Update the classification category of a comment, mark verified_by_human=True,
+        and log an audit trail entry for category modification.
+        """
+        with self._db.get_session() as session:
+            row = session.get(CommentModel, comment_id)
+            if row is None:
+                logger.warning(f"update_comment_category: comment '{comment_id}' not found.")
+                return False
+
+            old_category = row.category_name or "Uncategorized"
+            if old_category == new_category:
+                return True
+
+            # Link category_id if exists
+            cat_row = (
+                session.query(CategoryModel)
+                .filter(CategoryModel.name == new_category)
+                .first()
+            )
+            if cat_row:
+                row.category_id = cat_row.id
+
+            row.category_name = new_category
+            row.is_verified_by_human = True
+            row.updated_at = datetime.now(timezone.utc)
+
+            # Record audit trail
+            audit_entry = AuditLogModel(
+                id=f"AUD-{uuid.uuid4().hex[:8].upper()}",
+                comment_id=comment_id,
+                action="edit_category",
+                reviewer_name=changed_by_user_id or "reviewer",
+                old_value=old_category,
+                new_value=new_category,
+                notes=f"Category updated from '{old_category}' to '{new_category}'",
+                timestamp=datetime.now(timezone.utc),
+            )
+            session.add(audit_entry)
+            session.commit()
+            logger.info(f"Comment '{comment_id}' category → '{new_category}' by {changed_by_user_id}")
+            return True
+
     def get_category_counts(
         self, drawing_id: Optional[str] = None
     ) -> Dict[str, int]:
@@ -892,6 +1187,10 @@ class AuditLogRepository:
                 .all()
             )
             return [_audit_log_to_dict(r) for r in rows]
+
+    def get_audit_trail(self, comment_id: str) -> List[Dict[str, Any]]:
+        """Alias for get_audit_logs_for_comment."""
+        return self.get_audit_logs_for_comment(comment_id)
 
     def get_recent_audit_logs(self, limit: int = 100) -> List[Dict[str, Any]]:
         """Return recent audit logs across all comments."""

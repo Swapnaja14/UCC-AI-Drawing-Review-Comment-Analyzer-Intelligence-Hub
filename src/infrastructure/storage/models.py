@@ -95,17 +95,20 @@ class CategoryModel(Base):
 
     __tablename__ = "categories"
 
-    id          = Column(String(50),  primary_key=True)
-    name        = Column(String(100), nullable=False, unique=True)
-    description = Column(Text,        nullable=True)
-    color_hex   = Column(String(7),   nullable=True)   # e.g. "#FBBF24"
-    created_at  = Column(DateTime,    nullable=False, default=datetime.utcnow)
+    id              = Column(String(50),  primary_key=True)
+    name            = Column(String(100), nullable=False)
+    department_name = Column(String(100), nullable=True)   # Nullable for global/universal categories
+    description     = Column(Text,        nullable=True)
+    keywords        = Column(Text,        nullable=True)   # Comma-separated trigger keywords/patterns
+    color_hex       = Column(String(7),   nullable=True)   # e.g. "#FBBF24"
+    created_at      = Column(DateTime,    nullable=False, default=datetime.utcnow)
 
     # Relationships
     comments = relationship("CommentModel", back_populates="category_rel")
 
     __table_args__ = (
         Index("ix_categories_name", "name"),
+        Index("ix_categories_department", "department_name"),
     )
 
 

@@ -273,7 +273,7 @@ class AppController(QObject):
     user_signed_out_signal = Signal()
     auth_error_signal      = Signal(str)
 
-    def __init__(self, parent: Optional[QObject] = None) -> None:
+    def __init__(self, parent: Optional[QObject] = None, db_engine: Optional[DatabaseEngine] = None) -> None:
         super().__init__(parent)
 
         # ── Configuration & Services ──────────────────────────────
@@ -284,8 +284,11 @@ class AppController(QObject):
         self.auth_service: Optional[Any] = None   # initialised after db_engine below
 
         # ── Database ──────────────────────────────────────────────
-        db_path = self.config.database.get_resolved_db_path()
-        self.db_engine    = DatabaseEngine(db_path=db_path)
+        if db_engine is not None:
+            self.db_engine = db_engine
+        else:
+            db_path = self.config.database.get_resolved_db_path()
+            self.db_engine = DatabaseEngine(db_path=db_path)
         self.drawing_repo    = DrawingRepository(self.db_engine)
         self.project_repo    = ProjectRepository(self.db_engine)
         self.comment_repo    = CommentRepository(self.db_engine)
@@ -301,7 +304,7 @@ class AppController(QObject):
         self.export_service         = ExportService(self.comment_repo, self.project_repo, self.drawing_repo, self.department_repo)
         self.verification_service   = VerificationService(self.comment_repo, self.audit_repo)
         self.text_cleaning_service  = TextCleaningService()
-        self.classification_service = ClassificationService()
+        self.classification_service = ClassificationService(category_repo=self.category_repo)
 
         # ── Annotation Detection Service ──────────────────────────
         self.annotation_service = AnnotationDetectionServiceEnhanced()
@@ -572,14 +575,52 @@ class AppController(QObject):
         """Return all classifications categories from DB."""
         return self.category_repo.get_all_categories() if hasattr(self, 'category_repo') else []
 
-    def add_category(self, name: str, description: str = "", color_hex: str = "#808080") -> None:
-        """Add a new classification category."""
+    def get_categories_for_department(self, dept_name: Optional[str] = None) -> List[Dict[str, Any]]:
+        """Return categories applicable to a department (global + department-scoped)."""
         if hasattr(self, 'category_repo'):
-            self.category_repo.get_or_create_category(name, description, color_hex)
+            return self.category_repo.get_categories_for_department(dept_name)
+        return []
+
+    def get_category_suggestions(self, dept_name: Optional[str] = None) -> List[str]:
+        """Return suggested categories based on department and user history."""
+        if hasattr(self, 'category_repo'):
+            return self.category_repo.get_category_suggestions(dept_name)
+        return []
+
+    def add_category(
+        self,
+        name: str,
+        department_name: Optional[str] = None,
+        description: str = "",
+        color_hex: str = "#808080",
+        keywords: str = "",
+    ) -> Optional[Dict[str, Any]]:
+        """Add a new classification category optionally scoped to a department and with identifying keywords."""
+        if hasattr(self, 'category_repo'):
+            return self.category_repo.get_or_create_category(
+                name=name,
+                department_name=department_name,
+                description=description,
+                color_hex=color_hex,
+                keywords=keywords,
+            )
+        return None
+
+    def delete_category(self, name: str, department_name: Optional[str] = None) -> bool:
+        """Delete a classification category."""
+        if hasattr(self, 'category_repo'):
+            return self.category_repo.delete_category(name, department_name=department_name)
+        return False
 
     def get_all_projects(self) -> List[Dict[str, Any]]:
         """Return all project records from the database."""
         return self.project_repo.get_all_projects()
+
+    def get_current_drawing(self) -> Optional[Dict[str, Any]]:
+        """Return the drawing dictionary for the currently active drawing, or None."""
+        if self._current_drawing_id and hasattr(self, "drawing_repo"):
+            return self.drawing_repo.get_drawing_by_id(self._current_drawing_id)
+        return None
 
     def get_recent_drawings(self, limit: int = 10) -> List[Dict[str, Any]]:
         """Return recent drawings with comment counts and departments."""
@@ -732,6 +773,15 @@ class AppController(QObject):
             self.verification_service.edit_comment_text(comment_id, new_text, user_id)
         else:
             self.comment_repo.update_comment_text(comment_id, new_text)
+
+    def update_comment_category(self, comment_id: str, new_category: str) -> bool:
+        """
+        Persist a corrected or updated classification category for a single comment.
+        """
+        user_id = self.current_user.id if self.current_user else "reviewer"
+        if hasattr(self, "comment_repo"):
+            return self.comment_repo.update_comment_category(comment_id, new_category, user_id)
+        return False
 
     def get_category_counts(
         self, drawing_id: Optional[str] = None

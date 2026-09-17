@@ -359,9 +359,26 @@ class ClassificationPage(QWidget):
         lay.addWidget(CategoryBadge(str(category)))
 
         cat_override = QComboBox()
-        cat_override.addItems(md.CATEGORIES)
+        db_cats = [cat.get("name") for cat in self._controller.get_all_categories()] if self._controller else []
+        all_cats = list(db_cats) if db_cats else list(md.CATEGORIES)
+        if str(category) not in all_cats:
+            all_cats.insert(0, str(category))
+        cat_override.addItems(all_cats)
         cat_override.setCurrentText(str(category))
         cat_override.setFixedHeight(36)
+
+        def _on_cat_override_changed(new_category: str):
+            if not new_category or new_category == str(category):
+                return
+            if isinstance(c, dict):
+                c["category"] = new_category
+            else:
+                setattr(c, "category", new_category)
+            if self._controller and cid and not cid.startswith("C-"):
+                self._controller.update_comment_category(cid, new_category)
+            self._apply_table_filter()
+
+        cat_override.currentTextChanged.connect(_on_cat_override_changed)
         lay.addWidget(cat_override)
 
         conf_lbl = QLabel(f"Confidence: {int(float(confidence) * 100)}%")

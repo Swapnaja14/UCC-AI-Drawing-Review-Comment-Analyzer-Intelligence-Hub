@@ -109,7 +109,7 @@ class MainWindow(QMainWindow):
             HumanReviewPage(controller=self.controller),
             AnalyticsPage(controller=self.controller),
             ExportPage(controller=self.controller),
-            SettingsPage(theme_manager=self._theme),
+            SettingsPage(theme_manager=self._theme, controller=self.controller),
         ]
         for page in self._pages:
             self._stack.addWidget(page)

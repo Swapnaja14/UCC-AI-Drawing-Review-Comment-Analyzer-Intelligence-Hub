@@ -356,6 +356,11 @@ class ProcessingWorkflowEngine:
                     deduped_comments.append(item)
             extracted_comments_data = deduped_comments
 
+            # Establish drawing ID and effective department before classification
+            db_record = self.drawing_repo.save_drawing_from_dto(doc_dto, department_id=department_id)
+            drawing_id = db_record.get("id", "DWG-000")
+            effective_dept_id = db_record.get("department_id") or department_id
+
             # ── Step 5: Batched AI Category Classification ─────────
             notify("AI Classification", WorkflowState.AI_CLASSIFYING, 90, f"Classifying review comments with AI.")
             
@@ -365,7 +370,11 @@ class ProcessingWorkflowEngine:
                     for item in extracted_comments_data
                 ]
                 try:
-                    batch_dto = self.classification_service.classify_batch(texts_to_classify)
+                    batch_dto = self.classification_service.classify_batch(
+                        texts_to_classify,
+                        drawing_id=drawing_id,
+                        department_name=effective_dept_id,
+                    )
                     class_results = batch_dto.results
                     for item, class_res in zip(extracted_comments_data, class_results):
                         item["category_name"] = class_res.primary_category.category_name
@@ -376,7 +385,10 @@ class ProcessingWorkflowEngine:
                     for item in extracted_comments_data:
                         try:
                             text_to_classify = item.get("cleaned_text") or item.get("raw_text", "")
-                            class_res = self.classification_service.classify_comment(text_to_classify)
+                            class_res = self.classification_service.classify_comment(
+                                text_to_classify,
+                                department_name=effective_dept_id,
+                            )
                             item["category_name"] = class_res.primary_category.category_name
                             if class_res.primary_category.confidence > 0:
                                 item["confidence"] = round((item["confidence"] + class_res.primary_category.confidence) / 2.0, 2)
@@ -386,9 +398,6 @@ class ProcessingWorkflowEngine:
 
             # ── Step 6: Database Persistence ─────────────────────
             notify("Data Persistence", WorkflowState.PERSISTING, 95, f"Saving drawing records to SQLite database.")
-            db_record = self.drawing_repo.save_drawing_from_dto(doc_dto, department_id=department_id)
-            drawing_id = db_record.get("id", "DWG-000")
-            effective_dept_id = db_record.get("department_id") or department_id
 
             if self.comment_repo and extracted_comments_data:
                 try:

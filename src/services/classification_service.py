@@ -23,7 +23,8 @@ from src.infrastructure.logging.logger import get_logger
 logger = get_logger(__name__)
 
 class ClassificationService:
-    def __init__(self, model_dir: Optional[Path] = None):
+    def __init__(self, model_dir: Optional[Path] = None, category_repo: Optional[Any] = None):
+        self.category_repo = category_repo
         self.keywords = self._build_category_keywords()
         self.keywords_tuples = {
             cat: [(kw, kw.lower()) for kw in kws]
@@ -55,7 +56,8 @@ class ClassificationService:
                 'drawing scale', 'wrong views', 'projection', 'section cut', 'view orientation', 
                 'leader line', 'detail bubble', 'dashed line', 'hatch pattern', 'line weight', 
                 'isometric view', 'match line', 'centerline', 'arrowhead', 'break line', 
-                'overlapping text', 'view mismatch'
+                'overlapping text', 'view mismatch', 'align', 'aligned', 'center', 'move this up',
+                'move down', 'spacing', 'space between', 'terminal block'
             ],
             'Dimension': [
                 'incorrect dimension', 'missing dimension', 'dimension', 'dim', 'CL EL', 
@@ -96,7 +98,10 @@ class ClassificationService:
                 'revision cloud', 'revision table', 'revision symbol', 'delta', 'triangle tag', 
                 'Rev A', 'Rev B', 'Rev C', 'Rev 1', 'Rev 2', 'Rev 0', 
                 'revision cloud missing', 'revision table not updated', 'revision description', 
-                'revision note', 'ECN', 'revision history', 'cloud boundary'
+                'revision note', 'ECN', 'revision history', 'cloud boundary',
+                'revision', 'revision flag', 'revision flags', 'rev flag', 'rev flags',
+                'revision a', 'revision b', 'revision c', 'revision d', 'revision e',
+                'rev. a', 'rev. b', 'rev. c', 'flag', 'flags', 'revision update'
             ],
             'Calculation': [
                 'calculation', 'design inconsistency', 'pressure drop calculation', 'calculation sheet', 
@@ -137,45 +142,109 @@ class ClassificationService:
             ]
         }
 
-    def _rule_based_classify(self, text: str) -> List[CategoryPredictionDTO]:
+    def get_department_keywords(self, department_name: Optional[str] = None) -> Dict[str, List[tuple[str, str]]]:
         """
-        Rule-based classification using keyword matching.
-        
-        Improved algorithm:
-        - Exact word matches get full weight (1.0)
-        - Partial matches get half weight (0.5)
-        - Confidence scales logarithmically (more realistic)
+        Merge base category keywords with dynamic department-specific custom categories and keywords from DB.
+        Returns mapping of category_name -> [(kw, kw_lower), ...]
+        """
+        # Start with standard category keywords
+        all_kw_tuples = {cat: list(pairs) for cat, pairs in self.keywords_tuples.items()}
+
+        if self.category_repo and hasattr(self.category_repo, "get_categories_for_department"):
+            try:
+                dept_cats = self.category_repo.get_categories_for_department(department_name)
+                for cat in dept_cats:
+                    cname = cat.get("name")
+                    if not cname:
+                        continue
+                    kws: List[str] = []
+                    # 1. Check explicit keywords field
+                    raw_kws = cat.get("keywords") or ""
+                    if raw_kws:
+                        for k in raw_kws.split(","):
+                            k_clean = k.strip()
+                            if k_clean and k_clean not in kws:
+                                kws.append(k_clean)
+
+                    # 2. Check pre-configured suggestion keywords if empty
+                    if not kws and hasattr(self.category_repo, "get_suggestion_keywords"):
+                        sugg_kws = self.category_repo.get_suggestion_keywords(cname)
+                        if sugg_kws:
+                            for k in sugg_kws.split(","):
+                                k_clean = k.strip()
+                                if k_clean and k_clean not in kws:
+                                    kws.append(k_clean)
+
+                    # 3. Use category name itself as a keyword pattern
+                    if cname not in kws:
+                        kws.append(cname)
+
+                    # 4. Check description field
+                    desc = cat.get("description") or ""
+                    if desc and len(desc.split()) <= 5 and desc not in kws:
+                        kws.append(desc)
+
+                    if cname in all_kw_tuples:
+                        # Extend existing category keywords
+                        existing_tuples = list(all_kw_tuples[cname])
+                        existing_kws_lower = {t[1] for t in existing_tuples}
+                        for k in kws:
+                            if k.lower() not in existing_kws_lower:
+                                existing_tuples.append((k, k.lower()))
+                        all_kw_tuples[cname] = existing_tuples
+                    else:
+                        # New custom category
+                        all_kw_tuples[cname] = [(k, k.lower()) for k in kws]
+            except Exception as exc:
+                logger.warning(f"Error loading department categories into classifier: {exc}")
+
+        return all_kw_tuples
+
+    def _rule_based_classify(
+        self,
+        text: str,
+        department_name: Optional[str] = None,
+        custom_kw_tuples: Optional[Dict[str, List[tuple[str, str]]]] = None,
+    ) -> List[CategoryPredictionDTO]:
+        """
+        Rule-based classification using keyword and phrase matching with multi-word weighting.
         """
         predictions = []
         text_lower = text.lower()
-        words = text_lower.split()
-        
-        for category, kw_pairs in self.keywords_tuples.items():
-            # Find keyword matches with quality scoring
+        words = set(text_lower.split())
+
+        kw_dict = custom_kw_tuples if custom_kw_tuples is not None else self.get_department_keywords(department_name)
+
+        for category, kw_pairs in kw_dict.items():
             matches = []
             match_score = 0.0
-            
+
             for kw, kw_lower in kw_pairs:
-                # Exact word match (higher weight)
-                if kw_lower in words:
-                    if kw not in matches:
-                        matches.append(kw)
-                    match_score += 1.0
-                # Partial match in text (lower weight)
-                elif kw_lower in text_lower:
-                    if kw not in matches:
-                        matches.append(kw)
-                    match_score += 0.5
-            
+                # Multi-word exact phrase match (high quality)
+                if " " in kw_lower:
+                    if kw_lower in text_lower:
+                        if kw not in matches:
+                            matches.append(kw)
+                        match_score += 2.0
+                else:
+                    # Single word exact match
+                    if kw_lower in words:
+                        if kw not in matches:
+                            matches.append(kw)
+                        match_score += 1.0
+                    elif kw_lower in text_lower and len(kw_lower) >= 4:
+                        if kw not in matches:
+                            matches.append(kw)
+                        match_score += 0.4
+
             if matches:
-                # Calculate confidence with logarithmic scaling
-                # This gives more realistic confidence growth
-                # 1 match ≈ 47%, 2 matches ≈ 57%, 3 matches ≈ 65%, 4+ matches ≈ 70%+
-                conf = min(1.0, 0.3 + (0.25 * math.log(match_score + 1)))
-                predictions.append(CategoryPredictionDTO(category, conf, matches))
+                # Logarithmic confidence scaling
+                # 1 match ≈ 70%, 2 matches ≈ 80%, multi-word/3+ matches ≈ 85-95%
+                conf = min(0.98, 0.42 + (0.35 * math.log(match_score + 1)))
+                predictions.append(CategoryPredictionDTO(category, round(conf, 4), matches))
             else:
                 predictions.append(CategoryPredictionDTO(category, 0.0, []))
-                
+
         return sorted(predictions, key=lambda x: x.confidence, reverse=True)
 
     def _ensure_model_loaded(self) -> bool:
@@ -283,8 +352,13 @@ class ClassificationService:
             logger.debug(f"Batched DistilBERT inference failed: {batch_err}")
             return [None] * len(texts)
 
-    def classify_comment(self, comment_text: str, comment_id: str = '') -> ClassificationResultDTO:
-        """Classify a single comment into categories with AI inference and keyword-grounded calibration"""
+    def classify_comment(
+        self,
+        comment_text: str,
+        comment_id: str = '',
+        department_name: Optional[str] = None,
+    ) -> ClassificationResultDTO:
+        """Classify a single comment into categories with AI inference, department scoping, and keyword-grounded calibration"""
         if not comment_text or not comment_text.strip():
             return ClassificationResultDTO(
                 comment_id=comment_id,
@@ -298,9 +372,10 @@ class ClassificationService:
         clean_text = comment_text.strip()
         words = clean_text.lower().split()
 
-        # 1. Rule-based keyword analysis
-        rule_preds = self._rule_based_classify(clean_text)
+        # 1. Rule-based keyword analysis (including department-scoped custom categories)
+        rule_preds = self._rule_based_classify(clean_text, department_name=department_name)
         rule_map = {p.category_name: p for p in rule_preds}
+        matched_rule_preds = [p for p in rule_preds if p.matched_keywords]
         total_keywords_matched = sum(len(p.matched_keywords) for p in rule_preds)
 
         # 2. AI model prediction
@@ -309,15 +384,22 @@ class ClassificationService:
         if ai_preds:
             method = 'ai_model'
             final_predictions = []
+            seen_categories = set()
+
             for p in ai_preds:
-                kws = rule_map.get(p.category_name, CategoryPredictionDTO('', 0, [])).matched_keywords
-                rule_conf = rule_map.get(p.category_name, CategoryPredictionDTO('', 0, [])).confidence
+                seen_categories.add(p.category_name)
+                rule_p = rule_map.get(p.category_name, CategoryPredictionDTO('', 0, []))
+                kws = rule_p.matched_keywords
+                rule_conf = rule_p.confidence
 
                 # Grounding with matched engineering keywords
                 if kws and p.category_name != 'Documentation':
-                    combined_conf = min(1.0, 0.45 * p.confidence + 0.35 * rule_conf + 0.10 * len(kws))
+                    combined_conf = min(0.99, 0.40 * p.confidence + 0.45 * rule_conf + 0.05 * len(kws))
                 elif total_keywords_matched > 0 and p.category_name == 'Documentation':
                     combined_conf = max(0.01, p.confidence * 0.30)
+                elif total_keywords_matched > 0 and not kws:
+                    # Other categories matched explicit keywords, but this AI pred had none
+                    combined_conf = p.confidence * 0.40
                 else:
                     combined_conf = p.confidence * 0.85
 
@@ -326,6 +408,15 @@ class ClassificationService:
                     confidence=float(round(combined_conf, 4)),
                     matched_keywords=kws
                 ))
+
+            # Include any custom categories or rule matches not present in AI model classes
+            for p in matched_rule_preds:
+                if p.category_name not in seen_categories:
+                    final_predictions.append(CategoryPredictionDTO(
+                        category_name=p.category_name,
+                        confidence=float(round(p.confidence, 4)),
+                        matched_keywords=p.matched_keywords
+                    ))
 
             final_predictions = sorted(final_predictions, key=lambda x: x.confidence, reverse=True)
             primary = final_predictions[0]
@@ -352,8 +443,13 @@ class ClassificationService:
             requires_human_review=requires_review
         )
         
-    def classify_batch(self, comments: List[Any], drawing_id: str = '') -> BatchClassificationDTO:
-        """Classify multiple comments in batch using accelerated single-pass tensor inference"""
+    def classify_batch(
+        self,
+        comments: List[Any],
+        drawing_id: str = '',
+        department_name: Optional[str] = None,
+    ) -> BatchClassificationDTO:
+        """Classify multiple comments in batch using accelerated single-pass tensor inference and department keywords"""
         if not comments:
             return BatchClassificationDTO(
                 drawing_id=drawing_id,
@@ -376,6 +472,9 @@ class ClassificationService:
             else:
                 texts.append(str(c))
                 ids.append(str(i))
+
+        # Pre-load department keywords once for entire batch
+        dept_kw_tuples = self.get_department_keywords(department_name)
 
         # 1. Fast Batched AI predictions (1 forward pass)
         batch_ai_preds = self._try_ai_classify_batch(texts)
@@ -403,22 +502,29 @@ class ClassificationService:
                 continue
 
             words = clean_text.lower().split()
-            rule_preds = self._rule_based_classify(clean_text)
+            rule_preds = self._rule_based_classify(clean_text, custom_kw_tuples=dept_kw_tuples)
             rule_map = {p.category_name: p for p in rule_preds}
+            matched_rule_preds = [p for p in rule_preds if p.matched_keywords]
             total_keywords_matched = sum(len(p.matched_keywords) for p in rule_preds)
 
             ai_preds = batch_ai_preds[i]
             if ai_preds:
                 method = 'ai_model'
                 final_predictions = []
+                seen_categories = set()
+
                 for p in ai_preds:
-                    kws = rule_map.get(p.category_name, CategoryPredictionDTO('', 0, [])).matched_keywords
-                    rule_conf = rule_map.get(p.category_name, CategoryPredictionDTO('', 0, [])).confidence
+                    seen_categories.add(p.category_name)
+                    rule_dto = rule_map.get(p.category_name, CategoryPredictionDTO('', 0, []))
+                    kws = rule_dto.matched_keywords
+                    rule_conf = rule_dto.confidence
 
                     if kws and p.category_name != 'Documentation':
-                        combined_conf = min(1.0, 0.45 * p.confidence + 0.35 * rule_conf + 0.10 * len(kws))
+                        combined_conf = min(0.99, 0.40 * p.confidence + 0.45 * rule_conf + 0.05 * len(kws))
                     elif total_keywords_matched > 0 and p.category_name == 'Documentation':
                         combined_conf = max(0.01, p.confidence * 0.30)
+                    elif total_keywords_matched > 0 and not kws:
+                        combined_conf = p.confidence * 0.40
                     else:
                         combined_conf = p.confidence * 0.85
 
@@ -427,6 +533,15 @@ class ClassificationService:
                         confidence=float(round(combined_conf, 4)),
                         matched_keywords=kws
                     ))
+
+                # Include any custom categories or rule matches not present in AI model classes
+                for p in matched_rule_preds:
+                    if p.category_name not in seen_categories:
+                        final_predictions.append(CategoryPredictionDTO(
+                            category_name=p.category_name,
+                            confidence=float(round(p.confidence, 4)),
+                            matched_keywords=p.matched_keywords
+                        ))
 
                 final_predictions = sorted(final_predictions, key=lambda x: x.confidence, reverse=True)
                 primary = final_predictions[0]

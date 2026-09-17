@@ -402,6 +402,11 @@ class ExportPage(QWidget):
         meta_lay.addLayout(grid)
         root.addWidget(meta_card)
 
+        # ── Section 2.5: Error Tracker Categories (Column 9: Category of Error) ──
+        cat_card = self._build_category_card()
+        root.addWidget(cat_card)
+        self._dept_combo.currentTextChanged.connect(self._on_department_changed)
+
         # ── Section 3: Scope Options ──────────────────────────────
         scope_card = QFrame()
         scope_card.setObjectName("Card")
@@ -539,6 +544,9 @@ class ExportPage(QWidget):
         # Set container inside scroll area and add scroll area to page
         scroll.setWidget(container)
         page_layout.addWidget(scroll)
+
+        # Initialise error tracker categories
+        self._refresh_categories()
 
     # ── Helpers ───────────────────────────────────────────────────
 
@@ -760,3 +768,447 @@ class ExportPage(QWidget):
             )
             item.setForeground(QColor("#4ADE80"))
         self._hist_model.insertRow(0, row)
+
+    # ── Section 2.5: Error Tracker Category Editor ────────────────
+
+    def _build_category_card(self) -> QFrame:
+        """Build the dedicated Error Tracker Category Editor card (Column 9)."""
+        card = QFrame()
+        card.setObjectName("Card")
+        card.setStyleSheet("""
+            #Card {
+                background-color: #1E222B;
+                border: 1px solid #334155;
+                border-radius: 10px;
+            }
+        """)
+        lay = QVBoxLayout(card)
+        lay.setContentsMargins(24, 20, 24, 24)
+        lay.setSpacing(16)
+
+        # Header Row
+        hdr = QHBoxLayout()
+        title_box = QVBoxLayout()
+        title_box.setSpacing(4)
+
+        title = QLabel("Error Tracker Categories (Column 9: Category of Error)")
+        title.setFont(QFont("Segoe UI Variable", 16, QFont.Weight.Bold))
+        title.setStyleSheet("color: #F8FAFC;")
+        title_box.addWidget(title)
+
+        desc = QLabel(
+            "Configure error categories written to Column 9 of the Error Tracker spreadsheet. "
+            "Categories added here are scoped specifically to this engineering department so other departments remain clean."
+        )
+        desc.setFont(QFont("Segoe UI", 12))
+        desc.setWordWrap(True)
+        desc.setStyleSheet("color: #94A3B8;")
+        title_box.addWidget(desc)
+        hdr.addLayout(title_box, 1)
+
+        self._cat_dept_badge = QLabel("📁 Piping Engineering")
+        self._cat_dept_badge.setFont(QFont("Segoe UI", 12, QFont.Weight.Bold))
+        self._cat_dept_badge.setStyleSheet("""
+            background-color: #0284C722;
+            color: #38BDF8;
+            border: 1px solid #38BDF855;
+            border-radius: 6px;
+            padding: 6px 14px;
+        """)
+        hdr.addWidget(self._cat_dept_badge, 0, Qt.AlignmentFlag.AlignTop)
+        lay.addLayout(hdr)
+
+        # Active Categories Section
+        self._active_cat_header = QLabel("Active Error Categories (Piping Engineering):")
+        self._active_cat_header.setFont(QFont("Segoe UI", 13, QFont.Weight.DemiBold))
+        self._active_cat_header.setStyleSheet("color: #E2E8F0; margin-top: 4px;")
+        lay.addWidget(self._active_cat_header)
+
+        cats_scroll = QScrollArea()
+        cats_scroll.setWidgetResizable(True)
+        cats_scroll.setFrameShape(QFrame.Shape.NoFrame)
+        cats_scroll.setStyleSheet("""
+            QScrollArea {
+                background: #12141A;
+                border: 1px solid #282D37;
+                border-radius: 8px;
+            }
+        """)
+        cats_scroll.setFixedHeight(145)
+
+        self._cats_container = QWidget()
+        self._cats_container.setStyleSheet("background: transparent;")
+        self._cats_grid = QGridLayout(self._cats_container)
+        self._cats_grid.setContentsMargins(12, 12, 12, 12)
+        self._cats_grid.setHorizontalSpacing(10)
+        self._cats_grid.setVerticalSpacing(8)
+        cats_scroll.setWidget(self._cats_container)
+        lay.addWidget(cats_scroll)
+
+        # Smart Suggestions Section (Clickable Chips)
+        sugg_box = QVBoxLayout()
+        sugg_box.setSpacing(8)
+
+        sugg_hdr_lay = QHBoxLayout()
+        sugg_title = QLabel("💡 Smart Suggestions (Click to Add to Department):")
+        sugg_title.setFont(QFont("Segoe UI", 12, QFont.Weight.DemiBold))
+        sugg_title.setStyleSheet("color: #FBBF24;")
+        sugg_hdr_lay.addWidget(sugg_title)
+        sugg_hdr_lay.addStretch()
+
+        self._sugg_notice = QLabel("1-click discipline recommendations & historical entries")
+        self._sugg_notice.setFont(QFont("Segoe UI", 11))
+        self._sugg_notice.setStyleSheet("color: #64748B;")
+        sugg_hdr_lay.addWidget(self._sugg_notice)
+        sugg_box.addLayout(sugg_hdr_lay)
+
+        sugg_scroll = QScrollArea()
+        sugg_scroll.setWidgetResizable(True)
+        sugg_scroll.setFrameShape(QFrame.Shape.NoFrame)
+        sugg_scroll.setFixedHeight(46)
+        sugg_scroll.setVerticalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
+        sugg_scroll.setStyleSheet("QScrollArea { background: transparent; border: none; }")
+
+        self._sugg_container = QWidget()
+        self._sugg_container.setStyleSheet("background: transparent;")
+        self._sugg_layout = QHBoxLayout(self._sugg_container)
+        self._sugg_layout.setContentsMargins(0, 2, 0, 2)
+        self._sugg_layout.setSpacing(8)
+        self._sugg_layout.setAlignment(Qt.AlignmentFlag.AlignLeft)
+        sugg_scroll.setWidget(self._sugg_container)
+        sugg_box.addWidget(sugg_scroll)
+        lay.addLayout(sugg_box)
+
+        # Quick Add Custom Category Row
+        add_box = QVBoxLayout()
+        add_box.setSpacing(6)
+        add_lbl = QLabel("Add New Custom Error Category & Trigger Keywords:")
+        add_lbl.setFont(QFont("Segoe UI", 12, QFont.Weight.DemiBold))
+        add_lbl.setStyleSheet("color: #CBD5E1;")
+        add_box.addWidget(add_lbl)
+
+        add_row = QHBoxLayout()
+        add_row.setSpacing(10)
+
+        input_style = """
+            QLineEdit {
+                background-color: #12141A;
+                color: #F8FAFC;
+                border: 1px solid #334155;
+                border-radius: 8px;
+                padding: 10px 14px;
+                font-size: 13px;
+                font-family: 'Segoe UI', Arial;
+                min-height: 20px;
+            }
+            QLineEdit:hover { border: 1px solid #475569; }
+            QLineEdit:focus { border: 1.5px solid #38BDF8; background-color: #161922; }
+        """
+        self._new_cat_input = QLineEdit()
+        self._new_cat_input.setStyleSheet(input_style)
+        self._new_cat_input.setPlaceholderText("Category Name (e.g. Tie-in Flange Rating)...")
+        self._new_cat_input.returnPressed.connect(self._on_add_custom_category)
+        add_row.addWidget(self._new_cat_input, 4)
+
+        self._new_cat_keywords_input = QLineEdit()
+        self._new_cat_keywords_input.setStyleSheet(input_style)
+        self._new_cat_keywords_input.setPlaceholderText("Trigger Keywords / Phrases (e.g. flange rating, class 150, class 300)...")
+        self._new_cat_keywords_input.returnPressed.connect(self._on_add_custom_category)
+        add_row.addWidget(self._new_cat_keywords_input, 5)
+
+        self._add_cat_btn = QPushButton("  ➕  Add Category to Piping Engineering")
+        self._add_cat_btn.setFont(QFont("Segoe UI", 12, QFont.Weight.Bold))
+        self._add_cat_btn.setStyleSheet("""
+            QPushButton {
+                background-color: #0284C7;
+                color: #FFFFFF;
+                border: none;
+                border-radius: 8px;
+                padding: 10px 18px;
+                min-height: 20px;
+            }
+            QPushButton:hover { background-color: #0369A1; }
+            QPushButton:pressed { background-color: #075985; }
+        """)
+        self._add_cat_btn.clicked.connect(self._on_add_custom_category)
+        add_row.addWidget(self._add_cat_btn)
+        add_box.addLayout(add_row)
+
+        kw_help_lbl = QLabel("💡 Trigger Keywords: Comma-separated phrases from Drawing Commentary (Column 9) that AI & rules use to identify this Category (Column 10).")
+        kw_help_lbl.setFont(QFont("Segoe UI", 11))
+        kw_help_lbl.setStyleSheet("color: #64748B; padding-left: 2px;")
+        add_box.addWidget(kw_help_lbl)
+
+        lay.addLayout(add_box)
+
+        # Status / Feedback label
+        self._cat_status_lbl = QLabel("")
+        self._cat_status_lbl.setFont(QFont("Segoe UI", 11, QFont.Weight.DemiBold))
+        self._cat_status_lbl.setStyleSheet("color: #4ADE80; padding: 2px 4px;")
+        self._cat_status_lbl.hide()
+        lay.addWidget(self._cat_status_lbl)
+
+        return card
+
+    def _refresh_categories(self) -> None:
+        """Populate active categories and smart suggestions for the currently selected department."""
+        if not hasattr(self, "_cats_grid") or not hasattr(self, "_sugg_layout"):
+            return
+
+        dept_name = self._dept_combo.currentText().strip() if hasattr(self, "_dept_combo") else "Piping Engineering"
+
+        # Update badge and labels
+        self._cat_dept_badge.setText(f"📁 {dept_name}")
+        self._active_cat_header.setText(f"Active Error Categories for {dept_name}:")
+        self._new_cat_input.setPlaceholderText(f"Category Name for {dept_name} (e.g. Tie-in Flange Rating)...")
+        if hasattr(self, "_new_cat_keywords_input"):
+            self._new_cat_keywords_input.setPlaceholderText("Trigger Keywords / Phrases (e.g. flange rating, class 150, class 300)...")
+        self._add_cat_btn.setText(f"  ➕  Add Category to {dept_name}")
+
+        # Clear existing items in cats_grid
+        while self._cats_grid.count():
+            item = self._cats_grid.takeAt(0)
+            widget = item.widget()
+            if widget:
+                widget.deleteLater()
+
+        # Clear existing items in sugg_layout
+        while self._sugg_layout.count():
+            item = self._sugg_layout.takeAt(0)
+            widget = item.widget()
+            if widget:
+                widget.deleteLater()
+
+        # Query categories from controller
+        cats: list[dict[str, Any]] = []
+        if self._controller:
+            try:
+                cats = self._controller.get_categories_for_department(dept_name)
+            except Exception:
+                cats = []
+
+        # Fallback to default categories if empty
+        if not cats:
+            cats = [{"name": c, "department_name": None} for c in md.CATEGORIES]
+
+        # Populate active categories grid (4 columns)
+        COLS = 4
+        for idx, cat in enumerate(cats):
+            cname = cat.get("name", "")
+            cat_dept = cat.get("department_name")
+            kw_str = cat.get("keywords") or ""
+            is_custom = bool(cat_dept and cat_dept == dept_name)
+
+            badge = QFrame()
+            badge.setFixedHeight(34)
+            b_lay = QHBoxLayout(badge)
+            b_lay.setContentsMargins(10, 4, 10, 4)
+            b_lay.setSpacing(8)
+
+            if is_custom:
+                badge.setStyleSheet("""
+                    QFrame {
+                        background-color: #0284C71A;
+                        border: 1px solid #38BDF866;
+                        border-radius: 6px;
+                    }
+                """)
+                tag_lbl = QLabel(f"🏷  {cname}")
+                tag_lbl.setFont(QFont("Segoe UI", 11, QFont.Weight.DemiBold))
+                tag_lbl.setStyleSheet("color: #38BDF8; background: transparent;")
+                if kw_str:
+                    badge.setToolTip(f"Category: {cname}\nTrigger Keywords: {kw_str}")
+                    tag_lbl.setToolTip(f"Category: {cname}\nTrigger Keywords: {kw_str}")
+                else:
+                    badge.setToolTip(f"Category: {cname}\n(No custom trigger keywords)")
+                    tag_lbl.setToolTip(f"Category: {cname}\n(No custom trigger keywords)")
+                b_lay.addWidget(tag_lbl)
+                b_lay.addStretch()
+
+                del_btn = QPushButton("✕")
+                del_btn.setToolTip(f"Delete '{cname}' from {dept_name}")
+                del_btn.setFixedSize(18, 18)
+                del_btn.setStyleSheet("""
+                    QPushButton {
+                        color: #94A3B8;
+                        background: transparent;
+                        border: none;
+                        font-weight: bold;
+                        font-size: 11px;
+                        border-radius: 9px;
+                    }
+                    QPushButton:hover {
+                        color: #EF4444;
+                        background-color: #EF444422;
+                    }
+                """)
+                del_btn.clicked.connect(lambda _, name=cname: self._on_delete_custom_category(name))
+                b_lay.addWidget(del_btn)
+            else:
+                badge.setStyleSheet("""
+                    QFrame {
+                        background-color: #1E222B;
+                        border: 1px solid #334155;
+                        border-radius: 6px;
+                    }
+                """)
+                tag_lbl = QLabel(cname)
+                tag_lbl.setFont(QFont("Segoe UI", 11))
+                tag_lbl.setStyleSheet("color: #E2E8F0; background: transparent;")
+                if kw_str:
+                    badge.setToolTip(f"Standard Category: {cname}\nTrigger Keywords: {kw_str}")
+                    tag_lbl.setToolTip(f"Standard Category: {cname}\nTrigger Keywords: {kw_str}")
+                else:
+                    badge.setToolTip(f"Standard Category: {cname}")
+                    tag_lbl.setToolTip(f"Standard Category: {cname}")
+                b_lay.addWidget(tag_lbl)
+                b_lay.addStretch()
+
+                lock_lbl = QLabel("🔒")
+                lock_lbl.setToolTip("Universal Standard Category")
+                lock_lbl.setFont(QFont("Segoe UI Emoji", 9))
+                lock_lbl.setStyleSheet("color: #64748B; background: transparent;")
+                b_lay.addWidget(lock_lbl)
+
+            row = idx // COLS
+            col = idx % COLS
+            self._cats_grid.addWidget(badge, row, col)
+
+        # Populate Smart Suggestions
+        active_names = {c.get("name", "").lower().strip() for c in cats}
+        suggestions: list[str] = []
+        if self._controller:
+            try:
+                suggestions = self._controller.get_category_suggestions(dept_name)
+            except Exception:
+                suggestions = []
+
+        # Filter out already active ones
+        available_suggestions = [s for s in suggestions if s.lower().strip() not in active_names]
+
+        if available_suggestions:
+            for sugg in available_suggestions:
+                sugg_kw = ""
+                if self._controller and hasattr(self._controller, "category_repo"):
+                    sugg_kw = self._controller.category_repo.get_suggestion_keywords(sugg)
+                tooltip_txt = f"Click to add '{sugg}' to {dept_name}"
+                if sugg_kw:
+                    tooltip_txt += f"\nPreconfigured Triggers: {sugg_kw}"
+
+                sugg_btn = QPushButton(f"+  {sugg}")
+                sugg_btn.setFont(QFont("Segoe UI", 11, QFont.Weight.Medium))
+                sugg_btn.setStyleSheet("""
+                    QPushButton {
+                        background-color: #161922;
+                        color: #38BDF8;
+                        border: 1px dashed #38BDF877;
+                        border-radius: 14px;
+                        padding: 4px 12px;
+                        font-size: 11px;
+                    }
+                    QPushButton:hover {
+                        background-color: #0284C733;
+                        border: 1px solid #38BDF8;
+                        color: #F8FAFC;
+                    }
+                    QPushButton:pressed {
+                        background-color: #0284C7;
+                        color: #FFFFFF;
+                    }
+                """)
+                sugg_btn.setCursor(Qt.CursorShape.PointingHandCursor)
+                sugg_btn.setToolTip(tooltip_txt)
+                sugg_btn.clicked.connect(lambda _, s=sugg: self._on_suggestion_clicked(s))
+                self._sugg_layout.addWidget(sugg_btn)
+            self._sugg_layout.addStretch()
+        else:
+            all_active = QLabel("✓ All recommended suggestions for this department are active.")
+            all_active.setFont(QFont("Segoe UI", 11))
+            all_active.setStyleSheet("color: #4ADE80; font-style: italic; padding: 4px;")
+            self._sugg_layout.addWidget(all_active)
+            self._sugg_layout.addStretch()
+
+    def _on_department_changed(self, dept_name: str) -> None:
+        """Handle department dropdown change by updating category list and suggestions."""
+        self._refresh_categories()
+
+    def _on_suggestion_clicked(self, suggestion: str) -> None:
+        """Add a suggested category with 1 click to the current department with predefined trigger keywords."""
+        dept_name = self._dept_combo.currentText().strip() if hasattr(self, "_dept_combo") else "Piping Engineering"
+        keywords = ""
+        if self._controller and hasattr(self._controller, "category_repo"):
+            keywords = self._controller.category_repo.get_suggestion_keywords(suggestion)
+        if self._controller:
+            self._controller.add_category(name=suggestion, department_name=dept_name, keywords=keywords)
+            msg = f"✓ Added '{suggestion}' to {dept_name} error categories"
+            if keywords:
+                msg += f" (with triggers: {keywords[:35]}...)"
+            self._show_status_message(msg)
+            self._refresh_categories()
+
+    def _on_add_custom_category(self) -> None:
+        """Add custom category and trigger keywords typed into the input fields."""
+        name = self._new_cat_input.text().strip()
+        if not name:
+            return
+        keywords = self._new_cat_keywords_input.text().strip() if hasattr(self, "_new_cat_keywords_input") else ""
+        dept_name = self._dept_combo.currentText().strip() if hasattr(self, "_dept_combo") else "Piping Engineering"
+        if self._controller:
+            self._controller.add_category(name=name, department_name=dept_name, keywords=keywords)
+            self._new_cat_input.clear()
+            if hasattr(self, "_new_cat_keywords_input"):
+                self._new_cat_keywords_input.clear()
+            msg = f"✓ Added '{name}' to {dept_name} error categories"
+            if keywords:
+                msg += f" (triggers: {keywords})"
+            self._show_status_message(msg)
+            self._refresh_categories()
+        else:
+            QMessageBox.warning(self, "Controller Not Connected", "Database controller is not connected.")
+
+    def _on_delete_custom_category(self, cat_name: str) -> None:
+        """Delete a custom category from the current department."""
+        dept_name = self._dept_combo.currentText().strip() if hasattr(self, "_dept_combo") else "Piping Engineering"
+        reply = QMessageBox.question(
+            self,
+            "Confirm Deletion",
+            f"Are you sure you want to remove custom error category '{cat_name}' from {dept_name}?",
+            QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
+        )
+        if reply == QMessageBox.StandardButton.Yes and self._controller:
+            ok = self._controller.delete_category(name=cat_name, department_name=dept_name)
+            if ok:
+                self._show_status_message(f"Removed '{cat_name}' from {dept_name}")
+                self._refresh_categories()
+            else:
+                QMessageBox.warning(self, "Delete Failed", f"Could not delete category '{cat_name}'.")
+
+    def _show_status_message(self, msg: str) -> None:
+        """Display a brief confirmation toast message."""
+        self._cat_status_lbl.setText(msg)
+        self._cat_status_lbl.show()
+        QTimer.singleShot(3500, self._cat_status_lbl.hide)
+
+    def reload_data(self) -> None:
+        """Auto-refresh Export screen data, auto-select drawing department, and refresh categories."""
+        if self._controller and self._controller.current_drawing_id:
+            cur_dwg = self._controller.get_current_drawing()
+            if cur_dwg:
+                dwg_dept = cur_dwg.get("department_name")
+                if dwg_dept and hasattr(self, "_dept_combo"):
+                    idx = self._dept_combo.findText(dwg_dept)
+                    if idx != -1 and self._dept_combo.currentIndex() != idx:
+                        self._dept_combo.blockSignals(True)
+                        self._dept_combo.setCurrentIndex(idx)
+                        self._dept_combo.blockSignals(False)
+        self._refresh_categories()
+
+    def reload_comments(self) -> None:
+        """Called by MainWindow when comments or drawings are updated."""
+        self.reload_data()
+
+    def showEvent(self, event) -> None:
+        """Auto-sync department and categories when navigating to Export page."""
+        super().showEvent(event)
+        self.reload_data()
+
