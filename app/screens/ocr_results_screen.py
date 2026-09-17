@@ -28,8 +28,8 @@ from PySide6.QtWidgets import (QWidget, QVBoxLayout, QHBoxLayout, QFrame,
                                 QLabel, QTableView, QPushButton, QComboBox,
                                 QHeaderView, QAbstractItemView, QDialog,
                                 QTextEdit, QScrollArea, QMessageBox)
-from PySide6.QtGui import QFont, QStandardItemModel, QStandardItem
-from PySide6.QtCore import Qt, QSortFilterProxyModel
+from PySide6.QtGui import QFont, QStandardItemModel, QStandardItem, QColor
+from PySide6.QtCore import Qt, QSortFilterProxyModel, Signal, QModelIndex
 
 from app import mock_data as md
 from app.components.comment_table import ConfidenceDelegate, StatusDelegate
@@ -162,6 +162,7 @@ class OcrResultsPage(QWidget):
     OCR Results — editable table with confidence bars, status chips,
     search, filter, and pagination.
     """
+    comment_selected = Signal(str)
 
     def __init__(self, controller=None, parent=None):
         super().__init__(parent)
@@ -205,6 +206,13 @@ class OcrResultsPage(QWidget):
         clean_btn.clicked.connect(self.clean_selected_comment)
         tb.addWidget(clean_btn)
 
+        review_btn = QPushButton("🔍 View in Review")
+        review_btn.setObjectName("SecondaryBtn")
+        review_btn.setFixedHeight(36)
+        review_btn.setToolTip("Open this comment directly in the Human Review screen")
+        review_btn.clicked.connect(self.view_selected_in_review)
+        tb.addWidget(review_btn)
+
         root.addLayout(tb)
 
         # ── Table ─────────────────────────────────────────────────
@@ -243,6 +251,10 @@ class OcrResultsPage(QWidget):
         self._table.setColumnWidth(2, 130)
         hdr.setSectionResizeMode(3, QHeaderView.ResizeMode.Fixed)
         self._table.setColumnWidth(3, 120)
+
+        # Connect row click & double click to jump to Human Review
+        self._table.clicked.connect(self._on_table_clicked)
+        self._table.doubleClicked.connect(self._on_table_double_clicked)
 
         # Connect text edits to persistence
         # INTEGRATION NOTE:
@@ -335,6 +347,8 @@ class OcrResultsPage(QWidget):
 
         id_item = QStandardItem(cid)
         id_item.setFont(QFont("Cascadia Code", 12))
+        id_item.setForeground(QColor("#38BDF8"))
+        id_item.setToolTip("Click or double-click to view and edit in Human Review")
         id_item.setEditable(False)
 
         text_item = QStandardItem(ocr_text)
@@ -352,6 +366,52 @@ class OcrResultsPage(QWidget):
                 Qt.AlignmentFlag.AlignVCenter | Qt.AlignmentFlag.AlignLeft
             )
         model.appendRow([id_item, text_item, conf_item, status_item])
+
+    # ── Comment Navigation Slots ──────────────────────────────────
+
+    def _resolve_comment_id(self, proxy_index: QModelIndex) -> Optional[str]:
+        """Resolve the underlying comment ID string from a proxy model index."""
+        if not proxy_index.isValid():
+            return None
+        proxy_row = proxy_index.row()
+        status_idx = self._proxy.mapToSource(self._proxy.index(proxy_row, 0))
+        source_idx = self._status_proxy.mapToSource(status_idx)
+        source_row = source_idx.row()
+        item = self._model.item(source_row, 0)
+        return item.text().strip() if item else None
+
+    def _on_table_clicked(self, index: QModelIndex) -> None:
+        """Single-clicking Column 0 (Comment ID) redirects directly to Human Review."""
+        if index.column() == 0:
+            cid = self._resolve_comment_id(index)
+            if cid:
+                self.comment_selected.emit(cid)
+
+    def _on_table_double_clicked(self, index: QModelIndex) -> None:
+        """Double-clicking any non-text column redirects directly to Human Review."""
+        if index.column() != 1:  # Keep column 1 for inline text editing
+            cid = self._resolve_comment_id(index)
+            if cid:
+                self.comment_selected.emit(cid)
+
+    def view_selected_in_review(self) -> None:
+        """Emit comment_selected for the currently selected row to jump to Human Review."""
+        selection = self._table.selectionModel().selectedRows()
+        if selection:
+            cid = self._resolve_comment_id(selection[0])
+            if cid:
+                self.comment_selected.emit(cid)
+                return
+        curr = self._table.currentIndex()
+        if curr.isValid():
+            cid = self._resolve_comment_id(curr)
+            if cid:
+                self.comment_selected.emit(cid)
+                return
+        if self._model.rowCount() > 0:
+            item = self._model.item(0, 0)
+            if item:
+                self.comment_selected.emit(item.text().strip())
 
     # ── Text Cleaning & Persistence slots ─────────────────────────
 

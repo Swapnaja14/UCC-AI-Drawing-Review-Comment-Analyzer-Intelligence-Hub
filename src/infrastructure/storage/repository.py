@@ -863,11 +863,24 @@ class CommentRepository:
         cleaned_text: str = "",
         status: str = "Pending",
         label: str = "comment_red",
+        comment_id: Optional[str] = None,
     ) -> Dict[str, Any]:
         """Persist a single extracted comment."""
         with self._db.get_session() as session:
+            if not comment_id:
+                count = (
+                    session.query(CommentModel)
+                    .filter(CommentModel.drawing_id == drawing_id, CommentModel.page_number == page_number)
+                    .count()
+                )
+                candidate_id = f"CMT-P{page_number}-{count + 1:02d}"
+                if session.get(CommentModel, candidate_id):
+                    dwg_suffix = drawing_id.replace("DWG-", "")[:4] if drawing_id else uuid.uuid4().hex[:4].upper()
+                    candidate_id = f"CMT-P{page_number}-{count + 1:02d}-{dwg_suffix}"
+                comment_id = candidate_id
+
             comment = CommentModel(
-                id=f"CMT-{uuid.uuid4().hex[:8].upper()}",
+                id=comment_id,
                 drawing_id=drawing_id,
                 page_id=page_id,
                 category_id=category_id,

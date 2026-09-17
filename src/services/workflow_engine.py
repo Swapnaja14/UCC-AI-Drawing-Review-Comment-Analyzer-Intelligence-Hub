@@ -404,8 +404,14 @@ class ProcessingWorkflowEngine:
                     self.comment_repo.delete_comments_for_drawing(drawing_id)
                 except Exception as del_err:
                     logger.debug(f"Error clearing previous comments: {del_err}")
+                page_counters: Dict[int, int] = {}
                 for c_item in extracted_comments_data:
                     try:
+                        p_num = c_item.get("page_number", 1)
+                        page_counters[p_num] = page_counters.get(p_num, 0) + 1
+                        seq = page_counters[p_num]
+                        assigned_cid = f"CMT-P{p_num}-{seq:02d}"
+
                         conf = c_item.get("confidence", 0.0)
                         auto_approve = True
                         auto_threshold = 0.85
@@ -421,7 +427,7 @@ class ProcessingWorkflowEngine:
 
                         saved_c = self.comment_repo.save_comment(
                             drawing_id=drawing_id,
-                            page_number=c_item["page_number"],
+                            page_number=p_num,
                             raw_text=c_item["raw_text"],
                             cleaned_text=c_item.get("cleaned_text", ""),
                             bbox=c_item["bbox"],
@@ -430,6 +436,7 @@ class ProcessingWorkflowEngine:
                             department_id=effective_dept_id,
                             label=c_item.get("label", "comment_red"),
                             status=initial_status,
+                            comment_id=assigned_cid,
                         )
 
                         if initial_status == "Approved" and self.audit_repo and saved_c:

@@ -31,7 +31,7 @@ from PySide6.QtWidgets import (QWidget, QVBoxLayout, QHBoxLayout, QFrame,
                                 QHeaderView, QAbstractItemView,
                                 QSizePolicy)
 from PySide6.QtGui import QFont, QStandardItemModel, QStandardItem
-from PySide6.QtCore import Qt, QSortFilterProxyModel, QModelIndex
+from PySide6.QtCore import Qt, QSortFilterProxyModel, QModelIndex, Signal
 
 from app import mock_data as md
 from app.components.chips import CategoryBadge
@@ -75,6 +75,7 @@ class ClassificationPage(QWidget):
     Classification — category summary cards, comment table with badges,
     and a slide-in inspector drawer.
     """
+    comment_selected = Signal(str)
 
     def __init__(self, controller=None, parent=None):
         super().__init__(parent)
@@ -175,6 +176,14 @@ class ClassificationPage(QWidget):
         self._st_filt.setFixedHeight(36)
         self._st_filt.currentTextChanged.connect(self._on_status_filter_changed)
         tb.addWidget(self._st_filt)
+
+        review_btn = QPushButton("🔍 View in Review")
+        review_btn.setObjectName("SecondaryBtn")
+        review_btn.setFixedHeight(36)
+        review_btn.setToolTip("Open currently selected comment in Human Review")
+        review_btn.clicked.connect(self.view_selected_in_review)
+        tb.addWidget(review_btn)
+
         root.addLayout(tb)
 
         # Table
@@ -210,6 +219,7 @@ class ClassificationPage(QWidget):
         self._table.setColumnWidth(3, 120)
         hdr.setStretchLastSection(False)
         self._table.clicked.connect(self._open_drawer)
+        self._table.doubleClicked.connect(self._on_table_double_clicked)
 
         tc_lay.addWidget(self._table)
         root.addWidget(table_card, 1)
@@ -385,7 +395,49 @@ class ClassificationPage(QWidget):
         conf_lbl.setObjectName("SubCaption")
         lay.addWidget(conf_lbl)
 
+        review_btn = QPushButton("🔍 Open in Human Review →")
+        review_btn.setObjectName("PrimaryBtn")
+        review_btn.setFixedHeight(38)
+        review_btn.setToolTip("Jump directly to Human Review screen to review and edit this comment")
+        review_btn.clicked.connect(lambda: self.comment_selected.emit(str(cid)))
+        lay.addWidget(review_btn)
+
         self._drawer.open_drawer()
+
+    def _on_table_double_clicked(self, index: QModelIndex) -> None:
+        """Double clicking any row in the classification table jumps directly to Human Review."""
+        source_row = self._proxy.mapToSource(index).row()
+        item = self._model.item(source_row, 0)
+        cid = item.data(Qt.ItemDataRole.UserRole) if item else None
+        if not cid and 0 <= source_row < len(self._comments_data):
+            cid = _get(self._comments_data[source_row], "id", "")
+        if cid:
+            self.comment_selected.emit(str(cid))
+
+    def view_selected_in_review(self) -> None:
+        """Emit comment_selected for the currently selected row in classification table."""
+        selection = self._table.selectionModel().selectedRows()
+        if selection:
+            source_row = self._proxy.mapToSource(selection[0]).row()
+            item = self._model.item(source_row, 0)
+            cid = item.data(Qt.ItemDataRole.UserRole) if item else None
+            if cid:
+                self.comment_selected.emit(str(cid))
+                return
+        curr = self._table.currentIndex()
+        if curr.isValid():
+            source_row = self._proxy.mapToSource(curr).row()
+            item = self._model.item(source_row, 0)
+            cid = item.data(Qt.ItemDataRole.UserRole) if item else None
+            if cid:
+                self.comment_selected.emit(str(cid))
+                return
+        if self._model.rowCount() > 0:
+            item = self._model.item(0, 0)
+            if item:
+                cid = item.data(Qt.ItemDataRole.UserRole)
+                if cid:
+                    self.comment_selected.emit(str(cid))
 
     def _apply_table_filter(self) -> None:
         """Apply combined department + category + status filter."""

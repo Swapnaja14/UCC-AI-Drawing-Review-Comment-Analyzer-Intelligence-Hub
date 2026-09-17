@@ -99,17 +99,29 @@ class MainWindow(QMainWindow):
         self.upload_page.open_viewer_requested.connect(self._open_pdf_viewer)
         self.dashboard_page.open_drawing.connect(self._on_dashboard_open_drawing)
 
+        self.comment_highlight_page = CommentHighlightPage(controller=self.controller)
+        self.ocr_results_page = OcrResultsPage(controller=self.controller)
+        self.classification_page = ClassificationPage(controller=self.controller)
+        self.human_review_page = HumanReviewPage(controller=self.controller)
+        self.analytics_page = AnalyticsPage(controller=self.controller)
+        self.export_page = ExportPage(controller=self.controller)
+        self.settings_page = SettingsPage(theme_manager=self._theme, controller=self.controller)
+
+        # Cross-screen comment redirection: OCR Results & Classification -> Human Review
+        self.ocr_results_page.comment_selected.connect(self._on_jump_to_human_review)
+        self.classification_page.comment_selected.connect(self._on_jump_to_human_review)
+
         self._pages = [
             self.dashboard_page,
             self.upload_page,
             self.pdf_viewer_page,
-            CommentHighlightPage(controller=self.controller),
-            OcrResultsPage(controller=self.controller),
-            ClassificationPage(controller=self.controller),
-            HumanReviewPage(controller=self.controller),
-            AnalyticsPage(controller=self.controller),
-            ExportPage(controller=self.controller),
-            SettingsPage(theme_manager=self._theme, controller=self.controller),
+            self.comment_highlight_page,
+            self.ocr_results_page,
+            self.classification_page,
+            self.human_review_page,
+            self.analytics_page,
+            self.export_page,
+            self.settings_page,
         ]
         for page in self._pages:
             self._stack.addWidget(page)
@@ -135,6 +147,15 @@ class MainWindow(QMainWindow):
     def _open_pdf_viewer(self):
         self._navigate(2)
         self._sidebar.set_page(2)
+
+    def _on_jump_to_human_review(self, comment_id: str):
+        """Callback to jump directly to Human Review screen (index 6) and select comment."""
+        if not comment_id:
+            return
+        self._navigate(6)
+        self._sidebar.set_page(6)
+        if hasattr(self, "human_review_page") and hasattr(self.human_review_page, "select_comment_by_id"):
+            self.human_review_page.select_comment_by_id(comment_id)
 
     def _on_theme_toggle(self):
         if self._theme:

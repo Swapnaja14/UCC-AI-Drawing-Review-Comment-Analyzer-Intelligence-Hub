@@ -33,13 +33,14 @@ from PySide6.QtWidgets import (QWidget, QVBoxLayout, QHBoxLayout, QFrame,
                                 QLabel, QPushButton, QTextEdit, QComboBox,
                                 QProgressBar, QSplitter, QSizePolicy,
                                 QGraphicsView, QGraphicsScene, QScrollArea,
-                                QInputDialog, QMessageBox)
+                                QInputDialog, QMessageBox, QLineEdit)
 from PySide6.QtCore import Qt, QTimer, Signal, QRectF
 from PySide6.QtGui import QFont, QPainter, QKeyEvent, QPixmap, QPen, QBrush, QColor
 
 from app import mock_data as md
 from app.components.chips import StatusChip, CategoryBadge
 from app.components.pdf_canvas import make_page_pixmap, draw_bounding_boxes, BBoxItem
+from app.screens.comment_viewer_screen import ZoomableGraphicsView
 
 # Agreed status vocabulary — do not use any other values
 _VALID_STATUSES = ("Pending", "Approved", "Rejected", "Flagged")
@@ -113,19 +114,25 @@ class HumanReviewPage(QWidget):
         splitter.setHandleWidth(1)
         splitter.setChildrenCollapsible(False)
 
-        # Left — PDF canvas (simulated; real page rendering via PdfViewerPage)
+        # Left — PDF canvas container with interactive zoom toolbar
+        canvas_container = QWidget()
+        canvas_lay = QVBoxLayout(canvas_container)
+        canvas_lay.setContentsMargins(0, 0, 0, 0)
+        canvas_lay.setSpacing(0)
+
+        self._canvas_toolbar = self._build_canvas_toolbar()
+        canvas_lay.addWidget(self._canvas_toolbar)
+
         self._scene = QGraphicsScene()
-        self._view  = QGraphicsView(self._scene)
-        self._view.setRenderHints(
-            QPainter.RenderHint.Antialiasing |
-            QPainter.RenderHint.SmoothPixmapTransform
-        )
-        self._view.setDragMode(QGraphicsView.DragMode.ScrollHandDrag)
+        self._view  = ZoomableGraphicsView(self._scene)
         self._view.setSizePolicy(
             QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Expanding
         )
+        self._view.zoom_changed.connect(self._on_canvas_zoom_changed)
+        canvas_lay.addWidget(self._view, 1)
+
         self._load_canvas()
-        splitter.addWidget(self._view)
+        splitter.addWidget(canvas_container)
 
         # Right — review panel
         self._panel = self._build_review_panel()
@@ -222,6 +229,178 @@ class HumanReviewPage(QWidget):
         cid = _get(self._comments[self._idx], "id") if self._comments and self._idx < len(self._comments) else None
         self._apply_filter(keep_comment_id=cid)
 
+    def _build_canvas_toolbar(self) -> QFrame:
+        bar = QFrame()
+        bar.setFixedHeight(44)
+        bar.setStyleSheet(
+            "QFrame { background-color: #1E2024; border-bottom: 1px solid #3A3C42; }"
+        )
+        lay = QHBoxLayout(bar)
+        lay.setContentsMargins(12, 0, 12, 0)
+        lay.setSpacing(8)
+
+        # Zoom controls
+        zoom_out_btn = QPushButton("−")
+        zoom_out_btn.setObjectName("SecondaryBtn")
+        zoom_out_btn.setFixedSize(30, 30)
+        zoom_out_btn.setToolTip("Zoom Out (or Ctrl + Wheel Down)")
+        zoom_out_btn.clicked.connect(lambda: self._view.zoom_by_factor(1.0 / 1.2))
+        lay.addWidget(zoom_out_btn)
+
+        self._zoom_lbl = QLabel("100%")
+        self._zoom_lbl.setObjectName("SubCaption")
+        self._zoom_lbl.setFixedWidth(46)
+        self._zoom_lbl.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        self._zoom_lbl.setToolTip("Click to reset zoom to 100%")
+        self._zoom_lbl.setCursor(Qt.CursorShape.PointingHandCursor)
+        self._zoom_lbl.mousePressEvent = lambda e: self._view.reset_zoom()
+        lay.addWidget(self._zoom_lbl)
+
+        zoom_in_btn = QPushButton("+")
+        zoom_in_btn.setObjectName("SecondaryBtn")
+        zoom_in_btn.setFixedSize(30, 30)
+        zoom_in_btn.setToolTip("Zoom In (or Ctrl + Wheel Up)")
+        zoom_in_btn.clicked.connect(lambda: self._view.zoom_by_factor(1.2))
+        lay.addWidget(zoom_in_btn)
+
+        fit_comment_btn = QPushButton("⛶  Fit Comment")
+        fit_comment_btn.setObjectName("SecondaryBtn")
+        fit_comment_btn.setFixedHeight(30)
+        fit_comment_btn.setToolTip("Zoom and center on active comment bounding box")
+        fit_comment_btn.clicked.connect(self._highlight_current_box)
+        lay.addWidget(fit_comment_btn)
+
+        fit_page_btn = QPushButton("📄  Fit Page")
+        fit_page_btn.setObjectName("SecondaryBtn")
+        fit_page_btn.setFixedHeight(30)
+        fit_page_btn.setToolTip("Fit entire page to view")
+        fit_page_btn.clicked.connect(self._fit_page_in_view)
+        lay.addWidget(fit_page_btn)
+
+        rotate_btn = QPushButton("⟳  Rotate")
+        rotate_btn.setObjectName("SecondaryBtn")
+        rotate_btn.setFixedHeight(30)
+        rotate_btn.setToolTip("Rotate canvas clockwise by 90°")
+        rotate_btn.clicked.connect(lambda: self._view.rotate(90))
+        lay.addWidget(rotate_btn)
+
+        lay.addStretch()
+
+        self._canvas_page_lbl = QLabel("Page 1")
+        self._canvas_page_lbl.setFont(QFont("Cascadia Code", 11))
+        self._canvas_page_lbl.setStyleSheet("color: #94A3B8;")
+        lay.addWidget(self._canvas_page_lbl)
+
+        return bar
+
+    def _on_canvas_zoom_changed(self, zoom: float) -> None:
+        if hasattr(self, "_zoom_lbl"):
+            self._zoom_lbl.setText(f"{int(zoom * 100)}%")
+
+    def _fit_page_in_view(self) -> None:
+        rect = self._scene.sceneRect()
+        if not rect.isEmpty():
+            self._view.fitInView(rect, Qt.AspectRatioMode.KeepAspectRatio)
+            if hasattr(self._view, "_current_zoom"):
+                self._view._current_zoom = self._view.transform().m11()
+                self._on_canvas_zoom_changed(self._view._current_zoom)
+
+    def select_comment_by_id(self, cid: str) -> bool:
+        """
+        Navigate directly to the comment with the given ID.
+        If the comment is not in the current filtered view, resets the filter to 'All Comments'
+        so the target comment is displayed.
+        Returns True if found, False otherwise.
+        """
+        if not cid:
+            return False
+        cid_clean = str(cid).strip()
+
+        # Check in self._comments first (under current filter)
+        for i, c in enumerate(self._comments):
+            if _get(c, "id") == cid_clean:
+                self._idx = i
+                self._load_canvas()
+                self._load_comment()
+                self._flash_card("#38BDF8")
+                return True
+
+        # Check in self._all_comments (in case current filter excluded it)
+        for i, c in enumerate(self._all_comments):
+            if _get(c, "id") == cid_clean:
+                if hasattr(self, "_filter_cb"):
+                    self._filter_cb.blockSignals(True)
+                    self._filter_cb.setCurrentText("All Comments")
+                    self._current_filter = "All Comments"
+                    self._filter_cb.blockSignals(False)
+                self._apply_filter(keep_comment_id=cid_clean)
+                self._flash_card("#38BDF8")
+                return True
+
+        # Attempt reload from DB via controller if drawing is active
+        if self._controller and self._controller.current_drawing_id:
+            self.reload_comments()
+            for i, c in enumerate(self._all_comments):
+                if _get(c, "id") == cid_clean:
+                    if hasattr(self, "_filter_cb"):
+                        self._filter_cb.blockSignals(True)
+                        self._filter_cb.setCurrentText("All Comments")
+                        self._current_filter = "All Comments"
+                        self._filter_cb.blockSignals(False)
+                    self._apply_filter(keep_comment_id=cid_clean)
+                    self._flash_card("#38BDF8")
+                    return True
+
+        return False
+
+    def _on_search_id_submitted(self) -> None:
+        query = self._id_search_input.text().strip()
+        if not query:
+            return
+
+        query_upper = query.upper()
+
+        # 1. Exact ID match (case-insensitive)
+        for c in self._all_comments:
+            cid = str(_get(c, "id", "")).strip()
+            if cid.upper() == query_upper:
+                self.select_comment_by_id(cid)
+                return
+
+        # 2. Substring match on ID (e.g. "P1-01" or "01")
+        for c in self._all_comments:
+            cid = str(_get(c, "id", "")).strip()
+            if query_upper in cid.upper():
+                self.select_comment_by_id(cid)
+                return
+
+        # 3. Numeric match (e.g. "1" matches "CMT-P1-01" or "CMT-001")
+        if query.isdigit():
+            q_num = int(query)
+            for c in self._all_comments:
+                cid = str(_get(c, "id", "")).strip()
+                if (
+                    cid.endswith(f"-{q_num:02d}")
+                    or cid.endswith(f"-{q_num:03d}")
+                    or cid.endswith(f"-{q_num}")
+                ):
+                    self.select_comment_by_id(cid)
+                    return
+
+        # 4. OCR text search
+        for c in self._all_comments:
+            txt = str(_get(c, "ocr_text", "")).lower()
+            if query.lower() in txt:
+                self.select_comment_by_id(_get(c, "id"))
+                return
+
+        # Visual feedback: flash red if not found
+        orig_style = self._id_search_input.styleSheet()
+        self._id_search_input.setStyleSheet(
+            orig_style + " QLineEdit { border: 1px solid #EF4444; }"
+        )
+        QTimer.singleShot(800, lambda: self._id_search_input.setStyleSheet(orig_style))
+
     # ── Panel builder ─────────────────────────────────────────────
 
     def _build_review_panel(self) -> QFrame:
@@ -230,7 +409,42 @@ class HumanReviewPage(QWidget):
         panel.setStyleSheet("#Card { border-radius:0; }")
         lay = QVBoxLayout(panel)
         lay.setContentsMargins(20, 20, 20, 20)
-        lay.setSpacing(14)
+        lay.setSpacing(12)
+
+        # Quick Search Bar Row
+        search_row = QHBoxLayout()
+        search_row.setSpacing(8)
+
+        self._id_search_input = QLineEdit()
+        self._id_search_input.setPlaceholderText("🔍 Search Comment ID (e.g. CMT-P1-01, P1-01, 1)...")
+        self._id_search_input.setFixedHeight(34)
+        self._id_search_input.setStyleSheet("""
+            QLineEdit {
+                background-color: #1E222B;
+                color: #F2F3F5;
+                border: 1px solid #3A3C42;
+                border-radius: 6px;
+                padding: 0 10px;
+                font-family: 'Cascadia Code', 'Consolas', monospace;
+                font-size: 12px;
+            }
+            QLineEdit:focus {
+                border: 1px solid #3E9BFF;
+                background-color: #242832;
+            }
+        """)
+        self._id_search_input.returnPressed.connect(self._on_search_id_submitted)
+        search_row.addWidget(self._id_search_input, 1)
+
+        search_btn = QPushButton("Go")
+        search_btn.setObjectName("SecondaryBtn")
+        search_btn.setFixedHeight(34)
+        search_btn.setFixedWidth(50)
+        search_btn.setCursor(Qt.CursorShape.PointingHandCursor)
+        search_btn.clicked.connect(self._on_search_id_submitted)
+        search_row.addWidget(search_btn)
+
+        lay.addLayout(search_row)
 
         # Progress header
         prog_hdr = QHBoxLayout()
@@ -545,11 +759,15 @@ class HumanReviewPage(QWidget):
             self._scene.addPixmap(pm)
             self._scene.setSceneRect(QRectF(pm.rect()))
             self._current_canvas_page = 1
+            if hasattr(self, "_canvas_page_lbl"):
+                self._canvas_page_lbl.setText("Page 1")
             return
 
         current_comment = self._comments[self._idx] if self._idx < len(self._comments) else self._comments[0]
         page_num = _get(current_comment, "page", 1)
         self._current_canvas_page = page_num
+        if hasattr(self, "_canvas_page_lbl"):
+            self._canvas_page_lbl.setText(f"Page {page_num}")
 
         page_comments = [
             c for c in self._comments
@@ -641,6 +859,9 @@ class HumanReviewPage(QWidget):
             if not rect.isEmpty() and rect.width() > 0 and rect.height() > 0:
                 target_rect = rect.adjusted(-120, -120, 120, 120)
                 self._view.fitInView(target_rect, Qt.AspectRatioMode.KeepAspectRatio)
+                if hasattr(self._view, "_current_zoom"):
+                    self._view._current_zoom = self._view.transform().m11()
+                    self._on_canvas_zoom_changed(self._view._current_zoom)
 
     def _load_comment(self) -> None:
         if not self._comments:
