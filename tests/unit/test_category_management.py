@@ -176,28 +176,12 @@ def test_export_page_and_review_screen_category_ui(test_db: DatabaseEngine, qapp
 
     # Create ExportPage with controller
     export_page = ExportPage(controller=controller)
-    assert hasattr(export_page, "_cats_grid")
-    assert hasattr(export_page, "_sugg_layout")
     assert hasattr(export_page, "_dept_combo")
-    assert hasattr(export_page, "_new_cat_keywords_input")
-
-    # Test adding a custom category with keywords via export screen method
-    export_page._new_cat_input.setText("Underground Clash")
-    export_page._new_cat_keywords_input.setText("underground, duct bank, buried pipe")
-    export_page._on_add_custom_category()
-
-    # Verify category is active and has keywords
-    piping_cats = controller.get_categories_for_department(export_page._dept_combo.currentText())
-    clash_cat = next((c for c in piping_cats if c["name"] == "Underground Clash"), None)
-    assert clash_cat is not None
-    assert "duct bank" in clash_cat.get("keywords", "")
-
-    # Test clicking suggestion chip with preconfigured keywords
-    export_page._on_suggestion_clicked("Flange Rating Mismatch")
-    piping_cats_after_sugg = controller.get_categories_for_department(export_page._dept_combo.currentText())
-    flange_cat = next((c for c in piping_cats_after_sugg if c["name"] == "Flange Rating Mismatch"), None)
-    assert flange_cat is not None
-    assert "class 150" in flange_cat.get("keywords", "")
+    assert hasattr(export_page, "_scope_grp")
+    assert hasattr(export_page, "_export_btn")
+    # Verify category editor is cleanly removed from ExportPage
+    assert not hasattr(export_page, "_cats_grid")
+    assert not hasattr(export_page, "_new_cat_keywords_input")
 
     # Test review screen instantiation and quick-add
     review_page = HumanReviewPage(controller=controller)
