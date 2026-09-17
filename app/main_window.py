@@ -58,6 +58,8 @@ class MainWindow(QMainWindow):
         super().__init__()
         self._theme = theme_manager
         self.setWindowTitle("UCC AI Drawing Review Comment Analyzer")
+        self.setMinimumSize(1100, 720)
+        self.resize(1380, 860)
         self.showMaximized()
 
         # ── Backend Controller Initialization ─────────────────────
@@ -96,6 +98,8 @@ class MainWindow(QMainWindow):
 
         # Connect Upload and Dashboard controller signals to navigate to PDF Viewer
         self.controller.document_loaded_signal.connect(self._on_document_loaded)
+        self.controller.drawing_switched_signal.connect(self._on_drawing_switched)
+        self.controller.drawings_updated_signal.connect(self._on_drawings_updated)
         self.upload_page.open_viewer_requested.connect(self._open_pdf_viewer)
         self.dashboard_page.open_drawing.connect(self._on_dashboard_open_drawing)
 
@@ -162,27 +166,43 @@ class MainWindow(QMainWindow):
             self._theme.toggle()
 
     def _on_document_loaded(self, doc_dto):
-        """Callback when background PDF worker completes loading document.
-
-        INTEGRATION NOTE:
-        At this point AppController.current_drawing_id is already set to the
-        DrawingModel.id for the loaded PDF. Comment screens that implement
-        reload_comments() can be called here to refresh their data.
-        """
+        """Callback when background PDF worker completes loading document."""
         self._status_bar.set_message(f"Loaded: {doc_dto.file_name} ({doc_dto.total_pages} pages)")
-        # Update PDF Viewer page with loaded document
         self.pdf_viewer_page.set_document(doc_dto)
-        # Refresh comment screens with DB data for the newly loaded drawing
         for page in self._pages:
             if hasattr(page, "reload_comments"):
                 page.reload_comments()
-        # Navigate to PDF Viewer screen (Index 2)
-        self._open_pdf_viewer()
+            elif hasattr(page, "reload_data"):
+                page.reload_data()
+
+    def _on_drawing_switched(self, drawing_id: str, doc_dto):
+        """Callback when active drawing context is switched globally."""
+        if doc_dto:
+            self._status_bar.set_message(f"Active Drawing: {doc_dto.file_name} ({doc_dto.total_pages} pages)")
+            self.pdf_viewer_page.set_document(doc_dto)
+        for page in self._pages:
+            if hasattr(page, "reload_comments"):
+                page.reload_comments()
+
+    def _on_drawings_updated(self):
+        """Callback when new drawings are uploaded or batch completes."""
+        for page in self._pages:
+            if hasattr(page, "reload_drawings"):
+                page.reload_drawings()
+            elif hasattr(page, "reload_comments"):
+                page.reload_comments()
+            elif hasattr(page, "reload_data"):
+                page.reload_data()
 
     def _on_dashboard_open_drawing(self, dwg_dict: dict):
         """Callback when a user double clicks a drawing in the Dashboard."""
+        dwg_id = dwg_dict.get("id")
+        if dwg_id and self.controller.switch_current_drawing(dwg_id):
+            self._open_pdf_viewer()
+            return
         fpath = dwg_dict.get("file_path")
         if fpath:
             p = Path(fpath)
             if p.exists():
                 self.controller.load_pdf_file(p)
+

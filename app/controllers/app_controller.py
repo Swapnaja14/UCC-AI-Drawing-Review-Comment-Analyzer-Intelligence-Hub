@@ -261,6 +261,8 @@ class AppController(QObject):
     document_loaded_signal  = Signal(object)   # PDFDocumentDTO
     page_rendered_signal    = Signal(object)   # RenderedPageDTO
     processing_error_signal = Signal(str)
+    drawing_switched_signal = Signal(str, object) # (drawing_id: str, doc_dto: PDFDocumentDTO)
+    drawings_updated_signal = Signal()
 
     # Workflow pipeline signals
     workflow_step_signal      = Signal(object)   # WorkflowStepDTO
@@ -442,19 +444,65 @@ class AppController(QObject):
     def _on_batch_workflow_step(self, batch_snapshot: BatchWorkflowProgressDTO) -> None:
         self.batch_workflow_step_signal.emit(batch_snapshot)
 
+    def switch_current_drawing(self, drawing_id: str) -> bool:
+        """
+        Switch the active drawing context to the specified drawing_id.
+        Loads the corresponding PDF file via pdf_service, sets _current_drawing_id
+        and _active_doc, and emits drawing_switched_signal and document_loaded_signal.
+        Returns True if successful, False otherwise.
+        """
+        if not drawing_id:
+            return False
+
+        dwg_info = self.drawing_repo.get_drawing_by_id(drawing_id)
+        if not dwg_info or not dwg_info.get("file_path"):
+            logger.warning(f"switch_current_drawing: drawing '{drawing_id}' not found in DB.")
+            return False
+
+        file_path = Path(dwg_info["file_path"])
+        if not file_path.exists():
+            dataset_dir = Path("dataset/raw_drawings")
+            found_path = None
+            if dataset_dir.exists():
+                for candidate in dataset_dir.rglob(dwg_info.get("file_name", "")):
+                    if candidate.is_file():
+                        found_path = candidate
+                        break
+            if found_path:
+                file_path = found_path
+            else:
+                logger.warning(f"switch_current_drawing: file '{file_path}' does not exist.")
+                return False
+
+        try:
+            doc_dto = self.pdf_service.process_pdf_document(file_path)
+            self._active_doc = doc_dto
+            self._current_drawing_id = drawing_id
+            logger.info(f"AppController switched active drawing to '{doc_dto.file_name}' (ID: {drawing_id})")
+            self.drawing_switched_signal.emit(drawing_id, doc_dto)
+            self.document_loaded_signal.emit(doc_dto)
+            return True
+        except Exception as exc:
+            logger.error(f"switch_current_drawing failed for '{drawing_id}': {exc}")
+            self.processing_error_signal.emit(str(exc))
+            return False
+
+    def get_all_drawings(
+        self, project_id: Optional[str] = None, department_id: Optional[str] = None
+    ) -> List[Dict[str, Any]]:
+        """Return all drawings from DB, optionally filtered by project or department."""
+        if hasattr(self, "drawing_repo"):
+            return self.drawing_repo.get_all_drawings(project_id=project_id, department_id=department_id)
+        return []
+
     def _on_workflow_completed(self, result_dto: WorkflowResultDTO) -> None:
         logger.info(f"AppController: Workflow finished for '{result_dto.file_name}'.")
         if hasattr(result_dto, "annotation_result") and result_dto.annotation_result:
             self.last_annotation_result = result_dto.annotation_result
         self.workflow_completed_signal.emit(result_dto)
-        # Also auto-load document for viewer after workflow completes
-        if self._workflow_worker:
-            path = Path(self._workflow_worker.file_path)
-            if path.exists():
-                doc_dto = self.pdf_service.process_pdf_document(path)
-                self._active_doc = doc_dto
-                self._current_drawing_id = result_dto.drawing_id
-                self.document_loaded_signal.emit(doc_dto)
+        self.drawings_updated_signal.emit()
+        if result_dto.drawing_id:
+            self.switch_current_drawing(result_dto.drawing_id)
 
     def _on_batch_workflow_completed(self, batch_result_dto: BatchWorkflowResultDTO) -> None:
         logger.info(
@@ -462,18 +510,12 @@ class AppController(QObject):
             f"{batch_result_dto.total_files_processed} drawings processed)."
         )
         self.batch_workflow_completed_signal.emit(batch_result_dto)
-        # Auto-load the first successfully processed drawing for the viewer if available
+        self.drawings_updated_signal.emit()
         if batch_result_dto.results:
             first_res = batch_result_dto.results[0]
-            if hasattr(self._batch_workflow_worker, "file_paths"):
-                expanded = self.file_service.expand_file_sources(self._batch_workflow_worker.file_paths)
-                if expanded:
-                    first_path = expanded[0]
-                    if first_path.exists():
-                        doc_dto = self.pdf_service.process_pdf_document(first_path)
-                        self._active_doc = doc_dto
-                        self._current_drawing_id = first_res.drawing_id
-                        self.document_loaded_signal.emit(doc_dto)
+            if first_res.drawing_id:
+                self.switch_current_drawing(first_res.drawing_id)
+
 
 
     # ── Authentication API ─────────────────────────────────────────
@@ -866,9 +908,16 @@ class AppController(QObject):
                     (y1 - y0) / h_pt,
                 )
 
-        drawing_no = db_dict.get("drawing_id", "")
-        if doc is not None:
-            drawing_no = doc.file_name.rsplit(".", 1)[0]
+        dwg_id = db_dict.get("drawing_id", "")
+        drawing_no = dwg_id
+        doc = self._active_doc
+        if doc is not None and dwg_id == self._current_drawing_id:
+            drawing_no = doc.file_name.rsplit(".", 1)[0] if "." in doc.file_name else doc.file_name
+        elif dwg_id and hasattr(self, "drawing_repo"):
+            dwg = self.drawing_repo.get_drawing_by_id(dwg_id)
+            if dwg and dwg.get("file_name"):
+                fname = dwg["file_name"]
+                drawing_no = fname.rsplit(".", 1)[0] if "." in fname else fname
 
         cleaned_text = db_dict.get("cleaned_text") or ""
         raw_text     = db_dict.get("raw_text") or ""

@@ -12,7 +12,7 @@ from typing import Any, Dict, List, Optional, Union
 
 from PySide6.QtWidgets import (QWidget, QHBoxLayout, QVBoxLayout, QFrame,
                                 QLabel, QListWidget, QListWidgetItem,
-                                QGraphicsView, QGraphicsScene,
+                                QGraphicsView, QGraphicsScene, QComboBox,
                                 QSizePolicy)
 from PySide6.QtCore import Qt, QRectF, QSize, Signal
 from PySide6.QtGui import QFont, QPainter, QPixmap, QWheelEvent, QKeyEvent
@@ -175,15 +175,26 @@ class CommentHighlightPage(QWidget):
 
         # Panel header
         hdr = QFrame()
-        hdr.setFixedHeight(52)
+        hdr.setFixedHeight(80)
         hdr.setStyleSheet(
             "background: #2D2F34; border-bottom: 1px solid #3A3C42;"
         )
-        hdr_lay = QHBoxLayout(hdr)
-        hdr_lay.setContentsMargins(16, 0, 16, 0)
+        hdr_lay = QVBoxLayout(hdr)
+        hdr_lay.setContentsMargins(12, 8, 12, 8)
+        hdr_lay.setSpacing(4)
+
+        top_hdr = QHBoxLayout()
         self._count_lbl = QLabel(f"🔍  {len(self._comments)} comments found")
-        self._count_lbl.setFont(QFont("Segoe UI Variable", 14, QFont.Weight.DemiBold))
-        hdr_lay.addWidget(self._count_lbl)
+        self._count_lbl.setFont(QFont("Segoe UI Variable", 13, QFont.Weight.DemiBold))
+        top_hdr.addWidget(self._count_lbl)
+        hdr_lay.addLayout(top_hdr)
+
+        self._dwg_filt = QComboBox()
+        self._dwg_filt.setFixedHeight(28)
+        self._dwg_filt.setStyleSheet("QComboBox { background: #1E2024; color: #E2E8F0; font-size: 11px; border: 1px solid #3A3C42; border-radius: 4px; padding: 2px 6px; }")
+        self._dwg_filt.currentIndexChanged.connect(self._on_drawing_filter_changed)
+        hdr_lay.addWidget(self._dwg_filt)
+
         panel_lay.addWidget(hdr)
 
         # Comment list
@@ -203,8 +214,54 @@ class CommentHighlightPage(QWidget):
 
     # ── Public API ───────────────────────────────────────────────
 
+    def reload_drawings(self) -> None:
+        """Populate the drawing selector combo box."""
+        if not hasattr(self, "_dwg_filt") or not self._controller:
+            return
+        self._dwg_filt.blockSignals(True)
+        self._dwg_filt.clear()
+        self._dwg_filt.addItem("📄 Active Drawing Only", "")
+        self._dwg_filt.addItem("🌐 All Drawings in Batch", "ALL")
+
+        drawings = self._controller.get_all_drawings()
+        for d in drawings:
+            did = d.get("id", "")
+            fname = d.get("file_name", "Drawing")
+            cmts = d.get("comments_count", 0)
+            prefix = "➜ " if did == self._controller.current_drawing_id else "   "
+            label = f"{prefix}{fname} ({cmts} cmts)"
+            self._dwg_filt.addItem(label, did)
+
+        # Set selection to current drawing
+        curr_id = self._controller.current_drawing_id
+        if curr_id:
+            for i in range(self._dwg_filt.count()):
+                if self._dwg_filt.itemData(i) == curr_id:
+                    self._dwg_filt.setCurrentIndex(i)
+                    break
+        self._dwg_filt.blockSignals(False)
+
+    def _on_drawing_filter_changed(self, index: int) -> None:
+        dwg_id = self._dwg_filt.itemData(index)
+        if dwg_id == "ALL":
+            # Load comments across all drawings
+            drawings = self._controller.get_all_drawings() if self._controller else []
+            all_cmts = []
+            for d in drawings:
+                did = d.get("id")
+                if did:
+                    all_cmts.extend(self._controller.get_comments_for_drawing(did))
+            self._comments = all_cmts
+            self._count_lbl.setText(f"🔍  {len(self._comments)} comments (All Drawings)")
+            self._populate_list()
+        elif dwg_id and self._controller and dwg_id != self._controller.current_drawing_id:
+            self._controller.switch_current_drawing(dwg_id)
+        else:
+            self.reload_comments()
+
     def reload_comments(self) -> None:
         """Reload canvas and list from the database after a new PDF is loaded."""
+        self.reload_drawings()
         if self._controller and self._controller.current_drawing_id:
             db_comments = self._controller.get_comments_for_drawing(
                 self._controller.current_drawing_id
@@ -402,6 +459,12 @@ class CommentHighlightPage(QWidget):
             comment = self._comments[row]
             c_page = _get(comment, "page", 1)
             cid = _get(comment, "id", "")
+            c_dwg_id = _get(comment, "drawing_id", "")
+
+            # Check if comment belongs to a different drawing
+            if c_dwg_id and self._controller and c_dwg_id != self._controller.current_drawing_id:
+                self._controller.switch_current_drawing(c_dwg_id)
+                return
 
             # If comment is on a different page, navigate to that page first
             if c_page != self._current_page and self._total_pages > 1:

@@ -143,6 +143,49 @@ class HumanReviewPage(QWidget):
         root.addWidget(splitter)
         self._apply_filter()
 
+    def reload_drawings(self) -> None:
+        """Populate drawing selector dropdown in canvas toolbar."""
+        if not hasattr(self, "_dwg_filt") or not self._controller:
+            return
+        self._dwg_filt.blockSignals(True)
+        self._dwg_filt.clear()
+        self._dwg_filt.addItem("📄 Active Drawing Only", "")
+        self._dwg_filt.addItem("🌐 All Drawings in Batch", "ALL")
+
+        drawings = self._controller.get_all_drawings()
+        for d in drawings:
+            did = d.get("id", "")
+            fname = d.get("file_name", "Drawing")
+            cmts = d.get("comments_count", 0)
+            prefix = "➜ " if did == self._controller.current_drawing_id else "   "
+            label = f"{prefix}{fname} ({cmts} cmts)"
+            self._dwg_filt.addItem(label, did)
+
+        curr_id = self._controller.current_drawing_id
+        if curr_id:
+            for i in range(self._dwg_filt.count()):
+                if self._dwg_filt.itemData(i) == curr_id:
+                    self._dwg_filt.setCurrentIndex(i)
+                    break
+        self._dwg_filt.blockSignals(False)
+
+    def _on_drawing_scope_changed(self, index: int) -> None:
+        dwg_id = self._dwg_filt.itemData(index)
+        if dwg_id == "ALL":
+            drawings = self._controller.get_all_drawings() if self._controller else []
+            all_cmts = []
+            for d in drawings:
+                did = d.get("id")
+                if did:
+                    all_cmts.extend(self._controller.get_comments_for_drawing(did))
+            self._all_comments = all_cmts
+            self._statuses = {c["id"]: c["status"] for c in self._all_comments}
+            self._apply_filter()
+        elif dwg_id and self._controller and dwg_id != self._controller.current_drawing_id:
+            self._controller.switch_current_drawing(dwg_id)
+        else:
+            self.reload_comments()
+
     def reload_comments(self) -> None:
         """
         Reload comments from the database for the currently loaded drawing.
@@ -150,6 +193,7 @@ class HumanReviewPage(QWidget):
         Call this method after uploading a new PDF or after the OCR pipeline
         populates comments, so the review screen reflects the latest data.
         """
+        self.reload_drawings()
         if self._controller and self._controller.current_drawing_id:
             db_comments = self._controller.get_comments_for_drawing(
                 self._controller.current_drawing_id
@@ -286,6 +330,13 @@ class HumanReviewPage(QWidget):
 
         lay.addStretch()
 
+        self._dwg_filt = QComboBox()
+        self._dwg_filt.setFixedHeight(28)
+        self._dwg_filt.setFixedWidth(210)
+        self._dwg_filt.setStyleSheet("QComboBox { background: #15171C; color: #38BDF8; font-size: 11px; border: 1px solid #3A3C42; border-radius: 4px; padding: 2px 6px; font-family: 'Cascadia Code'; }")
+        self._dwg_filt.currentIndexChanged.connect(self._on_drawing_scope_changed)
+        lay.addWidget(self._dwg_filt)
+
         self._canvas_page_lbl = QLabel("Page 1")
         self._canvas_page_lbl.setFont(QFont("Cascadia Code", 11))
         self._canvas_page_lbl.setStyleSheet("color: #94A3B8;")
@@ -337,19 +388,26 @@ class HumanReviewPage(QWidget):
                 self._flash_card("#38BDF8")
                 return True
 
-        # Attempt reload from DB via controller if drawing is active
-        if self._controller and self._controller.current_drawing_id:
-            self.reload_comments()
-            for i, c in enumerate(self._all_comments):
-                if _get(c, "id") == cid_clean:
-                    if hasattr(self, "_filter_cb"):
-                        self._filter_cb.blockSignals(True)
-                        self._filter_cb.setCurrentText("All Comments")
-                        self._current_filter = "All Comments"
-                        self._filter_cb.blockSignals(False)
-                    self._apply_filter(keep_comment_id=cid_clean)
-                    self._flash_card("#38BDF8")
-                    return True
+        # Check across all drawings in database via controller
+        if self._controller:
+            drawings = self._controller.get_all_drawings()
+            for d in drawings:
+                did = d.get("id")
+                if not did or did == self._controller.current_drawing_id:
+                    continue
+                cmts = self._controller.get_comments_for_drawing(did)
+                if any(_get(c, "id") == cid_clean for c in cmts):
+                    self._controller.switch_current_drawing(did)
+                    for i, c in enumerate(self._all_comments):
+                        if _get(c, "id") == cid_clean:
+                            if hasattr(self, "_filter_cb"):
+                                self._filter_cb.blockSignals(True)
+                                self._filter_cb.setCurrentText("All Comments")
+                                self._current_filter = "All Comments"
+                                self._filter_cb.blockSignals(False)
+                            self._apply_filter(keep_comment_id=cid_clean)
+                            self._flash_card("#38BDF8")
+                            return True
 
         return False
 

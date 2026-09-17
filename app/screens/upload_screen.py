@@ -18,7 +18,7 @@ from PySide6.QtWidgets import (
     QWidget, QVBoxLayout, QHBoxLayout, QLabel,
     QPushButton, QProgressBar, QFrame,
     QToolButton, QSizePolicy, QMenu, QComboBox,
-    QListWidget, QListWidgetItem
+    QListWidget, QListWidgetItem, QScrollArea, QApplication
 )
 from PySide6.QtCore import Qt, Signal
 from PySide6.QtGui import QFont, QIcon, QColor
@@ -63,9 +63,21 @@ class UploadPage(QWidget):
         # State: Batch mode (files or zip archives)
         self._batch_filepaths: List[str] = []
 
-        # Main Layout
-        root = QVBoxLayout(self)
-        root.setContentsMargins(30, 20, 30, 30)
+        # Outer Main Layout
+        main_layout = QVBoxLayout(self)
+        main_layout.setContentsMargins(0, 0, 0, 0)
+        main_layout.setSpacing(0)
+
+        # Smooth Scroll Area to prevent horizontal or vertical clipping
+        scroll = QScrollArea()
+        scroll.setWidgetResizable(True)
+        scroll.setFrameShape(QFrame.Shape.NoFrame)
+        scroll.setStyleSheet("QScrollArea { background: transparent; border: none; }")
+
+        container = QWidget()
+        container.setObjectName("UploadContainer")
+        root = QVBoxLayout(container)
+        root.setContentsMargins(24, 20, 24, 24)
         root.setSpacing(16)
 
         # ── 1. Page Title & Action Header Card ─────────────────────────────────────
@@ -380,9 +392,15 @@ class UploadPage(QWidget):
         self._batch_process_btn.clicked.connect(self._start_batch_workflow)
         batch_lay.addWidget(self._batch_process_btn)
 
+        self._single_card.setMinimumWidth(340)
+        self._batch_card.setMinimumWidth(340)
+
         flex_container.addWidget(self._batch_card, 1)
 
         root.addLayout(flex_container, 1)
+
+        scroll.setWidget(container)
+        main_layout.addWidget(scroll)
 
         self._populate_departments()
         if self._controller:
@@ -758,6 +776,7 @@ class UploadPage(QWidget):
     def _on_workflow_step(self, step_snapshot) -> None:
         self._single_prog.setValue(step_snapshot.progress_percentage)
         self._single_status_lbl.setText(f"{step_snapshot.step_name}: {step_snapshot.message}")
+        QApplication.processEvents()
 
     def _on_workflow_completed(self, result_dto) -> None:
         self._single_prog.setValue(100)
@@ -786,6 +805,7 @@ class UploadPage(QWidget):
 
         self._batch_prog.setValue(pct)
         self._batch_status_lbl.setText(f"[{idx}/{total}] {fname} — {step_name} ({pct}%)")
+        QApplication.processEvents()
 
     def _on_batch_workflow_completed(self, batch_result_dto) -> None:
         self._batch_prog.setValue(100)

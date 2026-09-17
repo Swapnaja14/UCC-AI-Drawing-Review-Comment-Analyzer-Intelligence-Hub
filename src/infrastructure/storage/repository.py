@@ -291,6 +291,32 @@ class DrawingRepository:
             row = session.get(DrawingModel, drawing_id)
             return _drawing_to_dict(row) if row else None
 
+    def get_all_drawings(
+        self,
+        project_id: Optional[str] = None,
+        department_id: Optional[str] = None,
+    ) -> List[Dict[str, Any]]:
+        """Return all drawings, optionally filtered by project or department, enriched with comment counts."""
+        with self._db.get_session() as session:
+            query = session.query(DrawingModel).options(selectinload(DrawingModel.comments))
+            if project_id:
+                query = query.filter(DrawingModel.project_id == project_id)
+            if department_id:
+                query = query.filter(
+                    (DrawingModel.department_id == department_id) |
+                    (DrawingModel.department_id.is_(None))
+                )
+            rows = query.order_by(DrawingModel.uploaded_at.desc()).all()
+            result = []
+            for d in rows:
+                d_dict = _drawing_to_dict(d)
+                cmts = d.comments if hasattr(d, "comments") and d.comments else []
+                d_dict["comments_count"] = len(cmts)
+                d_dict["total_comments"] = len(cmts)
+                result.append(d_dict)
+            return result
+
+
 
 # ---------------------------------------------------------------------------
 # ProjectRepository

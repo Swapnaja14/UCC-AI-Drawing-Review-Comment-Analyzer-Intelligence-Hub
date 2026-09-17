@@ -192,10 +192,16 @@ class OcrResultsPage(QWidget):
         tb.addWidget(search)
         tb.addStretch()
 
+        self._dwg_filt = QComboBox()
+        self._dwg_filt.setFixedHeight(36)
+        self._dwg_filt.setFixedWidth(200)
+        self._dwg_filt.currentIndexChanged.connect(self._on_drawing_filter_changed)
+        tb.addWidget(self._dwg_filt)
+
         self._status_filt = QComboBox()
         self._status_filt.addItems(["All Status", "Pending", "Approved", "Rejected", "Flagged"])
         self._status_filt.setFixedHeight(36)
-        self._status_filt.setFixedWidth(160)
+        self._status_filt.setFixedWidth(140)
         self._status_filt.currentTextChanged.connect(self._on_status_filter_changed)
         tb.addWidget(self._status_filt)
 
@@ -302,6 +308,52 @@ class OcrResultsPage(QWidget):
 
     # ── Data loading ──────────────────────────────────────────────
 
+    # ── Data loading ──────────────────────────────────────────────
+
+    def reload_drawings(self) -> None:
+        """Populate the drawing scope dropdown."""
+        if not hasattr(self, "_dwg_filt") or not self._controller:
+            return
+        self._dwg_filt.blockSignals(True)
+        self._dwg_filt.clear()
+        self._dwg_filt.addItem("📄 Active Drawing Only", "")
+        self._dwg_filt.addItem("🌐 All Drawings in Batch", "ALL")
+
+        drawings = self._controller.get_all_drawings()
+        for d in drawings:
+            did = d.get("id", "")
+            fname = d.get("file_name", "Drawing")
+            cmts = d.get("comments_count", 0)
+            prefix = "➜ " if did == self._controller.current_drawing_id else "   "
+            label = f"{prefix}{fname} ({cmts} cmts)"
+            self._dwg_filt.addItem(label, did)
+
+        curr_id = self._controller.current_drawing_id
+        if curr_id:
+            for i in range(self._dwg_filt.count()):
+                if self._dwg_filt.itemData(i) == curr_id:
+                    self._dwg_filt.setCurrentIndex(i)
+                    break
+        self._dwg_filt.blockSignals(False)
+
+    def _on_drawing_filter_changed(self, index: int) -> None:
+        dwg_id = self._dwg_filt.itemData(index)
+        if dwg_id == "ALL":
+            drawings = self._controller.get_all_drawings() if self._controller else []
+            all_cmts = []
+            for d in drawings:
+                did = d.get("id")
+                if did:
+                    all_cmts.extend(self._controller.get_comments_for_drawing(did))
+            self._comments = all_cmts
+        elif dwg_id and self._controller and dwg_id != self._controller.current_drawing_id:
+            self._controller.switch_current_drawing(dwg_id)
+            return
+        else:
+            self._comments = self._load_comments()
+
+        self._rebuild_table()
+
     def _load_comments(self) -> List[Any]:
         """Load comments from DB via controller, or fall back to mock data."""
         if self._controller and self._controller.current_drawing_id:
@@ -315,7 +367,11 @@ class OcrResultsPage(QWidget):
 
     def reload_comments(self) -> None:
         """Reload table contents from the database. Call after new PDF is loaded."""
+        self.reload_drawings()
         self._comments = self._load_comments()
+        self._rebuild_table()
+
+    def _rebuild_table(self) -> None:
         self._model.removeRows(0, self._model.rowCount())
         for c in self._comments:
             self._append_row(c)
@@ -344,11 +400,15 @@ class OcrResultsPage(QWidget):
         ocr_text   = _get(c, "ocr_text", "")
         confidence = _get(c, "confidence", 0.0)
         status     = _get(c, "status", "Pending")
+        drawing_id = _get(c, "drawing_id", "")
+        drawing_no = _get(c, "drawing_no", "")
 
         id_item = QStandardItem(cid)
         id_item.setFont(QFont("Cascadia Code", 12))
         id_item.setForeground(QColor("#38BDF8"))
-        id_item.setToolTip("Click or double-click to view and edit in Human Review")
+        id_item.setData(c, Qt.ItemDataRole.UserRole)
+        tooltip = f"Drawing: {drawing_no or drawing_id}\nClick to view and edit in Human Review"
+        id_item.setToolTip(tooltip)
         id_item.setEditable(False)
 
         text_item = QStandardItem(ocr_text)
@@ -369,49 +429,60 @@ class OcrResultsPage(QWidget):
 
     # ── Comment Navigation Slots ──────────────────────────────────
 
-    def _resolve_comment_id(self, proxy_index: QModelIndex) -> Optional[str]:
-        """Resolve the underlying comment ID string from a proxy model index."""
+    def _resolve_comment_data(self, proxy_index: QModelIndex) -> tuple[Optional[str], Optional[str]]:
+        """Resolve comment ID and drawing ID from a proxy model index."""
         if not proxy_index.isValid():
-            return None
+            return None, None
         proxy_row = proxy_index.row()
         status_idx = self._proxy.mapToSource(self._proxy.index(proxy_row, 0))
         source_idx = self._status_proxy.mapToSource(status_idx)
         source_row = source_idx.row()
         item = self._model.item(source_row, 0)
-        return item.text().strip() if item else None
+        if not item:
+            return None, None
+        cid = item.text().strip()
+        c_obj = item.data(Qt.ItemDataRole.UserRole)
+        c_dwg_id = _get(c_obj, "drawing_id", "") if c_obj else None
+        return cid, c_dwg_id
+
+    def _emit_jump_to_review(self, cid: Optional[str], c_dwg_id: Optional[str]) -> None:
+        if not cid:
+            return
+        if c_dwg_id and self._controller and c_dwg_id != self._controller.current_drawing_id:
+            self._controller.switch_current_drawing(c_dwg_id)
+        self.comment_selected.emit(cid)
 
     def _on_table_clicked(self, index: QModelIndex) -> None:
         """Single-clicking Column 0 (Comment ID) redirects directly to Human Review."""
         if index.column() == 0:
-            cid = self._resolve_comment_id(index)
-            if cid:
-                self.comment_selected.emit(cid)
+            cid, c_dwg_id = self._resolve_comment_data(index)
+            self._emit_jump_to_review(cid, c_dwg_id)
 
     def _on_table_double_clicked(self, index: QModelIndex) -> None:
         """Double-clicking any non-text column redirects directly to Human Review."""
         if index.column() != 1:  # Keep column 1 for inline text editing
-            cid = self._resolve_comment_id(index)
-            if cid:
-                self.comment_selected.emit(cid)
+            cid, c_dwg_id = self._resolve_comment_data(index)
+            self._emit_jump_to_review(cid, c_dwg_id)
 
     def view_selected_in_review(self) -> None:
         """Emit comment_selected for the currently selected row to jump to Human Review."""
         selection = self._table.selectionModel().selectedRows()
         if selection:
-            cid = self._resolve_comment_id(selection[0])
-            if cid:
-                self.comment_selected.emit(cid)
-                return
+            cid, c_dwg_id = self._resolve_comment_data(selection[0])
+            self._emit_jump_to_review(cid, c_dwg_id)
+            return
         curr = self._table.currentIndex()
         if curr.isValid():
-            cid = self._resolve_comment_id(curr)
-            if cid:
-                self.comment_selected.emit(cid)
-                return
+            cid, c_dwg_id = self._resolve_comment_data(curr)
+            self._emit_jump_to_review(cid, c_dwg_id)
+            return
         if self._model.rowCount() > 0:
             item = self._model.item(0, 0)
             if item:
-                self.comment_selected.emit(item.text().strip())
+                cid = item.text().strip()
+                c_obj = item.data(Qt.ItemDataRole.UserRole)
+                c_dwg_id = _get(c_obj, "drawing_id", "") if c_obj else None
+                self._emit_jump_to_review(cid, c_dwg_id)
 
     # ── Text Cleaning & Persistence slots ─────────────────────────
 

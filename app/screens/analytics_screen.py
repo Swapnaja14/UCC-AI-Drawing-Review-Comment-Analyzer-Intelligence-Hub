@@ -66,6 +66,14 @@ class AnalyticsPage(QWidget):
         self._proj_cb.setFixedHeight(36)
         fb.addWidget(self._proj_cb)
 
+        # Drawing combobox (for drawing-level Pareto & category distribution)
+        dwg_lbl = QLabel("Drawing:")
+        dwg_lbl.setObjectName("SubCaption")
+        fb.addWidget(dwg_lbl)
+        self._dwg_cb = QComboBox()
+        self._dwg_cb.setFixedHeight(36)
+        fb.addWidget(self._dwg_cb)
+
         # Department combobox (for per-department Pareto analysis)
         d_lbl = QLabel("Department:")
         d_lbl.setObjectName("SubCaption")
@@ -85,8 +93,9 @@ class AnalyticsPage(QWidget):
         self._populate_filters()
 
         # Connect ALL filter widgets to auto-update charts
-        self._dept_cb.currentIndexChanged.connect(self._apply_filters)
         self._proj_cb.currentIndexChanged.connect(self._apply_filters)
+        self._dwg_cb.currentIndexChanged.connect(self._apply_filters)
+        self._dept_cb.currentIndexChanged.connect(self._apply_filters)
         self._cat_cb.currentIndexChanged.connect(self._apply_filters)
 
         from_lbl = QLabel("From:")
@@ -129,7 +138,7 @@ class AnalyticsPage(QWidget):
         root.addLayout(self._grid, 1)
 
     def _populate_filters(self) -> None:
-        """Populate project, department, and category filter dropdowns."""
+        """Populate project, drawing, department, and category filter dropdowns."""
         self._proj_cb.clear()
         projects = ["All Projects"]
         if self._controller:
@@ -141,6 +150,20 @@ class AnalyticsPage(QWidget):
             except Exception:
                 pass
         self._proj_cb.addItems(projects)
+
+        self._dwg_cb.blockSignals(True)
+        self._dwg_cb.clear()
+        self._dwg_cb.addItem("All Drawings", "")
+        if self._controller:
+            try:
+                drawings = self._controller.get_all_drawings()
+                for d in drawings:
+                    did = d.get("id", "")
+                    fname = d.get("file_name", "Drawing")
+                    self._dwg_cb.addItem(fname, did)
+            except Exception:
+                pass
+        self._dwg_cb.blockSignals(False)
 
         self._dept_cb.clear()
         departments = ["All Departments"]
@@ -229,9 +252,11 @@ class AnalyticsPage(QWidget):
         """Read current filter state from all widgets."""
         dept = self._dept_cb.currentText() if hasattr(self, "_dept_cb") else "All Departments"
         cat = self._cat_cb.currentText() if hasattr(self, "_cat_cb") else "All Categories"
+        dwg_id = self._dwg_cb.currentData() if hasattr(self, "_dwg_cb") else ""
         return {
             "department_name": None if dept == "All Departments" else dept,
             "category_name": None if cat == "All Categories" else cat,
+            "drawing_id": dwg_id if dwg_id else None,
         }
 
     def _build_charts(self) -> None:
@@ -244,10 +269,11 @@ class AnalyticsPage(QWidget):
 
         filters = self._get_active_filters()
         dept_name = filters["department_name"]
+        dwg_id = filters["drawing_id"]
 
-        pareto_data = self._controller.get_pareto_analysis(department_name=dept_name) if self._controller else None
-        category_data = self._controller.get_category_distribution(department_name=dept_name) if self._controller else None
-        trend_data = self._controller.get_status_trend() if self._controller else None
+        pareto_data = self._controller.get_pareto_analysis(drawing_id=dwg_id, department_name=dept_name) if self._controller else None
+        category_data = self._controller.get_category_distribution(drawing_id=dwg_id, department_name=dept_name) if self._controller else None
+        trend_data = self._controller.get_status_trend(drawing_id=dwg_id) if self._controller else None
 
         # Client-side category filter on chart data
         cat_filter = filters["category_name"]

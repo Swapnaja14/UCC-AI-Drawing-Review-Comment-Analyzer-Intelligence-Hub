@@ -122,7 +122,12 @@ class ProcessingWorkflowEngine:
             annotation_result = None
             total_regions = 0
             try:
-                annotation_result = self.annotation_service.detect_all_pages(path, method='hybrid')
+                def on_page_progress(completed: int, total: int):
+                    pct = 50 + int((completed / max(1, total)) * 18)
+                    notify("Annotation Detection", WorkflowState.ANNOTATION_DETECTING, pct, 
+                           f"Detecting drawing callout boxes and redline regions ({completed}/{total} pages).")
+
+                annotation_result = self.annotation_service.detect_all_pages(path, method='hybrid', progress_callback=on_page_progress)
                 total_regions = annotation_result.total_regions
                 
                 logger.info(f"Annotation detection complete: {total_regions} regions detected across {annotation_result.total_pages} pages")

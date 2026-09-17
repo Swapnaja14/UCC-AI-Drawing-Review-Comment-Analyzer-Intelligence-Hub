@@ -854,6 +854,8 @@ class AnnotationDetectionServiceEnhanced:
                         "bbox": [rx0, ry0, rx1, ry1],
                         "color": col_label
                     })
+                    if len(raw_paths) >= 1500:
+                        break
         
         if not raw_paths:
             return []
@@ -984,7 +986,7 @@ class AnnotationDetectionServiceEnhanced:
         Output is in visual page coordinates.
         """
         try:
-            detection_dpi = 72
+            detection_dpi = 54
             pix = page.get_pixmap(dpi=detection_dpi, alpha=False)
             img = np.frombuffer(pix.samples, dtype=np.uint8).reshape(pix.height, pix.width, pix.n)
             
@@ -995,8 +997,8 @@ class AnnotationDetectionServiceEnhanced:
             else:
                 img_bgr = cv2.cvtColor(img, cv2.COLOR_GRAY2BGR)
             
-            scale_factor = 72.0 / detection_dpi  # 1.0 at 72 DPI
-            px_scale = detection_dpi / 72.0      # 1.0 at 72 DPI
+            scale_factor = 72.0 / detection_dpi
+            px_scale = detection_dpi / 72.0
             pw, ph = page.rect.width, page.rect.height
             regions = []
             
@@ -1007,9 +1009,9 @@ class AnnotationDetectionServiceEnhanced:
             hsv = cv2.cvtColor(img_bgr, cv2.COLOR_BGR2HSV)
             s = hsv[:, :, 1]
             
-            # Ultra fast-path: if page has no color saturation (max s < 35), skip heavy contour search
+            # Ultra fast-path: if page has no color saturation (max s < 30), skip heavy contour search
             max_s_val = cv2.minMaxLoc(s)[1]
-            if max_s_val < 35:
+            if max_s_val < 30:
                 return []
 
             b = img_bgr[:, :, 0]
