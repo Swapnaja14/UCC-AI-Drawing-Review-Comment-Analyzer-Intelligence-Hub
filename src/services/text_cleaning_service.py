@@ -8,7 +8,10 @@ import re
 import difflib
 import time
 from typing import List, Dict, Any, Tuple, Optional, Set
-import textdistance
+try:
+    import textdistance
+except ImportError:
+    textdistance = None
 
 from src.core.dtos.comment_processing_dtos import (
     CleanedCommentDTO,
@@ -734,7 +737,10 @@ class TextCleaningService:
                 continue
 
             # Compute Levenshtein distance
-            dist = textdistance.levenshtein.distance(upper_core, candidate)
+            if textdistance is not None:
+                dist = textdistance.levenshtein.distance(upper_core, candidate)
+            else:
+                dist = self._levenshtein(upper_core, candidate)
             
             if dist <= 2:
                 # Bonus if first letter matches
@@ -751,6 +757,23 @@ class TextCleaningService:
             return prefix + self._match_casing(core, best_match) + suffix
 
         return token
+
+    @staticmethod
+    def _levenshtein(s1: str, s2: str) -> int:
+        if len(s1) < len(s2):
+            return TextCleaningService._levenshtein(s2, s1)
+        if len(s2) == 0:
+            return len(s1)
+        prev = list(range(len(s2) + 1))
+        for i, c1 in enumerate(s1):
+            curr = [i + 1]
+            for j, c2 in enumerate(s2):
+                ins = prev[j + 1] + 1
+                dels = curr[j] + 1
+                subs = prev[j] + (0 if c1 == c2 else 1)
+                curr.append(min(ins, dels, subs))
+            prev = curr
+        return prev[-1]
 
     def _match_casing(self, original: str, replacement: str) -> str:
         """Applies original word casing (UPPER, Title, or lower) to replacement."""
