@@ -202,6 +202,18 @@ class DrawingRepository:
                         is_scanned, file_hash, department_id
         """
         with self._db.get_session() as session:
+            try:
+                from src.services.file_service import FileService
+                persistent_path = FileService().copy_to_managed_storage(dto.file_path)
+            except Exception as ex_copy:
+                logger.warning(f"Could not copy drawing to managed storage: {ex_copy}")
+                persistent_path = Path(dto.file_path)
+
+            valid_project_id = None
+            if project_id:
+                if session.query(ProjectModel).filter(ProjectModel.id == project_id).first():
+                    valid_project_id = project_id
+
             existing = (
                 session.query(DrawingModel)
                 .filter(DrawingModel.file_hash_sha256 == dto.file_hash_sha256)
@@ -211,6 +223,10 @@ class DrawingRepository:
                 existing.uploaded_at = datetime.now(timezone.utc)
                 if department_id and not existing.department_id:
                     existing.department_id = department_id
+                if valid_project_id and not existing.project_id:
+                    existing.project_id = valid_project_id
+                if not Path(existing.file_path).exists() and persistent_path.exists():
+                    existing.file_path = str(persistent_path)
                 session.commit()
                 logger.info(
                     f"Drawing already in DB (hash={dto.file_hash_sha256[:8]}, "
@@ -218,13 +234,18 @@ class DrawingRepository:
                 )
                 return _drawing_to_dict(existing)
 
+            original_file_name = dto.file_name
+            hash_prefix = f"{dto.file_hash_sha256[:12]}_"
+            if original_file_name.startswith(hash_prefix):
+                original_file_name = original_file_name[len(hash_prefix):]
+
             drawing_id = f"DWG-{uuid.uuid4().hex[:8].upper()}"
             drawing = DrawingModel(
                 id=drawing_id,
-                project_id=project_id,
+                project_id=valid_project_id,
                 department_id=department_id,
-                file_path=str(dto.file_path),
-                file_name=dto.file_name,
+                file_path=str(persistent_path),
+                file_name=original_file_name,
                 file_size_bytes=dto.file_size_bytes,
                 file_hash_sha256=dto.file_hash_sha256,
                 total_pages=dto.total_pages,
@@ -1372,9 +1393,11 @@ def _drawing_to_dict(d: DrawingModel) -> Dict[str, Any]:
         "id":              d.id,
         "file_name":       d.file_name,
         "file_path":       d.file_path,
+        "file_size_bytes": d.file_size_bytes,
         "total_pages":     d.total_pages,
         "is_scanned":      d.is_scanned,
         "file_hash":       d.file_hash_sha256,
+        "file_hash_sha256": d.file_hash_sha256,
         "project_id":      d.project_id,
         "department_id":   d.department_id,
         "department_name": d.department_rel.name if d.department_rel else "Unassigned",

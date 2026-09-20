@@ -175,7 +175,9 @@ class PDFLoadWorker(QThread):
 
     def run(self) -> None:
         try:
-            doc_dto = self.pdf_service.process_pdf_document(self.file_path)
+            from src.services.file_service import FileService
+            persistent_path = FileService().copy_to_managed_storage(self.file_path)
+            doc_dto = self.pdf_service.process_pdf_document(persistent_path)
 
             drawing_id = ""
             try:

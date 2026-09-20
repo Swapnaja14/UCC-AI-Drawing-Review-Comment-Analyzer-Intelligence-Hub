@@ -268,3 +268,33 @@ class FileService:
         temp_dir.mkdir(parents=True, exist_ok=True)
         return temp_dir
 
+    def get_managed_drawings_dir(self) -> Path:
+        """Creates and returns managed persistent application storage directory for drawings."""
+        from src.config import PROJECT_ROOT
+        storage_dir = (PROJECT_ROOT / "data" / "drawings").resolve()
+        storage_dir.mkdir(parents=True, exist_ok=True)
+        return storage_dir
+
+    def copy_to_managed_storage(self, file_path: str | Path) -> Path:
+        """
+        Copies a PDF file into managed persistent application storage,
+        returning the persistent Path.
+        """
+        source = Path(file_path).resolve()
+        if not source.exists() or not source.is_file():
+            return source
+
+        managed_dir = self.get_managed_drawings_dir()
+        file_hash = self.compute_sha256(source)
+        safe_name = source.name.replace(" ", "_")
+        target_name = f"{file_hash[:12]}_{safe_name}"
+        target_path = managed_dir / target_name
+
+        if source.resolve() != target_path.resolve():
+            if not target_path.exists():
+                shutil.copy2(source, target_path)
+            return target_path
+
+        return source
+
+

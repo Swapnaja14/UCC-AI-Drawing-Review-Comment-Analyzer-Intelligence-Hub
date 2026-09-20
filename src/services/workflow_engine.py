@@ -89,7 +89,8 @@ class ProcessingWorkflowEngine:
         """
         start_time = time.time()
         path = Path(file_path).resolve()
-        logger.info(f"Starting processing workflow execution for: {path.name} (department_id={department_id})")
+        original_file_name = path.name
+        logger.info(f"Starting processing workflow execution for: {original_file_name} (department_id={department_id})")
 
         def notify(step_name: str, state: WorkflowState, pct: int, msg: str):
             self._current_state = state
@@ -106,10 +107,13 @@ class ProcessingWorkflowEngine:
 
         try:
             # ── Step 1: File Validation ───────────────────────────
-            notify("File Validation", WorkflowState.FILE_VALIDATING, 10, f"Validating '{path.name}' size and extension.")
+            notify("File Validation", WorkflowState.FILE_VALIDATING, 10, f"Validating '{original_file_name}' size and extension.")
             val_result: FileValidationResultDTO = self.file_service.validate_pdf_file(path)
             if not val_result.is_valid:
                 raise WorkflowProcessingError(val_result.error_message or "File validation failed.")
+
+            # Copy uploaded PDF to managed application storage for persistence
+            path = self.file_service.copy_to_managed_storage(path)
 
             # ── Step 2: Metadata Extraction ──────────────────────
             notify("Metadata Extraction", WorkflowState.METADATA_EXTRACTING, 30, f"Extracting page metrics and PDF structure.")
@@ -463,11 +467,11 @@ class ProcessingWorkflowEngine:
             # ── Workflow Complete ──────────────────────────────────
             duration = round(time.time() - start_time, 2)
             total_saved = len(extracted_comments_data)
-            notify("Workflow Complete", WorkflowState.COMPLETED, 100, f"Successfully processed '{path.name}' in {duration}s.")
+            notify("Workflow Complete", WorkflowState.COMPLETED, 100, f"Successfully processed '{original_file_name}' in {duration}s.")
 
             return WorkflowResultDTO(
                 drawing_id=drawing_id,
-                file_name=doc_dto.file_name,
+                file_name=original_file_name,
                 total_pages=doc_dto.total_pages,
                 is_scanned=doc_dto.is_scanned,
                 status="Completed",
