@@ -43,15 +43,29 @@ class VerificationService:
 
         if self.audit_repo:
             try:
-                self.audit_repo.create_audit_entry(
-                    comment_id=comment_id,
-                    action=action,
-                    reviewer_id=reviewer_id,
-                    old_value=old_value,
-                    new_value=new_value,
-                    notes=notes,
-                    timestamp=now_dt,
-                )
+                existing = self.audit_repo.get_audit_logs_for_comment(comment_id)
+                already_persisted = False
+                if existing:
+                    latest = existing[0]
+                    if latest.get("action") == action and latest.get("new_value") == new_value:
+                        already_persisted = True
+                        if notes and hasattr(self.audit_repo, "_db"):
+                            with self.audit_repo._db.get_session() as session:
+                                row = session.get(AuditLogModel, latest["id"])
+                                if row:
+                                    row.notes = notes
+                                    session.commit()
+
+                if not already_persisted:
+                    self.audit_repo.create_audit_entry(
+                        comment_id=comment_id,
+                        action=action,
+                        reviewer_id=reviewer_id,
+                        old_value=old_value,
+                        new_value=new_value,
+                        notes=notes,
+                        timestamp=now_dt,
+                    )
             except Exception as e:
                 logger.warning(f"Could not persist audit log to database: {e}")
 
@@ -101,9 +115,17 @@ class VerificationService:
         return success
 
     def edit_comment_text(self, comment_id: str, new_text: str, reviewer_id: str = '') -> bool:
+        old_text = ''
+        try:
+            if hasattr(self.comment_repo, 'get_comment_by_id'):
+                c_data = self.comment_repo.get_comment_by_id(comment_id)
+                if c_data:
+                    old_text = c_data.get('cleaned_text') or c_data.get('raw_text', '')
+        except Exception:
+            pass
         success = self.comment_repo.update_comment_text(comment_id, new_text)
         if success:
-            self._log_audit(comment_id, AuditAction.EDIT_TEXT, reviewer_id, '', new_text, '')
+            self._log_audit(comment_id, AuditAction.EDIT_TEXT, reviewer_id, old_text, new_text, '')
         return success
 
     def approve_all_high_confidence(self, drawing_id: str, threshold: float = 0.85, reviewer_id: str = 'system') -> BulkActionResultDTO:

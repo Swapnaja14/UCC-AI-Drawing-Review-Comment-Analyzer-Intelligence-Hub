@@ -1029,32 +1029,10 @@ class CommentRepository:
         comment_id: str,
         status: str,
         verified_by_human: bool = True,
+        changed_by_user_id: str = "reviewer",
     ) -> bool:
         """
-        Update the status of a single comment.
-
-        Parameters
-        ----------
-        comment_id:
-            The CommentModel primary key ("CMT-XXXXXXXX").
-        status:
-            Must be one of: "Pending", "Approved", "Rejected", "Flagged".
-            Using any other value will store an unrecognised status that
-            UI components (StatusChip, StatusDelegate) will not render
-            correctly.
-        verified_by_human:
-            Set True when a human reviewer explicitly approves or rejects.
-            Defaults to True for review-screen actions.
-
-        Returns
-        -------
-        bool
-            True if the record was found and updated, False if not found.
-
-        # INTEGRATION NOTE:
-        # This method is called from AppController.update_comment_status().
-        # UI screens must never call this repository method directly.
-        # Status vocabulary: "Pending" | "Approved" | "Rejected" | "Flagged"
+        Update the status of a single comment and record an audit log entry.
         """
         _VALID_STATUSES = {"Pending", "Approved", "Rejected", "Flagged"}
         if status not in _VALID_STATUSES:
@@ -1068,45 +1046,75 @@ class CommentRepository:
             if row is None:
                 logger.warning(f"update_comment_status: comment '{comment_id}' not found.")
                 return False
+
+            old_status = row.status or "Pending"
             row.status = status
             row.is_verified_by_human = verified_by_human
             row.updated_at = datetime.now(timezone.utc)
+
+            if old_status != status:
+                act = "edit_status"
+                if status == "Approved":
+                    act = "approve"
+                elif status == "Rejected":
+                    act = "reject"
+                elif status == "Flagged":
+                    act = "flag"
+
+                audit_entry = AuditLogModel(
+                    id=f"AUD-{uuid.uuid4().hex[:8].upper()}",
+                    comment_id=comment_id,
+                    action=act,
+                    reviewer_name=changed_by_user_id or "reviewer",
+                    old_value=old_status,
+                    new_value=status,
+                    notes=f"Status updated from '{old_status}' to '{status}'",
+                    timestamp=datetime.now(timezone.utc),
+                )
+                session.add(audit_entry)
+
             session.commit()
             logger.info(f"Comment '{comment_id}' status → '{status}', verified={verified_by_human}")
             return True
 
-    def update_comment_text(self, comment_id: str, new_text: str) -> bool:
+    def update_comment_text(
+        self,
+        comment_id: str,
+        new_text: str,
+        changed_by_user_id: str = "reviewer",
+    ) -> bool:
         """
-        Update the raw OCR text of a single comment.
-
-        Used when a human reviewer corrects an OCR extraction error in the
-        review screen or OCR results screen.
-
-        Parameters
-        ----------
-        comment_id:
-            The CommentModel primary key ("CMT-XXXXXXXX").
-        new_text:
-            The corrected OCR text to store in raw_text.
-
-        Returns
-        -------
-        bool
-            True if the record was found and updated, False if not found.
-
-        # INTEGRATION NOTE:
-        # This method is called from AppController.update_comment_text().
-        # UI screens must never call this repository method directly.
+        Update the cleaned/reviewed text of a comment, leaving raw_text unchanged,
+        and record an audit log entry.
         """
         with self._db.get_session() as session:
             row = session.get(CommentModel, comment_id)
             if row is None:
                 logger.warning(f"update_comment_text: comment '{comment_id}' not found.")
                 return False
-            row.raw_text = new_text
+
+            old_text = row.cleaned_text or row.raw_text or ""
+            if old_text == new_text:
+                return True
+
+            # Preserve machine-generated raw_text; store reviewed text in cleaned_text
+            row.cleaned_text = new_text
+            row.is_verified_by_human = True
             row.updated_at = datetime.now(timezone.utc)
+
+            audit_entry = AuditLogModel(
+                id=f"AUD-{uuid.uuid4().hex[:8].upper()}",
+                comment_id=comment_id,
+                action="edit_text",
+                reviewer_name=changed_by_user_id or "reviewer",
+                old_value=old_text,
+                new_value=new_text,
+                notes=f"Text updated from '{old_text[:30]}' to '{new_text[:30]}'",
+                timestamp=datetime.now(timezone.utc),
+            )
+            session.add(audit_entry)
             session.commit()
-            logger.info(f"Comment '{comment_id}' raw_text updated ({len(new_text)} chars).")
+            logger.info(f"Comment '{comment_id}' cleaned_text updated ({len(new_text)} chars) by {changed_by_user_id}.")
             return True
 
     def update_comment_category(
@@ -1129,7 +1137,6 @@ class CommentRepository:
             if old_category == new_category:
                 return True
 
-            # Link category_id if exists
             cat_row = (
                 session.query(CategoryModel)
                 .filter(CategoryModel.name == new_category)
@@ -1142,7 +1149,6 @@ class CommentRepository:
             row.is_verified_by_human = True
             row.updated_at = datetime.now(timezone.utc)
 
-            # Record audit trail
             audit_entry = AuditLogModel(
                 id=f"AUD-{uuid.uuid4().hex[:8].upper()}",
                 comment_id=comment_id,
@@ -1156,6 +1162,113 @@ class CommentRepository:
             session.add(audit_entry)
             session.commit()
             logger.info(f"Comment '{comment_id}' category → '{new_category}' by {changed_by_user_id}")
+            return True
+
+    def update_comment_department(
+        self,
+        comment_id: str,
+        new_department: str,
+        changed_by_user_id: str = "reviewer",
+    ) -> bool:
+        """
+        Update the engineering department of a comment, mark verified_by_human=True,
+        and log an audit trail entry for department modification.
+        """
+        with self._db.get_session() as session:
+            row = session.get(CommentModel, comment_id)
+            if row is None:
+                logger.warning(f"update_comment_department: comment '{comment_id}' not found.")
+                return False
+
+            old_dept = row.department_name or "Unassigned"
+            if old_dept == new_department:
+                return True
+
+            dept_row = (
+                session.query(EngineeringDepartmentModel)
+                .filter(EngineeringDepartmentModel.name == new_department)
+                .first()
+            )
+            if dept_row:
+                row.department_id = dept_row.id
+
+            row.is_verified_by_human = True
+            row.updated_at = datetime.now(timezone.utc)
+
+            audit_entry = AuditLogModel(
+                id=f"AUD-{uuid.uuid4().hex[:8].upper()}",
+                comment_id=comment_id,
+                action="edit_department",
+                reviewer_name=changed_by_user_id or "reviewer",
+                old_value=old_dept,
+                new_value=new_department,
+                notes=f"Department updated from '{old_dept}' to '{new_department}'",
+                timestamp=datetime.now(timezone.utc),
+            )
+            session.add(audit_entry)
+            session.commit()
+            logger.info(f"Comment '{comment_id}' department → '{new_department}' by {changed_by_user_id}")
+            return True
+
+    def update_comment_reviewer(
+        self,
+        comment_id: str,
+        new_reviewer: str,
+        changed_by_user_id: str = "reviewer",
+    ) -> bool:
+        """
+        Update the assigned reviewer of a comment, mark verified_by_human=True,
+        and log an audit trail entry for reviewer modification.
+        """
+        with self._db.get_session() as session:
+            row = session.get(CommentModel, comment_id)
+            if row is None:
+                logger.warning(f"update_comment_reviewer: comment '{comment_id}' not found.")
+                return False
+
+            old_reviewer = row.user_id or "Unassigned"
+            if old_reviewer == new_reviewer:
+                return True
+
+            valid_user_id = None
+            if new_reviewer and new_reviewer != "Unassigned":
+                user_match = session.get(UserModel, new_reviewer)
+                if not user_match:
+                    user_match = (
+                        session.query(UserModel)
+                        .filter((UserModel.username == new_reviewer) | (UserModel.display_name == new_reviewer))
+                        .first()
+                    )
+                if not user_match:
+                    u_id = new_reviewer if new_reviewer.startswith("USR-") else f"USR-{uuid.uuid4().hex[:8].upper()}"
+                    user_match = UserModel(
+                        id=u_id,
+                        username=new_reviewer,
+                        display_name=new_reviewer,
+                        role="Reviewer",
+                    )
+                    session.add(user_match)
+                    session.flush()
+
+                valid_user_id = user_match.id
+
+            row.user_id = valid_user_id
+            row.is_verified_by_human = True
+            row.updated_at = datetime.now(timezone.utc)
+
+            audit_entry = AuditLogModel(
+                id=f"AUD-{uuid.uuid4().hex[:8].upper()}",
+                comment_id=comment_id,
+                action="edit_reviewer",
+                reviewer_name=changed_by_user_id or "reviewer",
+                old_value=old_reviewer,
+                new_value=new_reviewer,
+                notes=f"Reviewer updated from '{old_reviewer}' to '{new_reviewer}'",
+                timestamp=datetime.now(timezone.utc),
+            )
+            session.add(audit_entry)
+            session.commit()
+            logger.info(f"Comment '{comment_id}' reviewer → '{new_reviewer}' by {changed_by_user_id}")
             return True
 
     def get_category_counts(

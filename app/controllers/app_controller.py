@@ -807,25 +807,12 @@ class AppController(QObject):
         return [self.normalise_comment(c) for c in raw]
 
     def update_comment_status(
-        self, comment_id: str, status: str, verified_by_human: bool = True
+        self, comment_id: str, status: str, verified_by_human: bool = True, changed_by_user_id: Optional[str] = None
     ) -> None:
         """
         Persist a status change for a single comment.
-
-        Parameters
-        ----------
-        comment_id : str
-            The CommentModel primary key ("CMT-XXXXXXXX").
-        status : str
-            One of: "Pending", "Approved", "Rejected", "Flagged".
-        verified_by_human : bool
-            True when the change comes from a human reviewer action.
-
-        INTEGRATION NOTE:
-        Status vocabulary is fixed. Do not pass arbitrary strings.
-        Permitted values: "Pending", "Approved", "Rejected", "Flagged".
         """
-        user_id = self.current_user.id if self.current_user else "anonymous"
+        user_id = changed_by_user_id or (self.current_user.id if self.current_user else "anonymous")
         
         if status == "Approved":
             self.verification_service.approve_comment(comment_id, user_id)
@@ -834,33 +821,47 @@ class AppController(QObject):
         elif status == "Flagged":
             self.verification_service.flag_comment(comment_id, user_id, "Flagged via UI")
         else:
-            # Fallback for Pending or other statuses
-            self.comment_repo.update_comment_status(comment_id, status, verified_by_human)
+            self.comment_repo.update_comment_status(comment_id, status, verified_by_human, changed_by_user_id=user_id)
 
     def get_audit_trail(self, comment_id: str) -> List[Any]:
         """Return the audit history for a given comment."""
         return self.verification_service.get_audit_history(comment_id)
 
-    def update_comment_text(self, comment_id: str, new_text: str) -> None:
+    def update_comment_text(self, comment_id: str, new_text: str, changed_by_user_id: Optional[str] = None) -> None:
         """
-        Persist a corrected OCR text for a single comment.
-
-        Called from the review screen (edit/save action) and the OCR
-        results screen (inline text edit).
+        Persist a corrected OCR/cleaned text for a single comment.
         """
-        user_id = self.current_user.id if self.current_user else "anonymous"
-        if hasattr(self.verification_service, "edit_comment_text"):
+        user_id = changed_by_user_id or (self.current_user.id if self.current_user else "anonymous")
+        if hasattr(self, "comment_repo"):
+            self.comment_repo.update_comment_text(comment_id, new_text, changed_by_user_id=user_id)
+        elif hasattr(self.verification_service, "edit_comment_text"):
             self.verification_service.edit_comment_text(comment_id, new_text, user_id)
-        else:
-            self.comment_repo.update_comment_text(comment_id, new_text)
 
-    def update_comment_category(self, comment_id: str, new_category: str) -> bool:
+    def update_comment_category(self, comment_id: str, new_category: str, changed_by_user_id: Optional[str] = None) -> bool:
         """
         Persist a corrected or updated classification category for a single comment.
         """
-        user_id = self.current_user.id if self.current_user else "reviewer"
+        user_id = changed_by_user_id or (self.current_user.id if self.current_user else "reviewer")
         if hasattr(self, "comment_repo"):
             return self.comment_repo.update_comment_category(comment_id, new_category, user_id)
+        return False
+
+    def update_comment_department(self, comment_id: str, new_department: str, changed_by_user_id: Optional[str] = None) -> bool:
+        """
+        Persist an updated engineering department for a single comment.
+        """
+        user_id = changed_by_user_id or (self.current_user.id if self.current_user else "reviewer")
+        if hasattr(self, "comment_repo"):
+            return self.comment_repo.update_comment_department(comment_id, new_department, user_id)
+        return False
+
+    def update_comment_reviewer(self, comment_id: str, new_reviewer: str, changed_by_user_id: Optional[str] = None) -> bool:
+        """
+        Persist an updated reviewer assignment for a single comment.
+        """
+        user_id = changed_by_user_id or (self.current_user.id if self.current_user else "reviewer")
+        if hasattr(self, "comment_repo"):
+            return self.comment_repo.update_comment_reviewer(comment_id, new_reviewer, user_id)
         return False
 
     def get_category_counts(
