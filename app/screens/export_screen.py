@@ -814,6 +814,8 @@ class ExportPage(QWidget):
             ["FILE NAME", "FORMAT", "DATE", "SIZE"]
         )
         table.setModel(self._hist_model)
+        table.doubleClicked.connect(self._on_history_double_clicked)
+        self._history_items_raw: list[dict] = []
         self._reload_history_table()
 
         hdr = table.horizontalHeader()
@@ -821,6 +823,33 @@ class ExportPage(QWidget):
         for i in range(1, 4):
             hdr.setSectionResizeMode(i, QHeaderView.ResizeMode.ResizeToContents)
         return table
+
+    def _on_history_double_clicked(self, index) -> None:
+        """Open selected export file or show warning if file is missing."""
+        row = index.row()
+        if hasattr(self, "_history_items_raw") and 0 <= row < len(self._history_items_raw):
+            item = self._history_items_raw[row]
+            file_path_str = item.get("file_path")
+            if file_path_str:
+                file_path = Path(file_path_str)
+                if file_path.exists():
+                    try:
+                        import os
+                        os.startfile(str(file_path))
+                    except Exception as e:
+                        QMessageBox.warning(self, "Open Export File", f"Could not open file:\n{e}")
+                else:
+                    QMessageBox.warning(
+                        self,
+                        "File Not Found",
+                        f"The exported file could not be found at path:\n{file_path_str}\n\nIt may have been moved or deleted.",
+                    )
+            else:
+                QMessageBox.information(
+                    self,
+                    "Export History Item",
+                    f"Selected export item: {item.get('name', 'Export')}",
+                )
 
     def _reload_history_table(self) -> None:
         """Reload persistent export history rows into the table view."""
@@ -834,6 +863,8 @@ class ExportPage(QWidget):
 
         if not history_items:
             history_items = md.EXPORT_HISTORY
+
+        self._history_items_raw = history_items
 
         for h in history_items:
             row = [

@@ -93,23 +93,43 @@ class ExportService:
                     error_message=f"Unsupported format: {config.format}"
                 )
 
-            if result and result.success and self.export_history_repo:
+            if result and result.success:
+                persistent_path = Path(result.output_path)
                 try:
-                    format_label = "Excel" if config.format == ExportFormat.EXCEL else ("CSV" if config.format == ExportFormat.CSV else "JSON")
-                    self.export_history_repo.create_export_log(
-                        file_name=Path(config.output_path).name,
-                        file_path=str(config.output_path),
-                        format_name=format_label,
-                        scope=scope_val,
-                        drawing_id=config.drawing_id,
-                        project_id=getattr(config, "project_id", None),
-                        department_name=config.department_name,
-                        total_rows=result.total_rows,
-                        file_size_bytes=result.file_size_bytes,
-                        status="Success",
-                    )
-                except Exception as ex_hist:
-                    logger.warning(f"Could not record export history event: {ex_hist}")
+                    from src.config import get_config
+                    managed_dir = get_config().export.get_resolved_export_dir()
+                    managed_dir.mkdir(parents=True, exist_ok=True)
+                    out_path = Path(result.output_path).resolve()
+
+                    if out_path.exists():
+                        target_managed_path = (managed_dir / out_path.name).resolve()
+                        if out_path != target_managed_path:
+                            import shutil
+                            shutil.copy2(out_path, target_managed_path)
+                            persistent_path = target_managed_path
+                        else:
+                            persistent_path = out_path
+                except Exception as ex_store:
+                    logger.warning(f"Could not copy export to managed storage: {ex_store}")
+
+                if self.export_history_repo:
+                    try:
+                        format_label = "Excel" if config.format == ExportFormat.EXCEL else ("CSV" if config.format == ExportFormat.CSV else "JSON")
+                        file_size = persistent_path.stat().st_size if persistent_path.exists() else result.file_size_bytes
+                        self.export_history_repo.create_export_log(
+                            file_name=persistent_path.name,
+                            file_path=str(persistent_path),
+                            format_name=format_label,
+                            scope=scope_val,
+                            drawing_id=config.drawing_id,
+                            project_id=getattr(config, "project_id", None),
+                            department_name=config.department_name,
+                            total_rows=result.total_rows,
+                            file_size_bytes=file_size,
+                            status="Success",
+                        )
+                    except Exception as ex_hist:
+                        logger.warning(f"Could not record export history event: {ex_hist}")
 
             return result
         except Exception as e:

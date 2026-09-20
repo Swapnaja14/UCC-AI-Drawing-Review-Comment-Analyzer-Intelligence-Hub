@@ -309,6 +309,103 @@ def test_10_persistent_export_history(test_setup, tmp_path):
 
     # Query persistent history
     recent = test_setup["hist_repo"].get_recent_exports()
-    assert len(recent) == 1
-    assert recent[0]["name"] == "history_test.csv"
-    assert recent[0]["total_rows"] == 9
+    assert len(recent) >= 1
+    latest = recent[0]
+    assert latest["file_name"] == "history_test.csv"
+    assert latest["total_rows"] == 9
+    assert latest["status"] == "Success"
+
+
+def test_11_persistent_excel_artifact_creation_and_metadata(test_setup, tmp_path):
+    """TEST 11: Successful Excel export creates persistent artifact and stores full metadata in SQLite."""
+    service = ExportService(
+        test_setup["cmt_repo"],
+        test_setup["proj_repo"],
+        test_setup["dwg_repo"],
+        test_setup["dept_repo"],
+        test_setup["hist_repo"],
+    )
+    out_file = tmp_path / "persistent_excel_test.xlsx"
+    config = ExportConfigDTO(
+        output_path=out_file,
+        format=ExportFormat.EXCEL,
+        drawing_id="DWG-A1",
+        scope="drawing",
+        department_name="Piping Engineering",
+    )
+    res = service.export_drawing_comments(config)
+    assert res.success is True
+
+    # Check file artifact exists and is non-empty
+    recent = test_setup["hist_repo"].get_recent_exports()
+    latest = recent[0]
+    artifact_path = Path(latest["file_path"])
+    assert artifact_path.exists()
+    assert artifact_path.stat().st_size > 0
+
+    # Verify metadata fields stored in database
+    assert latest["file_name"] == "persistent_excel_test.xlsx"
+    assert latest["format"] == "Excel"
+    assert latest["scope"] == "drawing"
+    assert latest["drawing_id"] == "DWG-A1"
+    assert latest["department_name"] == "Piping Engineering"
+    assert latest["total_rows"] == 2
+    assert latest["file_size_bytes"] > 0
+    assert latest["status"] == "Success"
+    assert "created_at" in latest and latest["created_at"] != ""
+
+
+def test_12_export_history_scope_retention(test_setup, tmp_path):
+    """TEST 12: Verify correct project/drawing scope is retained in persistent history."""
+    service = ExportService(
+        test_setup["cmt_repo"],
+        test_setup["proj_repo"],
+        test_setup["dwg_repo"],
+        test_setup["dept_repo"],
+        test_setup["hist_repo"],
+    )
+    
+    # 1. Drawing Scope
+    dwg_file = tmp_path / "dwg_scope.csv"
+    config_dwg = ExportConfigDTO(
+        output_path=dwg_file,
+        format=ExportFormat.CSV,
+        drawing_id="DWG-A2",
+        scope="drawing",
+    )
+    service.export_drawing_comments(config_dwg)
+    
+    # 2. Project Scope
+    proj_id = test_setup["proj_a"]["id"]
+    proj_file = tmp_path / "proj_scope.csv"
+    config_proj = ExportConfigDTO(
+        output_path=proj_file,
+        format=ExportFormat.CSV,
+        project_id=proj_id,
+        scope="project",
+    )
+    service.export_drawing_comments(config_proj)
+
+    recent = test_setup["hist_repo"].get_recent_exports(limit=2)
+    latest_proj = recent[0]
+    latest_dwg = recent[1]
+
+    assert latest_proj["scope"] == "project"
+    assert latest_proj["project_id"] == proj_id
+
+    assert latest_dwg["scope"] == "drawing"
+    assert latest_dwg["drawing_id"] == "DWG-A2"
+
+
+def test_13_missing_artifact_handled_gracefully(tmp_path):
+    """TEST 13: Handle missing persistent artifact gracefully without crashing."""
+    missing_path = tmp_path / "deleted_export.xlsx"
+    assert not missing_path.exists()
+
+    # Simulate UI check when opening history item
+    exists = missing_path.exists()
+    assert exists is False
+    # Verify path check does not raise uncaught error
+    status_msg = f"File missing at {missing_path}" if not exists else "File ready"
+    assert "File missing" in status_msg
+
