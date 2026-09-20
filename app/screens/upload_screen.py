@@ -20,7 +20,8 @@ from PySide6.QtWidgets import (
     QToolButton, QSizePolicy, QMenu, QComboBox,
     QListWidget, QListWidgetItem, QScrollArea, QApplication
 )
-from PySide6.QtCore import Qt, Signal
+import time
+from PySide6.QtCore import Qt, Signal, QTimer
 from PySide6.QtGui import QFont, QIcon, QColor
 
 from app.components.upload_widget import DropZone
@@ -62,6 +63,14 @@ class UploadPage(QWidget):
         
         # State: Batch mode (files or zip archives)
         self._batch_filepaths: List[str] = []
+
+        # Workflow Timing & Real Progress State
+        self._ui_timer = QTimer(self)
+        self._ui_timer.setInterval(1000)
+        self._ui_timer.timeout.connect(self._on_timer_tick)
+        self._workflow_start_time: float | None = None
+        self._current_progress_pct: int = 0
+        self._active_workflow_mode: str = self.MODE_NONE
 
         # Outer Main Layout
         main_layout = QVBoxLayout(self)
@@ -248,6 +257,13 @@ class UploadPage(QWidget):
         self._single_prog.hide()
         single_lay.addWidget(self._single_prog)
 
+        self._single_timer_lbl = QLabel("")
+        self._single_timer_lbl.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        self._single_timer_lbl.setFont(QFont("Cascadia Code", 10))
+        self._single_timer_lbl.setStyleSheet("color: #94A3B8;")
+        self._single_timer_lbl.hide()
+        single_lay.addWidget(self._single_timer_lbl)
+
         # Single Dedicated Process Button
         self._single_process_btn = QPushButton("  Process Single Drawing")
         self._single_process_btn.setObjectName("PrimaryBtn")
@@ -377,6 +393,13 @@ class UploadPage(QWidget):
         self._batch_prog.setFixedHeight(6)
         self._batch_prog.hide()
         batch_lay.addWidget(self._batch_prog)
+
+        self._batch_timer_lbl = QLabel("")
+        self._batch_timer_lbl.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        self._batch_timer_lbl.setFont(QFont("Cascadia Code", 10))
+        self._batch_timer_lbl.setStyleSheet("color: #94A3B8;")
+        self._batch_timer_lbl.hide()
+        batch_lay.addWidget(self._batch_timer_lbl)
 
         # Batch Dedicated Process Button
         self._batch_process_btn = QPushButton("  Process Batch Upload")
@@ -625,10 +648,15 @@ class UploadPage(QWidget):
         self._validate_single_form()
 
     def _clear_single_file(self) -> None:
+        if self._active_workflow_mode == self.MODE_SINGLE:
+            self._stop_workflow_timer()
+            self._active_workflow_mode = self.MODE_NONE
         self._single_filepath = None
         self._single_file_card.hide()
         self._single_prog.hide()
         self._single_status_lbl.hide()
+        self._single_timer_lbl.hide()
+        self._single_prog.setRange(0, 100)
         self._single_prog.setValue(0)
         self._validate_single_form()
 
@@ -692,13 +720,55 @@ class UploadPage(QWidget):
         self._batch_file_card.show()
 
     def _clear_batch_files(self) -> None:
+        if self._active_workflow_mode == self.MODE_BATCH:
+            self._stop_workflow_timer()
+            self._active_workflow_mode = self.MODE_NONE
         self._batch_filepaths.clear()
         self._batch_list.clear()
         self._batch_file_card.hide()
         self._batch_prog.hide()
         self._batch_status_lbl.hide()
+        self._batch_timer_lbl.hide()
+        self._batch_prog.setRange(0, 100)
         self._batch_prog.setValue(0)
         self._validate_batch_form()
+
+    # ── Workflow Timer Helpers ────────────────────────────────────────────────
+
+    def _start_workflow_timer(self, mode: str) -> None:
+        self._active_workflow_mode = mode
+        self._workflow_start_time = time.time()
+        self._current_progress_pct = 0
+        self._update_timer_label(0, None)
+        self._ui_timer.start()
+
+    def _stop_workflow_timer(self) -> None:
+        self._ui_timer.stop()
+
+    def _on_timer_tick(self) -> None:
+        if not self._workflow_start_time:
+            return
+        elapsed = int(time.time() - self._workflow_start_time)
+        eta: int | None = None
+        if 0 < self._current_progress_pct < 100:
+            total_est = (elapsed / self._current_progress_pct) * 100
+            rem = int(total_est - elapsed)
+            eta = max(0, rem)
+        self._update_timer_label(elapsed, eta)
+
+    def _update_timer_label(self, elapsed_sec: int, eta_sec: int | None) -> None:
+        el_min, el_sec = divmod(elapsed_sec, 60)
+        time_str = f"⏱ Elapsed: {el_min:02d}:{el_sec:02d}"
+        if eta_sec is not None:
+            eta_min, eta_sec_val = divmod(eta_sec, 60)
+            time_str += f"  |  ETA: ~{eta_min:02d}:{eta_sec_val:02d}"
+
+        if self._active_workflow_mode == self.MODE_SINGLE:
+            self._single_timer_lbl.setText(time_str)
+            self._single_timer_lbl.show()
+        elif self._active_workflow_mode == self.MODE_BATCH:
+            self._batch_timer_lbl.setText(time_str)
+            self._batch_timer_lbl.show()
 
     # ── Processing Workflows ──────────────────────────────────────────────────
 
@@ -719,18 +789,22 @@ class UploadPage(QWidget):
             self._single_status_lbl.show()
             return
 
+        self._single_prog.setRange(0, 0)
         self._single_prog.show()
-        self._single_status_lbl.setText(f"Processing '{os.path.basename(self._single_filepath)}'...")
+        self._single_status_lbl.setText(f"Initializing pipeline for '{os.path.basename(self._single_filepath)}'...")
         self._single_status_lbl.setStyleSheet("color: #3E9BFF;")
         self._single_status_lbl.show()
-        self._single_prog.setValue(10)
         
         self._single_process_btn.setText("Processing Pipeline Active...")
         self._single_process_btn.setEnabled(False)
 
+        self._start_workflow_timer(self.MODE_SINGLE)
+
         if self._controller:
             self._controller.start_processing_workflow(self._single_filepath, department_id=dept_id or dept_name)
         else:
+            self._stop_workflow_timer()
+            self._single_prog.setRange(0, 100)
             self._single_prog.setValue(100)
 
     def _start_batch_workflow(self) -> None:
@@ -750,18 +824,22 @@ class UploadPage(QWidget):
             self._batch_status_lbl.show()
             return
 
+        self._batch_prog.setRange(0, 0)
         self._batch_prog.show()
-        self._batch_status_lbl.setText(f"Batch Processing Active for '{dept_name}'...")
+        self._batch_status_lbl.setText(f"Initializing batch processing for '{dept_name}'...")
         self._batch_status_lbl.setStyleSheet("color: #8B9CFF;")
         self._batch_status_lbl.show()
-        self._batch_prog.setValue(5)
 
         self._batch_process_btn.setText("Batch Processing Active...")
         self._batch_process_btn.setEnabled(False)
 
+        self._start_workflow_timer(self.MODE_BATCH)
+
         if self._controller:
             self._controller.start_batch_processing_workflow(self._batch_filepaths, department_id=dept_id or dept_name)
         else:
+            self._stop_workflow_timer()
+            self._batch_prog.setRange(0, 100)
             self._batch_prog.setValue(100)
 
     def _start_active_workflow(self) -> None:
@@ -774,15 +852,29 @@ class UploadPage(QWidget):
     # ── Workflow Signals Slots ────────────────────────────────────────────────
 
     def _on_workflow_step(self, step_snapshot) -> None:
-        self._single_prog.setValue(step_snapshot.progress_percentage)
+        pct = step_snapshot.progress_percentage
+        self._current_progress_pct = pct
+        if pct > 0:
+            self._single_prog.setRange(0, 100)
+            self._single_prog.setValue(pct)
+        else:
+            self._single_prog.setRange(0, 0)
+
         self._single_status_lbl.setText(f"{step_snapshot.step_name}: {step_snapshot.message}")
         QApplication.processEvents()
 
     def _on_workflow_completed(self, result_dto) -> None:
+        self._stop_workflow_timer()
+        self._single_prog.setRange(0, 100)
         self._single_prog.setValue(100)
-        self._single_status_lbl.setText(f"✓ Complete in {result_dto.processing_duration_seconds}s! Saved to DB.")
+        dur = getattr(result_dto, "processing_duration_seconds", 0.0)
+        self._single_status_lbl.setText(f"✓ Complete in {dur:.1f}s! Saved to DB.")
         self._single_status_lbl.setStyleSheet("color: #4ADE80;")
         self._single_status_lbl.show()
+
+        el_min, el_sec = divmod(int(dur), 60)
+        self._single_timer_lbl.setText(f"⏱ Total Time: {el_min:02d}:{el_sec:02d}")
+        self._single_timer_lbl.show()
 
         self._single_process_btn.setText("  View PDF Drawing ➔  ")
         self._single_process_btn.setEnabled(True)
@@ -798,25 +890,37 @@ class UploadPage(QWidget):
 
     def _on_batch_workflow_step(self, batch_snapshot) -> None:
         pct = batch_snapshot.overall_progress_percentage
+        self._current_progress_pct = pct
         idx = batch_snapshot.current_file_index
         total = batch_snapshot.total_files
         fname = batch_snapshot.current_file_name
         step_name = batch_snapshot.step_snapshot.step_name
 
-        self._batch_prog.setValue(pct)
+        if pct > 0:
+            self._batch_prog.setRange(0, 100)
+            self._batch_prog.setValue(pct)
+        else:
+            self._batch_prog.setRange(0, 0)
+
         self._batch_status_lbl.setText(f"[{idx}/{total}] {fname} — {step_name} ({pct}%)")
         QApplication.processEvents()
 
     def _on_batch_workflow_completed(self, batch_result_dto) -> None:
+        self._stop_workflow_timer()
+        self._batch_prog.setRange(0, 100)
         self._batch_prog.setValue(100)
-        succ = batch_result_dto.successful_files_count
-        tot = batch_result_dto.total_files_processed
-        dur = batch_result_dto.total_duration_seconds
-        cmts = batch_result_dto.total_comments_found
+        succ = getattr(batch_result_dto, "successful_files_count", 0)
+        tot = getattr(batch_result_dto, "total_files_processed", 0)
+        dur = getattr(batch_result_dto, "total_duration_seconds", 0.0)
+        cmts = getattr(batch_result_dto, "total_comments_found", 0)
 
-        self._batch_status_lbl.setText(f"✓ Batch Complete! {succ}/{tot} processed ({cmts} comments, {dur}s)")
+        self._batch_status_lbl.setText(f"✓ Batch Complete! {succ}/{tot} processed ({cmts} comments, {dur:.1f}s)")
         self._batch_status_lbl.setStyleSheet("color: #4ADE80;")
         self._batch_status_lbl.show()
+
+        el_min, el_sec = divmod(int(dur), 60)
+        self._batch_timer_lbl.setText(f"⏱ Total Time: {el_min:02d}:{el_sec:02d}")
+        self._batch_timer_lbl.show()
 
         self._batch_process_btn.setText("  View Processed Drawings ➔  ")
         self._batch_process_btn.setEnabled(True)
@@ -834,14 +938,26 @@ class UploadPage(QWidget):
         self.open_viewer_requested.emit()
 
     def _on_doc_error(self, error_msg: str) -> None:
-        self._single_prog.hide()
-        self._batch_prog.hide()
-        self._single_status_lbl.setText(f"❌ {error_msg}")
-        self._batch_status_lbl.setText(f"❌ {error_msg}")
-        self._single_status_lbl.setStyleSheet("color: #F87171;")
-        self._batch_status_lbl.setStyleSheet("color: #F87171;")
-        self._single_process_btn.setText("Processing Failed")
-        self._batch_process_btn.setText("Processing Failed")
+        self._stop_workflow_timer()
+        if self._active_workflow_mode == self.MODE_SINGLE:
+            self._single_prog.setRange(0, 100)
+            self._single_status_lbl.setText(f"❌ {error_msg}")
+            self._single_status_lbl.setStyleSheet("color: #F87171;")
+            self._single_process_btn.setText("Processing Failed")
+        elif self._active_workflow_mode == self.MODE_BATCH:
+            self._batch_prog.setRange(0, 100)
+            self._batch_status_lbl.setText(f"❌ {error_msg}")
+            self._batch_status_lbl.setStyleSheet("color: #F87171;")
+            self._batch_process_btn.setText("Processing Failed")
+        else:
+            self._single_prog.hide()
+            self._batch_prog.hide()
+            self._single_status_lbl.setText(f"❌ {error_msg}")
+            self._batch_status_lbl.setText(f"❌ {error_msg}")
+            self._single_status_lbl.setStyleSheet("color: #F87171;")
+            self._batch_status_lbl.setStyleSheet("color: #F87171;")
+            self._single_process_btn.setText("Processing Failed")
+            self._batch_process_btn.setText("Processing Failed")
 
     def _show_recent(self) -> None:
         menu = QMenu(self)
