@@ -130,6 +130,8 @@ $RECYCLE.BIN/
 *.rej
 *~
 exports/
+data/drawings/
+data/exports/
 
 # Dataset - Raw drawings folder (large PDF files)
 dataset/raw_drawings/

@@ -79,6 +79,7 @@ class ProcessingWorkflowEngine:
         file_path: Path,
         progress_callback: Optional[Callable[[WorkflowStepDTO], None]] = None,
         department_id: Optional[str] = None,
+        project_id: Optional[str] = None,
     ) -> WorkflowResultDTO:
         """
         Executes complete multi-step processing workflow for an engineering drawing PDF.
@@ -87,6 +88,7 @@ class ProcessingWorkflowEngine:
             file_path: Path to drawing PDF file.
             progress_callback: Optional callback function receiving WorkflowStepDTO snapshots.
             department_id: Optional engineering department ID selected during upload.
+            project_id: Optional project ID to associate drawing and run with.
 
         Returns:
             WorkflowResultDTO: Summary result of completed processing pipeline.
@@ -97,13 +99,14 @@ class ProcessingWorkflowEngine:
         start_time = time.time()
         path = Path(file_path).resolve()
         original_file_name = path.name
-        logger.info(f"Starting processing workflow execution for: {original_file_name} (department_id={department_id})")
+        logger.info(f"Starting processing workflow execution for: {original_file_name} (department_id={department_id}, project_id={project_id})")
 
         run_record = None
         if hasattr(self, "processing_run_repo") and self.processing_run_repo:
             try:
                 run_record = self.processing_run_repo.create_processing_run(
                     file_name=original_file_name,
+                    project_id=project_id,
                     status="PROCESSING",
                     started_at=datetime.now(timezone.utc),
                 )
@@ -384,7 +387,7 @@ class ProcessingWorkflowEngine:
             extracted_comments_data = deduped_comments
 
             # Establish drawing ID and effective department before classification
-            db_record = self.drawing_repo.save_drawing_from_dto(doc_dto, department_id=department_id)
+            db_record = self.drawing_repo.save_drawing_from_dto(doc_dto, project_id=project_id, department_id=department_id)
             drawing_id = db_record.get("id", "DWG-000")
             effective_dept_id = db_record.get("department_id") or department_id
             resolved_proj_id = db_record.get("project_id")
@@ -448,7 +451,8 @@ class ProcessingWorkflowEngine:
                         p_num = c_item.get("page_number", 1)
                         page_counters[p_num] = page_counters.get(p_num, 0) + 1
                         seq = page_counters[p_num]
-                        assigned_cid = f"CMT-P{p_num}-{seq:02d}"
+                        dwg_suffix = drawing_id.replace("DWG-", "")[:6] if drawing_id else uuid.uuid4().hex[:6].upper()
+                        assigned_cid = f"CMT-{dwg_suffix}-P{p_num}-{seq:02d}"
 
                         conf = c_item.get("confidence", 0.0)
                         auto_approve = True

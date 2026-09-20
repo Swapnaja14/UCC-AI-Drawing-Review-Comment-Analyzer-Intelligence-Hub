@@ -224,7 +224,7 @@ class DrawingRepository:
                 existing.uploaded_at = datetime.now(timezone.utc)
                 if department_id and not existing.department_id:
                     existing.department_id = department_id
-                if valid_project_id and not existing.project_id:
+                if valid_project_id:
                     existing.project_id = valid_project_id
                 if not Path(existing.file_path).exists() and persistent_path.exists():
                     existing.file_path = str(persistent_path)
@@ -924,9 +924,15 @@ class CommentRepository:
                 )
                 candidate_id = f"CMT-P{page_number}-{count + 1:02d}"
                 if session.get(CommentModel, candidate_id):
-                    dwg_suffix = drawing_id.replace("DWG-", "")[:4] if drawing_id else uuid.uuid4().hex[:4].upper()
-                    candidate_id = f"CMT-P{page_number}-{count + 1:02d}-{dwg_suffix}"
+                    dwg_suffix = drawing_id.replace("DWG-", "")[:6] if drawing_id else uuid.uuid4().hex[:6].upper()
+                    candidate_id = f"CMT-{dwg_suffix}-P{page_number}-{count + 1:02d}"
                 comment_id = candidate_id
+
+            if session.get(CommentModel, comment_id):
+                dwg_suffix = drawing_id.replace("DWG-", "")[:6] if drawing_id else uuid.uuid4().hex[:6].upper()
+                comment_id = f"{comment_id}-{dwg_suffix}"
+                if session.get(CommentModel, comment_id):
+                    comment_id = f"{comment_id}-{uuid.uuid4().hex[:4].upper()}"
 
             comment = CommentModel(
                 id=comment_id,
