@@ -46,6 +46,7 @@ from src.infrastructure.storage.repository import (
     EngineeringDepartmentRepository,
     CategoryRepository,
     ExportHistoryRepository,
+    ProcessingRunRepository,
 )
 from src.core.dtos.pdf_dtos import PDFDocumentDTO, RenderedPageDTO
 from src.core.dtos.auth_dtos import UserDTO, SessionTokenDTO
@@ -300,7 +301,8 @@ class AppController(QObject):
         self.audit_repo      = AuditLogRepository(self.db_engine)
         self.department_repo   = EngineeringDepartmentRepository(self.db_engine)
         self.category_repo     = CategoryRepository(self.db_engine)
-        self.export_history_repo = ExportHistoryRepository(self.db_engine)
+        self.export_history_repo   = ExportHistoryRepository(self.db_engine)
+        self.processing_run_repo   = ProcessingRunRepository(self.db_engine)
 
         # Auth and workflow services that depend on db_engine
         self.auth_service    = AuthService(self.db_engine)
@@ -330,6 +332,7 @@ class AppController(QObject):
             text_cleaning_service=self.text_cleaning_service,
             classification_service=self.classification_service,
             audit_repo=self.audit_repo,
+            processing_run_repo=self.processing_run_repo,
         )
 
         # ── In-session state ──────────────────────────────────────
@@ -984,6 +987,28 @@ class AppController(QObject):
         if hasattr(self, "export_history_repo"):
             return self.export_history_repo.get_recent_exports(limit=limit)
         return []
+
+    def get_processing_history_for_drawing(self, drawing_id: str, limit: int = 50) -> List[Dict[str, Any]]:
+        """Return processing run history for a specific drawing from SQLite."""
+        if hasattr(self, "processing_run_repo") and self.processing_run_repo:
+            return self.processing_run_repo.get_processing_history_for_drawing(drawing_id, limit=limit)
+        return []
+
+    def get_processing_history_for_project(self, project_id: str, limit: int = 50) -> List[Dict[str, Any]]:
+        """Return processing run history for a specific project from SQLite."""
+        if hasattr(self, "processing_run_repo") and self.processing_run_repo:
+            return self.processing_run_repo.get_processing_history_for_project(project_id, limit=limit)
+        return []
+
+    def get_latest_processing_run(
+        self,
+        drawing_id: Optional[str] = None,
+        project_id: Optional[str] = None,
+    ) -> Optional[Dict[str, Any]]:
+        """Return the latest processing run for a drawing or project from SQLite."""
+        if hasattr(self, "processing_run_repo") and self.processing_run_repo:
+            return self.processing_run_repo.get_latest_processing_run(drawing_id=drawing_id, project_id=project_id)
+        return None
 
     def get_export_scope_counts(self) -> Dict[str, Any]:
         """

@@ -384,3 +384,40 @@ class ExportLogModel(Base):
         Index("ix_export_history_drawing_id", "drawing_id"),
     )
 
+
+# ---------------------------------------------------------------------------
+# processing_runs
+# ---------------------------------------------------------------------------
+
+class ProcessingRunModel(Base):
+    """
+    Persistent audit log entry recording processing run execution history.
+    """
+
+    __tablename__ = "processing_runs"
+
+    id                = Column(String(50),  primary_key=True)
+    project_id        = Column(String(50),  ForeignKey("projects.id", ondelete="SET NULL"), nullable=True)
+    drawing_id        = Column(String(50),  ForeignKey("drawings.id", ondelete="SET NULL"), nullable=True)
+    original_filename = Column(String(255), nullable=False)
+    started_at        = Column(DateTime,    nullable=False, default=datetime.utcnow)
+    completed_at      = Column(DateTime,    nullable=True)
+    duration_seconds  = Column(Float,       nullable=False, default=0.0)
+    status            = Column(String(50),  nullable=False, default="QUEUED")
+    # "QUEUED" | "PROCESSING" | "COMPLETED" | "PARTIAL" | "FAILED" | "CANCELLED"
+    error_message     = Column(Text,        nullable=True)
+    created_at        = Column(DateTime,    nullable=False, default=datetime.utcnow)
+    updated_at        = Column(DateTime,    nullable=False, default=datetime.utcnow, onupdate=datetime.utcnow)
+
+    # Relationships
+    drawing = relationship("DrawingModel", foreign_keys=[drawing_id])
+    project = relationship("ProjectModel", foreign_keys=[project_id])
+
+    __table_args__ = (
+        Index("ix_processing_runs_created_at", "created_at"),
+        Index("ix_processing_runs_drawing_id", "drawing_id"),
+        Index("ix_processing_runs_project_id", "project_id"),
+        Index("ix_processing_runs_status",     "status"),
+    )
+
+

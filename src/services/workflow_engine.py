@@ -30,7 +30,12 @@ from src.services.pdf_service import PDFService
 from src.services.annotation_service_enhanced import AnnotationDetectionServiceEnhanced
 from src.services.text_cleaning_service import TextCleaningService
 from src.services.classification_service import ClassificationService
-from src.infrastructure.storage.repository import DrawingRepository, CommentRepository, AuditLogRepository
+from src.infrastructure.storage.repository import (
+    DrawingRepository,
+    CommentRepository,
+    AuditLogRepository,
+    ProcessingRunRepository,
+)
 from src.infrastructure.logging.logger import get_logger
 
 logger = get_logger("WorkflowEngine")
@@ -52,6 +57,7 @@ class ProcessingWorkflowEngine:
         text_cleaning_service: Optional[TextCleaningService] = None,
         classification_service: Optional[ClassificationService] = None,
         audit_repo: Optional[AuditLogRepository] = None,
+        processing_run_repo: Optional[ProcessingRunRepository] = None,
     ) -> None:
         self.file_service = file_service
         self.pdf_service = pdf_service
@@ -61,6 +67,7 @@ class ProcessingWorkflowEngine:
         self.text_cleaning_service = text_cleaning_service or TextCleaningService()
         self.classification_service = classification_service or ClassificationService()
         self.audit_repo = audit_repo
+        self.processing_run_repo = processing_run_repo
         self._current_state = WorkflowState.IDLE
 
     @property
@@ -91,6 +98,17 @@ class ProcessingWorkflowEngine:
         path = Path(file_path).resolve()
         original_file_name = path.name
         logger.info(f"Starting processing workflow execution for: {original_file_name} (department_id={department_id})")
+
+        run_record = None
+        if hasattr(self, "processing_run_repo") and self.processing_run_repo:
+            try:
+                run_record = self.processing_run_repo.create_processing_run(
+                    file_name=original_file_name,
+                    status="PROCESSING",
+                    started_at=datetime.now(timezone.utc),
+                )
+            except Exception as ex_run:
+                logger.warning(f"Could not create processing run record: {ex_run}")
 
         def notify(step_name: str, state: WorkflowState, pct: int, msg: str):
             self._current_state = state
@@ -369,6 +387,17 @@ class ProcessingWorkflowEngine:
             db_record = self.drawing_repo.save_drawing_from_dto(doc_dto, department_id=department_id)
             drawing_id = db_record.get("id", "DWG-000")
             effective_dept_id = db_record.get("department_id") or department_id
+            resolved_proj_id = db_record.get("project_id")
+
+            if run_record and self.processing_run_repo:
+                try:
+                    self.processing_run_repo.update_processing_run(
+                        run_id=run_record["id"],
+                        drawing_id=drawing_id,
+                        project_id=resolved_proj_id,
+                    )
+                except Exception as ex_upd:
+                    logger.warning(f"Could not update processing run IDs: {ex_upd}")
 
             # ── Step 5: Batched AI Category Classification ─────────
             notify("AI Classification", WorkflowState.AI_CLASSIFYING, 90, f"Classifying review comments with AI.")
@@ -469,6 +498,19 @@ class ProcessingWorkflowEngine:
             total_saved = len(extracted_comments_data)
             notify("Workflow Complete", WorkflowState.COMPLETED, 100, f"Successfully processed '{original_file_name}' in {duration}s.")
 
+            if run_record and self.processing_run_repo:
+                try:
+                    self.processing_run_repo.update_processing_run(
+                        run_id=run_record["id"],
+                        status="COMPLETED",
+                        completed_at=datetime.now(timezone.utc),
+                        duration_seconds=duration,
+                        drawing_id=drawing_id,
+                        project_id=resolved_proj_id,
+                    )
+                except Exception as ex_comp:
+                    logger.warning(f"Could not complete processing run: {ex_comp}")
+
             return WorkflowResultDTO(
                 drawing_id=drawing_id,
                 file_name=original_file_name,
@@ -482,7 +524,19 @@ class ProcessingWorkflowEngine:
 
         except Exception as e:
             self._current_state = WorkflowState.FAILED
-            err_msg = f"Workflow failed for '{path.name}': {e}"
+            duration = round(time.time() - start_time, 2)
+            if run_record and self.processing_run_repo:
+                try:
+                    self.processing_run_repo.update_processing_run(
+                        run_id=run_record["id"],
+                        status="FAILED",
+                        completed_at=datetime.now(timezone.utc),
+                        duration_seconds=duration,
+                        error_message=str(e),
+                    )
+                except Exception as ex_fail:
+                    logger.warning(f"Could not record failed processing run: {ex_fail}")
+            err_msg = f"Workflow failed for '{original_file_name}': {e}"
             logger.error(err_msg)
             notify("Workflow Failure", WorkflowState.FAILED, 0, err_msg)
             raise WorkflowProcessingError(err_msg) from e

@@ -30,6 +30,7 @@ from src.infrastructure.storage.models import (
     UserModel,
     AuditLogModel,
     ExportLogModel,
+    ProcessingRunModel,
 )
 
 logger = get_logger("DatabaseRepository")
@@ -1385,8 +1386,148 @@ class ExportHistoryRepository:
 
 
 # ---------------------------------------------------------------------------
+# ProcessingRunRepository
+# ---------------------------------------------------------------------------
+
+class ProcessingRunRepository:
+    """Persistence and query operations for Processing Run history records."""
+
+    def __init__(self, db_engine: DatabaseEngine) -> None:
+        self._db = db_engine
+
+    def create_processing_run(
+        self,
+        file_name: str,
+        project_id: Optional[str] = None,
+        drawing_id: Optional[str] = None,
+        status: str = "PROCESSING",
+        started_at: Optional[datetime] = None,
+    ) -> Dict[str, Any]:
+        """Create a new persistent processing run audit record."""
+        with self._db.get_session() as session:
+            valid_project_id = None
+            if project_id and session.query(ProjectModel).filter(ProjectModel.id == project_id).first():
+                valid_project_id = project_id
+
+            valid_drawing_id = None
+            if drawing_id and session.query(DrawingModel).filter(DrawingModel.id == drawing_id).first():
+                valid_drawing_id = drawing_id
+
+            now_utc = started_at or datetime.now(timezone.utc)
+            run_entry = ProcessingRunModel(
+                id=f"RUN-{uuid.uuid4().hex[:8].upper()}",
+                project_id=valid_project_id,
+                drawing_id=valid_drawing_id,
+                original_filename=file_name,
+                started_at=now_utc,
+                completed_at=None,
+                duration_seconds=0.0,
+                status=status,
+                error_message=None,
+                created_at=now_utc,
+                updated_at=now_utc,
+            )
+            session.add(run_entry)
+            session.commit()
+            return _processing_run_to_dict(run_entry)
+
+    def update_processing_run(
+        self,
+        run_id: str,
+        status: Optional[str] = None,
+        drawing_id: Optional[str] = None,
+        project_id: Optional[str] = None,
+        completed_at: Optional[datetime] = None,
+        duration_seconds: Optional[float] = None,
+        error_message: Optional[str] = None,
+    ) -> Optional[Dict[str, Any]]:
+        """Update an existing processing run audit record."""
+        with self._db.get_session() as session:
+            run_entry = session.query(ProcessingRunModel).filter(ProcessingRunModel.id == run_id).first()
+            if not run_entry:
+                return None
+
+            if status is not None:
+                run_entry.status = status
+            if drawing_id is not None:
+                if session.query(DrawingModel).filter(DrawingModel.id == drawing_id).first():
+                    run_entry.drawing_id = drawing_id
+            if project_id is not None:
+                if session.query(ProjectModel).filter(ProjectModel.id == project_id).first():
+                    run_entry.project_id = project_id
+            if completed_at is not None:
+                run_entry.completed_at = completed_at
+            if duration_seconds is not None:
+                run_entry.duration_seconds = float(duration_seconds)
+            if error_message is not None:
+                run_entry.error_message = error_message
+
+            run_entry.updated_at = datetime.now(timezone.utc)
+            session.commit()
+            return _processing_run_to_dict(run_entry)
+
+    def get_processing_history_for_drawing(self, drawing_id: str, limit: int = 50) -> List[Dict[str, Any]]:
+        """Return processing runs for a specific drawing ordered newest first."""
+        with self._db.get_session() as session:
+            rows = (
+                session.query(ProcessingRunModel)
+                .filter(ProcessingRunModel.drawing_id == drawing_id)
+                .order_by(ProcessingRunModel.started_at.desc())
+                .limit(limit)
+                .all()
+            )
+            return [_processing_run_to_dict(r) for r in rows]
+
+    def get_processing_history_for_project(self, project_id: str, limit: int = 50) -> List[Dict[str, Any]]:
+        """Return processing runs for a specific project ordered newest first."""
+        with self._db.get_session() as session:
+            rows = (
+                session.query(ProcessingRunModel)
+                .filter(ProcessingRunModel.project_id == project_id)
+                .order_by(ProcessingRunModel.started_at.desc())
+                .limit(limit)
+                .all()
+            )
+            return [_processing_run_to_dict(r) for r in rows]
+
+    def get_latest_processing_run(
+        self,
+        drawing_id: Optional[str] = None,
+        project_id: Optional[str] = None,
+    ) -> Optional[Dict[str, Any]]:
+        """Return the most recent processing run matching optional drawing or project filter."""
+        with self._db.get_session() as session:
+            query = session.query(ProcessingRunModel)
+            if drawing_id:
+                query = query.filter(ProcessingRunModel.drawing_id == drawing_id)
+            if project_id:
+                query = query.filter(ProcessingRunModel.project_id == project_id)
+
+            row = query.order_by(ProcessingRunModel.started_at.desc()).first()
+            return _processing_run_to_dict(row) if row else None
+
+
+# ---------------------------------------------------------------------------
 # Private serialisation helpers
 # ---------------------------------------------------------------------------
+
+def _processing_run_to_dict(r: ProcessingRunModel) -> Dict[str, Any]:
+    return {
+        "id":                r.id,
+        "processing_run_id": r.id,
+        "project_id":        r.project_id,
+        "drawing_id":        r.drawing_id,
+        "file_name":         r.original_filename,
+        "original_filename": r.original_filename,
+        "started_at":        r.started_at.strftime("%Y-%m-%d %H:%M:%S") if r.started_at else "",
+        "completed_at":      r.completed_at.strftime("%Y-%m-%d %H:%M:%S") if r.completed_at else "",
+        "duration_seconds":  r.duration_seconds,
+        "status":            r.status,
+        "error_message":     r.error_message,
+        "created_at":        r.created_at.strftime("%Y-%m-%d %H:%M:%S") if r.created_at else "",
+        "updated_at":        r.updated_at.strftime("%Y-%m-%d %H:%M:%S") if r.updated_at else "",
+    }
+
 
 def _drawing_to_dict(d: DrawingModel) -> Dict[str, Any]:
     return {
