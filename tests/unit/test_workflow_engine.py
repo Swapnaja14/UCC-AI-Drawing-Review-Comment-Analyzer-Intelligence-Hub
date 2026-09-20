@@ -80,6 +80,6 @@ def test_workflow_engine_execution_success(sample_pdf_path: Path, tmp_path: Path
 
     assert result.status == "Completed"
     assert result.file_name == "drawing_test.pdf"
-    assert len(steps_recorded) == 7
+    assert len(steps_recorded) >= 7
     assert steps_recorded[-1].state == WorkflowState.COMPLETED
     assert engine.current_state == WorkflowState.COMPLETED

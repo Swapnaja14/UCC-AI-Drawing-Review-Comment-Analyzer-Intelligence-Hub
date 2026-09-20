@@ -413,7 +413,7 @@ class ExportPage(QWidget):
         """)
         scope_lay = QVBoxLayout(scope_card)
         scope_lay.setContentsMargins(24, 18, 24, 18)
-        scope_lay.setSpacing(12)
+        scope_lay.setSpacing(14)
 
         scope_title = QLabel("Export Scope")
         scope_title.setFont(QFont("Segoe UI Variable", 15, QFont.Weight.Bold))
@@ -425,8 +425,9 @@ class ExportPage(QWidget):
                 color: #CBD5E1;
                 font-size: 14px;
                 font-family: 'Segoe UI';
+                font-weight: bold;
                 spacing: 10px;
-                min-height: 28px;
+                min-height: 24px;
             }
             QRadioButton::indicator {
                 width: 18px;
@@ -445,11 +446,43 @@ class ExportPage(QWidget):
         """
 
         self._scope_grp = QButtonGroup(self)
-        for label in ["Current Loaded Drawing", "Current Project (All Drawings)", "All Historical Comments"]:
-            rb = QRadioButton(label)
-            rb.setStyleSheet(scope_btn_style)
-            self._scope_grp.addButton(rb)
-            scope_lay.addWidget(rb)
+        
+        # Scope 1: Current Loaded Drawing
+        rb1 = QRadioButton("Current Loaded Drawing")
+        rb1.setStyleSheet(scope_btn_style)
+        self._dwg_scope_lbl = QLabel("No drawing is currently loaded")
+        self._dwg_scope_lbl.setStyleSheet("color: #F87171; font-size: 12px; padding-left: 28px;")
+        vbox1 = QVBoxLayout()
+        vbox1.setSpacing(2)
+        vbox1.addWidget(rb1)
+        vbox1.addWidget(self._dwg_scope_lbl)
+        self._scope_grp.addButton(rb1)
+        scope_lay.addLayout(vbox1)
+
+        # Scope 2: Current Project
+        rb2 = QRadioButton("Current Project (All Drawings)")
+        rb2.setStyleSheet(scope_btn_style)
+        self._proj_scope_lbl = QLabel("No project is currently selected")
+        self._proj_scope_lbl.setStyleSheet("color: #FBBF24; font-size: 12px; padding-left: 28px;")
+        vbox2 = QVBoxLayout()
+        vbox2.setSpacing(2)
+        vbox2.addWidget(rb2)
+        vbox2.addWidget(self._proj_scope_lbl)
+        self._scope_grp.addButton(rb2)
+        scope_lay.addLayout(vbox2)
+
+        # Scope 3: All Historical Comments
+        rb3 = QRadioButton("All Historical Comments")
+        rb3.setStyleSheet(scope_btn_style)
+        self._hist_scope_lbl = QLabel("Persisted Database: 0 Projects • 0 Drawings • 0 Comments")
+        self._hist_scope_lbl.setStyleSheet("color: #CBD5E1; font-size: 12px; padding-left: 28px;")
+        vbox3 = QVBoxLayout()
+        vbox3.setSpacing(2)
+        vbox3.addWidget(rb3)
+        vbox3.addWidget(self._hist_scope_lbl)
+        self._scope_grp.addButton(rb3)
+        scope_lay.addLayout(vbox3)
+
         self._scope_grp.buttons()[0].setChecked(True)
         root.addWidget(scope_card)
 
@@ -567,7 +600,89 @@ class ExportPage(QWidget):
         else:
             return f"{size_bytes / (1024 * 1024):.1f} MB"
 
+    def update_scope_labels(self) -> None:
+        """Update scope selection subtext labels with live database counts."""
+        if not self._controller or not hasattr(self._controller, "get_export_scope_counts"):
+            return
+        counts = self._controller.get_export_scope_counts()
+
+        # 1. Loaded Drawing
+        dwg_info = counts.get("drawing", {})
+        if dwg_info.get("has_drawing"):
+            dwg_name = dwg_info.get("drawing_name", "Drawing")
+            cmt_cnt = dwg_info.get("comments_count", 0)
+            self._dwg_scope_lbl.setText(f"Active Drawing: {dwg_name}  •  Comments available: {cmt_cnt}")
+            self._dwg_scope_lbl.setStyleSheet("color: #38BDF8; font-size: 12px; padding-left: 28px;")
+        else:
+            self._dwg_scope_lbl.setText("No drawing is currently loaded")
+            self._dwg_scope_lbl.setStyleSheet("color: #F87171; font-size: 12px; padding-left: 28px;")
+
+        # 2. Current Project
+        proj_info = counts.get("project", {})
+        if proj_info.get("has_project"):
+            pname = proj_info.get("project_name", "Project")
+            dwg_cnt = proj_info.get("drawings_count", 0)
+            cmt_cnt = proj_info.get("comments_count", 0)
+            self._proj_scope_lbl.setText(f"Project: {pname}  •  Drawings: {dwg_cnt}  •  Comments available: {cmt_cnt}")
+            self._proj_scope_lbl.setStyleSheet("color: #4ADE80; font-size: 12px; padding-left: 28px;")
+        else:
+            self._proj_scope_lbl.setText("No project is currently selected")
+            self._proj_scope_lbl.setStyleSheet("color: #FBBF24; font-size: 12px; padding-left: 28px;")
+
+        # 3. All Historical
+        hist_info = counts.get("all", {})
+        p_cnt = hist_info.get("projects_count", 0)
+        d_cnt = hist_info.get("drawings_count", 0)
+        c_cnt = hist_info.get("comments_count", 0)
+        self._hist_scope_lbl.setText(f"Persisted Database: {p_cnt} Projects  •  {d_cnt} Drawings  •  {c_cnt} Total Comments")
+        self._hist_scope_lbl.setStyleSheet("color: #CBD5E1; font-size: 12px; padding-left: 28px;")
+
     def _start_export(self) -> None:
+        if self._controller is None:
+            QMessageBox.critical(
+                self,
+                "Export Error",
+                "Backend controller is not connected.",
+            )
+            return
+
+        scope_text = self._scope_grp.checkedButton().text()
+        drawing_id = getattr(self._controller, "current_drawing_id", None) or None
+        project_id = getattr(self._controller, "current_project_id", None) or None
+
+        if scope_text == "Current Loaded Drawing":
+            scope_val = "drawing"
+            if not drawing_id:
+                QMessageBox.warning(
+                    self,
+                    "Export Validation",
+                    "No drawing is currently loaded.",
+                )
+                return
+        elif scope_text == "Current Project (All Drawings)":
+            scope_val = "project"
+            if not project_id:
+                QMessageBox.warning(
+                    self,
+                    "Export Validation",
+                    "No project is currently selected.",
+                )
+                return
+        else:
+            scope_val = "all"
+
+        # Check comment count for selected scope
+        if hasattr(self._controller, "get_export_scope_counts"):
+            counts = self._controller.get_export_scope_counts()
+            avail_comments = counts.get(scope_val, {}).get("comments_count", 0)
+            if avail_comments == 0:
+                QMessageBox.warning(
+                    self,
+                    "Export Warning",
+                    "No comments available for the selected export scope.",
+                )
+                return
+
         fmt_code, filter_str, ext = self._get_format_details()
         today_str = _date.today().isoformat()
 
@@ -591,31 +706,11 @@ class ExportPage(QWidget):
 
         out_path = Path(file_path)
 
-        if self._controller is None:
-            QMessageBox.critical(
-                self,
-                "Export Error",
-                "Backend controller is not connected.",
-            )
-            return
-
         self._export_btn.setEnabled(False)
         self._prog_bar.show()
         self._prog_bar.setValue(50)
 
         try:
-            scope_text = self._scope_grp.checkedButton().text()
-            drawing_id = getattr(self._controller, "current_drawing_id", None) or None
-            
-            if scope_text == "All Historical Comments":
-                scope_val = "all"
-                drawing_id = None
-            elif scope_text == "Current Project (All Drawings)":
-                scope_val = "project"
-                drawing_id = None
-            else:
-                scope_val = "drawing"
-            
             # Read standard input metadata fields
             contract_no     = self._contract_input.text().strip()
             plant_name      = self._plant_input.text().strip()
@@ -627,7 +722,8 @@ class ExportPage(QWidget):
             config = ExportConfigDTO(
                 output_path=out_path,
                 format=fmt_code,
-                drawing_id=drawing_id,
+                drawing_id=drawing_id if scope_val == "drawing" else None,
+                project_id=project_id if scope_val == "project" else None,
                 scope=scope_val,
                 contract_no=contract_no,
                 plant_name=plant_name,
@@ -643,11 +739,7 @@ class ExportPage(QWidget):
 
             if result and getattr(result, "success", False):
                 self._export_btn.setText("✓  Exported Successfully!")
-                self._prepend_history(
-                    result.output_path,
-                    self._selected_format,
-                    getattr(result, "file_size_bytes", 0),
-                )
+                self._reload_history_table()
                 QTimer.singleShot(
                     2500, lambda: self._export_btn.setText("  ↑  Export Error Tracker Sheet")
                 )
@@ -721,12 +813,34 @@ class ExportPage(QWidget):
         self._hist_model.setHorizontalHeaderLabels(
             ["FILE NAME", "FORMAT", "DATE", "SIZE"]
         )
-        for h in md.EXPORT_HISTORY:
+        table.setModel(self._hist_model)
+        self._reload_history_table()
+
+        hdr = table.horizontalHeader()
+        hdr.setSectionResizeMode(0, QHeaderView.ResizeMode.Stretch)
+        for i in range(1, 4):
+            hdr.setSectionResizeMode(i, QHeaderView.ResizeMode.ResizeToContents)
+        return table
+
+    def _reload_history_table(self) -> None:
+        """Reload persistent export history rows into the table view."""
+        if not hasattr(self, "_hist_model"):
+            return
+        self._hist_model.removeRows(0, self._hist_model.rowCount())
+
+        history_items = []
+        if self._controller and hasattr(self._controller, "get_export_history"):
+            history_items = self._controller.get_export_history()
+
+        if not history_items:
+            history_items = md.EXPORT_HISTORY
+
+        for h in history_items:
             row = [
-                QStandardItem(h["name"]),
-                QStandardItem(h["format"]),
-                QStandardItem(h["date"]),
-                QStandardItem(h["size"]),
+                QStandardItem(h.get("name") or h.get("file_name", "Export")),
+                QStandardItem(h.get("format", "Excel")),
+                QStandardItem(h.get("date") or h.get("created_at", "")),
+                QStandardItem(h.get("size") or "—"),
             ]
             row[0].setFont(QFont("Cascadia Code", 12))
             for item in row:
@@ -735,33 +849,13 @@ class ExportPage(QWidget):
                 )
             self._hist_model.appendRow(row)
 
-        table.setModel(self._hist_model)
-        hdr = table.horizontalHeader()
-        hdr.setSectionResizeMode(0, QHeaderView.ResizeMode.Stretch)
-        for i in range(1, 4):
-            hdr.setSectionResizeMode(i, QHeaderView.ResizeMode.ResizeToContents)
-        return table
-
     def _prepend_history(self, output_path: Path | str, format_name: str, size_bytes: int = 0) -> None:
-        today = _date.today().isoformat()
-        file_name = Path(output_path).name
-        size_str = self._format_size(size_bytes) if size_bytes > 0 else "—"
-        row = [
-            QStandardItem(file_name),
-            QStandardItem(format_name),
-            QStandardItem(today),
-            QStandardItem(size_str),
-        ]
-        row[0].setFont(QFont("Cascadia Code", 12))
-        for item in row:
-            item.setTextAlignment(
-                Qt.AlignmentFlag.AlignVCenter | Qt.AlignmentFlag.AlignLeft
-            )
-            item.setForeground(QColor("#4ADE80"))
-        self._hist_model.insertRow(0, row)
+        self._reload_history_table()
 
     def reload_data(self) -> None:
-        """Auto-refresh Export screen data and auto-select drawing department."""
+        """Auto-refresh Export screen data, scope labels, and history table."""
+        self.update_scope_labels()
+        self._reload_history_table()
         if self._controller and self._controller.current_drawing_id:
             cur_dwg = self._controller.get_current_drawing()
             if cur_dwg:

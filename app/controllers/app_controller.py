@@ -44,7 +44,8 @@ from src.infrastructure.storage.repository import (
     CommentRepository,
     AuditLogRepository,
     EngineeringDepartmentRepository,
-    CategoryRepository
+    CategoryRepository,
+    ExportHistoryRepository,
 )
 from src.core.dtos.pdf_dtos import PDFDocumentDTO, RenderedPageDTO
 from src.core.dtos.auth_dtos import UserDTO, SessionTokenDTO
@@ -295,15 +296,22 @@ class AppController(QObject):
         self.project_repo    = ProjectRepository(self.db_engine)
         self.comment_repo    = CommentRepository(self.db_engine)
         self.audit_repo      = AuditLogRepository(self.db_engine)
-        self.department_repo = EngineeringDepartmentRepository(self.db_engine)
-        self.category_repo   = CategoryRepository(self.db_engine)
+        self.department_repo   = EngineeringDepartmentRepository(self.db_engine)
+        self.category_repo     = CategoryRepository(self.db_engine)
+        self.export_history_repo = ExportHistoryRepository(self.db_engine)
 
         # Auth and workflow services that depend on db_engine
         self.auth_service    = AuthService(self.db_engine)
         
         # ── New Backend Services ──────────────────────────────────
         self.analytics_service      = AnalyticsService(self.db_engine)
-        self.export_service         = ExportService(self.comment_repo, self.project_repo, self.drawing_repo, self.department_repo)
+        self.export_service         = ExportService(
+            self.comment_repo,
+            self.project_repo,
+            self.drawing_repo,
+            self.department_repo,
+            self.export_history_repo,
+        )
         self.verification_service   = VerificationService(self.comment_repo, self.audit_repo)
         self.text_cleaning_service  = TextCleaningService()
         self.classification_service = ClassificationService(category_repo=self.category_repo)
@@ -331,6 +339,7 @@ class AppController(QObject):
         # when querying or saving comments for the active drawing.
         # Value is "" (empty string) when no PDF has been loaded this session.
         self._current_drawing_id: str = ""
+        self._current_project_id: Optional[str] = None
         self.last_annotation_result: Optional[Any] = None
 
         self._current_session: Optional[SessionTokenDTO] = None
@@ -361,6 +370,30 @@ class AppController(QObject):
         comment operations. Do NOT substitute PDF filename for this value.
         """
         return self._current_drawing_id
+
+    @property
+    def current_project_id(self) -> Optional[str]:
+        """
+        The ProjectModel.id primary key for the currently selected or active project.
+        Resolves from _current_project_id, active drawing's project_id, or default DB project.
+        """
+        if self._current_project_id:
+            return self._current_project_id
+        cur_dwg = self.get_current_drawing()
+        if cur_dwg and cur_dwg.get("project_id"):
+            return cur_dwg["project_id"]
+        if hasattr(self, "project_repo"):
+            projects = self.project_repo.get_all_projects()
+            if len(projects) == 1:
+                return projects[0]["id"]
+            for p in projects:
+                if p.get("name") == "Default Project":
+                    return p["id"]
+        return None
+
+    @current_project_id.setter
+    def current_project_id(self, project_id: Optional[str]) -> None:
+        self._current_project_id = project_id
 
     @property
     def current_user(self) -> Optional[UserDTO]:
@@ -944,22 +977,87 @@ class AppController(QObject):
 
     # ── Export Operations ──────────────────────────────────────────
 
+    def get_export_history(self, limit: int = 50) -> List[Dict[str, Any]]:
+        """Return persistent export audit logs from the database."""
+        if hasattr(self, "export_history_repo"):
+            return self.export_history_repo.get_recent_exports(limit=limit)
+        return []
+
+    def get_export_scope_counts(self) -> Dict[str, Any]:
+        """
+        Return live database counts and summary metadata for the three export scopes:
+        - drawing: current drawing name, available comment count
+        - project: project name, total drawings, available comment count
+        - all: total projects, total drawings, total historical comment count
+        """
+        result = {
+            "drawing": {"drawing_name": None, "comments_count": 0, "has_drawing": False},
+            "project": {"project_name": None, "drawings_count": 0, "comments_count": 0, "has_project": False},
+            "all": {"projects_count": 0, "drawings_count": 0, "comments_count": 0},
+        }
+
+        # 1. Current Loaded Drawing
+        if self.current_drawing_id:
+            cur_dwg = self.get_current_drawing()
+            if cur_dwg:
+                fname = cur_dwg.get("file_name", "")
+                dwg_name = fname.rsplit(".", 1)[0] if "." in fname else fname
+                dwg_comments = self.comment_repo.get_comments_for_drawing(self.current_drawing_id)
+                valid_dwg_comments = [c for c in dwg_comments if c.get("status") != "Rejected"]
+                result["drawing"] = {
+                    "drawing_name": dwg_name or self.current_drawing_id,
+                    "comments_count": len(valid_dwg_comments),
+                    "has_drawing": True,
+                }
+
+        # 2. Current Project
+        proj_id = self.current_project_id
+        if proj_id:
+            proj = self.project_repo.get_project_by_id(proj_id)
+            if proj:
+                proj_comments = self.comment_repo.get_comments_for_project(proj_id)
+                valid_proj_comments = [c for c in proj_comments if c.get("status") != "Rejected"]
+                result["project"] = {
+                    "project_name": proj.get("name", "Active Project"),
+                    "drawings_count": proj.get("total_drawings", proj.get("drawings", 0)),
+                    "comments_count": len(valid_proj_comments),
+                    "has_project": True,
+                }
+
+        # 3. All Historical Comments
+        all_projects = self.project_repo.get_all_projects()
+        all_drawings = self.drawing_repo.get_all_drawings()
+        all_comments = self.comment_repo.get_all_historical_comments()
+        valid_all_comments = [c for c in all_comments if c.get("status") != "Rejected"]
+        result["all"] = {
+            "projects_count": len(all_projects),
+            "drawings_count": len(all_drawings),
+            "comments_count": len(valid_all_comments),
+        }
+
+        return result
+
     def export_data(self, config: ExportConfigDTO) -> Any:
         """
         Export drawing review comments to Error Tracker Excel, JSON, or CSV.
-        Auto-populates drawing and project metadata if omitted.
+        Auto-populates drawing and project metadata according to scope.
         """
-        if not config.drawing_id and self._current_drawing_id and getattr(config, 'scope', 'drawing') == 'drawing':
-            config.drawing_id = self._current_drawing_id
+        scope = getattr(config, "scope", "drawing")
 
+        if scope == "drawing":
+            if not config.drawing_id and self.current_drawing_id:
+                config.drawing_id = self.current_drawing_id
+        elif scope == "project":
+            if not config.project_id and self.current_project_id:
+                config.project_id = self.current_project_id
 
         if not config.drawing_no and self._active_doc:
             config.drawing_no = self._active_doc.file_name.rsplit(".", 1)[0]
             if not config.drawing_title:
                 config.drawing_title = getattr(self._active_doc, "title", None) or "Piping & Instrumentation Diagram"
 
-        if not config.designer_name and self._active_session:
-            config.designer_name = self._active_session.display_name or self._active_session.username
+        if not config.designer_name and getattr(self, "_current_session", None) and self._current_session.user:
+            config.designer_name = self._current_session.user.display_name or self._current_session.user.username
 
         return self.export_service.export_drawing_comments(config)
 

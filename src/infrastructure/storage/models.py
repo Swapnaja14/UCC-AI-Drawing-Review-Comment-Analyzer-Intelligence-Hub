@@ -348,3 +348,39 @@ class AuditLogModel(Base):
         Index("ix_audit_logs_timestamp",  "timestamp"),
         Index("ix_audit_logs_user_id",    "user_id"),
     )
+
+
+# ---------------------------------------------------------------------------
+# export_history
+# ---------------------------------------------------------------------------
+
+class ExportLogModel(Base):
+    """
+    Persistent audit log entry recording export events.
+    """
+
+    __tablename__ = "export_history"
+
+    id              = Column(String(50),  primary_key=True)
+    file_name       = Column(String(255), nullable=False)
+    file_path       = Column(Text,        nullable=False)
+    format          = Column(String(50),  nullable=False)   # "Excel" | "CSV" | "JSON"
+    scope           = Column(String(50),  nullable=False)   # "drawing" | "project" | "all"
+    drawing_id      = Column(String(50),  ForeignKey("drawings.id", ondelete="SET NULL"), nullable=True)
+    project_id      = Column(String(50),  ForeignKey("projects.id", ondelete="SET NULL"), nullable=True)
+    department_name = Column(String(100), nullable=True)
+    total_rows      = Column(Integer,     nullable=False, default=0)
+    file_size_bytes = Column(Integer,     nullable=False, default=0)
+    status          = Column(String(50),  nullable=False, default="Success")
+    created_at      = Column(DateTime,    nullable=False, default=datetime.utcnow)
+
+    # Relationships
+    drawing = relationship("DrawingModel", foreign_keys=[drawing_id])
+    project = relationship("ProjectModel", foreign_keys=[project_id])
+
+    __table_args__ = (
+        Index("ix_export_history_created_at", "created_at"),
+        Index("ix_export_history_project_id", "project_id"),
+        Index("ix_export_history_drawing_id", "drawing_id"),
+    )
+

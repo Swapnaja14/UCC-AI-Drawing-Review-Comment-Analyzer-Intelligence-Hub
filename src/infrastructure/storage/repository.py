@@ -29,6 +29,7 @@ from src.infrastructure.storage.models import (
     EngineeringDepartmentModel,
     UserModel,
     AuditLogModel,
+    ExportLogModel,
 )
 
 logger = get_logger("DatabaseRepository")
@@ -936,19 +937,46 @@ class CommentRepository:
             return count
 
     def get_comments_for_drawing(self, drawing_id: str) -> List[Dict[str, Any]]:
+        if not drawing_id:
+            return []
         with self._db.get_session() as session:
             rows = (
                 session.query(CommentModel)
+                .options(selectinload(CommentModel.drawing))
                 .filter(CommentModel.drawing_id == drawing_id)
                 .order_by(CommentModel.page_number, CommentModel.bbox_y0)
                 .all()
             )
             return [_comment_to_dict(c) for c in rows]
 
+    def get_comments_for_project(self, project_id: str) -> List[Dict[str, Any]]:
+        if not project_id:
+            return []
+        with self._db.get_session() as session:
+            total_projects = session.query(ProjectModel).count()
+            proj_row = session.get(ProjectModel, project_id)
+            proj_name = proj_row.name if proj_row else ""
+
+            query = (
+                session.query(CommentModel)
+                .join(DrawingModel, CommentModel.drawing_id == DrawingModel.id)
+                .options(selectinload(CommentModel.drawing))
+            )
+            if total_projects == 1 or proj_name == "Default Project":
+                query = query.filter(
+                    (DrawingModel.project_id == project_id) | (DrawingModel.project_id.is_(None))
+                )
+            else:
+                query = query.filter(DrawingModel.project_id == project_id)
+
+            rows = query.order_by(CommentModel.drawing_id, CommentModel.page_number, CommentModel.bbox_y0).all()
+            return [_comment_to_dict(c) for c in rows]
+
     def get_comments_for_page(self, page_id: str) -> List[Dict[str, Any]]:
         with self._db.get_session() as session:
             rows = (
                 session.query(CommentModel)
+                .options(selectinload(CommentModel.drawing))
                 .filter(CommentModel.page_id == page_id)
                 .order_by(CommentModel.bbox_y0)
                 .all()
@@ -959,10 +987,15 @@ class CommentRepository:
         with self._db.get_session() as session:
             rows = (
                 session.query(CommentModel)
+                .options(selectinload(CommentModel.drawing))
                 .order_by(CommentModel.drawing_id, CommentModel.page_number, CommentModel.bbox_y0)
                 .all()
             )
             return [_comment_to_dict(c) for c in rows]
+
+    def get_all_historical_comments(self) -> List[Dict[str, Any]]:
+        """Return all persisted comments across all projects and drawings in the database."""
+        return self.get_all_comments()
 
     def get_comment_by_id(self, comment_id: str) -> Optional[Dict[str, Any]]:
         with self._db.get_session() as session:
@@ -1244,6 +1277,93 @@ class AuditLogRepository:
 
 
 # ---------------------------------------------------------------------------
+# ExportHistoryRepository
+# ---------------------------------------------------------------------------
+
+class ExportHistoryRepository:
+    """Persistence and query operations for Export History records."""
+
+    def __init__(self, db_engine: DatabaseEngine) -> None:
+        self._db = db_engine
+
+    def create_export_log(
+        self,
+        file_name: str,
+        file_path: str,
+        format_name: str,
+        scope: str,
+        drawing_id: Optional[str] = None,
+        project_id: Optional[str] = None,
+        department_name: Optional[str] = None,
+        total_rows: int = 0,
+        file_size_bytes: int = 0,
+        status: str = "Success",
+    ) -> Dict[str, Any]:
+        """Record an export operation in the database."""
+        with self._db.get_session() as session:
+            log_entry = ExportLogModel(
+                id=f"EXP-{uuid.uuid4().hex[:8].upper()}",
+                file_name=file_name,
+                file_path=str(file_path),
+                format=format_name,
+                scope=scope,
+                drawing_id=drawing_id,
+                project_id=project_id,
+                department_name=department_name,
+                total_rows=total_rows,
+                file_size_bytes=file_size_bytes,
+                status=status,
+                created_at=datetime.now(timezone.utc),
+            )
+            session.add(log_entry)
+            session.commit()
+            return {
+                "id": log_entry.id,
+                "file_name": log_entry.file_name,
+                "file_path": log_entry.file_path,
+                "format": log_entry.format,
+                "scope": log_entry.scope,
+                "drawing_id": log_entry.drawing_id,
+                "project_id": log_entry.project_id,
+                "department_name": log_entry.department_name,
+                "total_rows": log_entry.total_rows,
+                "file_size_bytes": log_entry.file_size_bytes,
+                "status": log_entry.status,
+                "created_at": log_entry.created_at.strftime("%Y-%m-%d %H:%M:%S") if log_entry.created_at else "",
+            }
+
+    def get_recent_exports(self, limit: int = 50) -> List[Dict[str, Any]]:
+        """Return the most recent export events ordered newest first."""
+        with self._db.get_session() as session:
+            rows = (
+                session.query(ExportLogModel)
+                .order_by(ExportLogModel.created_at.desc())
+                .limit(limit)
+                .all()
+            )
+            return [
+                {
+                    "id": r.id,
+                    "name": r.file_name,
+                    "file_name": r.file_name,
+                    "file_path": r.file_path,
+                    "format": r.format,
+                    "scope": r.scope,
+                    "drawing_id": r.drawing_id,
+                    "project_id": r.project_id,
+                    "department_name": r.department_name,
+                    "total_rows": r.total_rows,
+                    "size": f"{r.file_size_bytes / 1024:.1f} KB" if r.file_size_bytes < 1048576 else f"{r.file_size_bytes / 1048576:.1f} MB",
+                    "file_size_bytes": r.file_size_bytes,
+                    "status": r.status,
+                    "date": r.created_at.strftime("%Y-%m-%d") if r.created_at else "",
+                    "created_at": r.created_at.strftime("%Y-%m-%d %H:%M:%S") if r.created_at else "",
+                }
+                for r in rows
+            ]
+
+
+# ---------------------------------------------------------------------------
 # Private serialisation helpers
 # ---------------------------------------------------------------------------
 
@@ -1296,9 +1416,22 @@ def _user_to_dict(u: UserModel) -> Dict[str, Any]:
 
 
 def _comment_to_dict(c: CommentModel) -> Dict[str, Any]:
+    dwg_no = ""
+    dwg_title = ""
+    proj_id = ""
+    if hasattr(c, "drawing") and c.drawing:
+        fname = c.drawing.file_name or ""
+        dwg_no = fname.rsplit(".", 1)[0] if "." in fname else fname
+        dwg_title = c.drawing.title or ""
+        proj_id = c.drawing.project_id or ""
+
     return {
         "id":                   c.id,
         "drawing_id":           c.drawing_id,
+        "drawing_no":           dwg_no or c.drawing_id,
+        "drawing_number":       dwg_no or c.drawing_id,
+        "drawing_title":        dwg_title,
+        "project_id":           proj_id,
         "page_id":              c.page_id,
         "page_number":          c.page_number,
         "raw_text":             c.raw_text,

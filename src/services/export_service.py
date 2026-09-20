@@ -3,6 +3,7 @@ import csv
 import os
 from typing import List, Dict, Any, Optional
 from datetime import datetime, date
+from pathlib import Path
 
 from src.core.dtos.export_dtos import ExportConfigDTO, ExportResultDTO, ExportFormat
 from src.infrastructure.storage.repository import (
@@ -10,6 +11,7 @@ from src.infrastructure.storage.repository import (
     ProjectRepository,
     DrawingRepository,
     EngineeringDepartmentRepository,
+    ExportHistoryRepository,
 )
 from src.infrastructure.logging.logger import get_logger
 
@@ -37,17 +39,30 @@ class ExportService:
         project_repo: Optional[ProjectRepository] = None,
         drawing_repo: Optional[DrawingRepository] = None,
         department_repo: Optional[EngineeringDepartmentRepository] = None,
+        export_history_repo: Optional[ExportHistoryRepository] = None,
     ):
         self.comment_repo = comment_repo
         self.project_repo = project_repo
         self.drawing_repo = drawing_repo
         self.department_repo = department_repo
+        self.export_history_repo = export_history_repo
 
     def export_drawing_comments(self, config: ExportConfigDTO) -> ExportResultDTO:
         """Export review comments to the requested format (Excel, JSON, or CSV)."""
         try:
-            if getattr(config, 'scope', 'drawing') in ['all', 'project']:
-                comments = self.comment_repo.get_all_comments()
+            scope_val = getattr(config, 'scope', 'drawing')
+            if scope_val == 'all':
+                if hasattr(self.comment_repo, 'get_all_historical_comments'):
+                    comments = self.comment_repo.get_all_historical_comments()
+                else:
+                    comments = self.comment_repo.get_all_comments()
+            elif scope_val == 'project':
+                if getattr(config, 'project_id', None) and hasattr(self.comment_repo, 'get_comments_for_project'):
+                    comments = self.comment_repo.get_comments_for_project(config.project_id)
+                elif hasattr(self.comment_repo, 'get_all_historical_comments'):
+                    comments = self.comment_repo.get_all_historical_comments()
+                else:
+                    comments = self.comment_repo.get_all_comments()
             elif config.drawing_id:
                 comments = self.comment_repo.get_comments_for_drawing(config.drawing_id)
             else:
@@ -62,13 +77,13 @@ class ExportService:
             self._enrich_config_metadata(config)
 
             if config.format == ExportFormat.EXCEL:
-                return self._export_to_excel(comments, config)
+                result = self._export_to_excel(comments, config)
             elif config.format == ExportFormat.JSON:
-                return self._export_to_json(comments, config)
+                result = self._export_to_json(comments, config)
             elif config.format == ExportFormat.CSV:
-                return self._export_to_csv(comments, config)
+                result = self._export_to_csv(comments, config)
             else:
-                return ExportResultDTO(
+                result = ExportResultDTO(
                     output_path=config.output_path,
                     format=config.format,
                     total_rows=0,
@@ -77,6 +92,26 @@ class ExportService:
                     success=False,
                     error_message=f"Unsupported format: {config.format}"
                 )
+
+            if result and result.success and self.export_history_repo:
+                try:
+                    format_label = "Excel" if config.format == ExportFormat.EXCEL else ("CSV" if config.format == ExportFormat.CSV else "JSON")
+                    self.export_history_repo.create_export_log(
+                        file_name=Path(config.output_path).name,
+                        file_path=str(config.output_path),
+                        format_name=format_label,
+                        scope=scope_val,
+                        drawing_id=config.drawing_id,
+                        project_id=getattr(config, "project_id", None),
+                        department_name=config.department_name,
+                        total_rows=result.total_rows,
+                        file_size_bytes=result.file_size_bytes,
+                        status="Success",
+                    )
+                except Exception as ex_hist:
+                    logger.warning(f"Could not record export history event: {ex_hist}")
+
+            return result
         except Exception as e:
             logger.error(f"Export failed: {str(e)}")
             return ExportResultDTO(
@@ -370,6 +405,8 @@ class ExportService:
                 desc = comment.get('cleaned_text') or comment.get('raw_text') or ""
                 cat  = comment.get('category_name') or comment.get('category') or "Uncategorized"
                 reviewer = comment.get('reviewer_id') or designer_val
+                cmt_dwg_no = comment.get('drawing_no') or comment.get('drawing_number') or drawing_no or (comment.get('drawing_id') or "")
+                cmt_dwg_ttl = comment.get('drawing_title') or drawing_ttl
 
                 row_data = [
                     (1, date_val, ALIGN_CENTER),
@@ -377,8 +414,8 @@ class ExportService:
                     (3, plant_val, ALIGN_LEFT),
                     (4, epod_val, ALIGN_CENTER),
                     (5, reviewer, ALIGN_LEFT),
-                    (6, drawing_no, ALIGN_CENTER),
-                    (7, drawing_ttl, ALIGN_LEFT),
+                    (6, cmt_dwg_no, ALIGN_CENTER),
+                    (7, cmt_dwg_ttl, ALIGN_LEFT),
                     (8, desc, ALIGN_LEFT),
                     (9, cat, ALIGN_LEFT),
                 ]
@@ -481,14 +518,16 @@ class ExportService:
                 cat  = comment.get('category_name') or comment.get('category') or "Uncategorized"
                 dept = comment.get('department_name') or comment.get('department') or config.department_name or "Unassigned"
                 reviewer = comment.get('reviewer_id') or designer_val
+                cmt_dwg_no = comment.get('drawing_no') or comment.get('drawing_number') or drawing_no or (comment.get('drawing_id') or "")
+                cmt_dwg_ttl = comment.get('drawing_title') or drawing_ttl
                 writer.writerow([
                     date_val,
                     contract_val,
                     plant_val,
                     epod_val,
                     reviewer,
-                    drawing_no,
-                    drawing_ttl,
+                    cmt_dwg_no,
+                    cmt_dwg_ttl,
                     desc,
                     cat,
                     dept,
