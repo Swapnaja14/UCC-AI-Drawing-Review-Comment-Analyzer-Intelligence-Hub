@@ -1,9 +1,10 @@
 """
-tests/unit/test_export_scopes.py — Test suite for Export Scopes and persistent Export History.
+tests/unit/test_export_scopes.py — Test suite for Export Scopes, distinct Excel templates, and persistent Export History.
 """
 
 import pytest
 from pathlib import Path
+import openpyxl
 
 from src.core.dtos.export_dtos import ExportConfigDTO, ExportFormat
 from src.infrastructure.storage.repository import (
@@ -15,7 +16,6 @@ from src.infrastructure.storage.repository import (
     ExportHistoryRepository,
 )
 from src.services.export_service import ExportService
-from app.controllers.app_controller import AppController
 
 
 @pytest.fixture
@@ -31,7 +31,7 @@ def test_setup(db_engine):
     Setup database with:
     Project A:
         Drawing A1 -> 2 comments (Piping Engineering & Electrical Engineering)
-        Drawing A2 -> 3 comments (Piping Engineering & Structural)
+        Drawing A2 -> 3 comments (Piping Engineering & Standards/Technical)
     Project B:
         Drawing B1 -> 4 comments (GPD & System Engineering)
 
@@ -53,7 +53,6 @@ def test_setup(db_engine):
     gpd_dept = dept_repo.get_or_create_department("GPD")
 
     # 2. Drawings
-    # Drawing A1
     with db_engine.get_session() as session:
         from src.infrastructure.storage.models import DrawingModel
         dwg_a1_model = DrawingModel(
@@ -227,7 +226,7 @@ def test_4_all_historical_comments_scope(test_setup, tmp_path):
 
 
 def test_5_no_current_drawing_graceful(test_setup, tmp_path):
-    """TEST 5: No current drawing -> Current Loaded Drawing export returns zero rows."""
+    """TEST 5: No current drawing -> Current Loaded Drawing export rejects missing drawing_id."""
     service = ExportService(test_setup["cmt_repo"], test_setup["proj_repo"], test_setup["dwg_repo"])
     out_file = tmp_path / "no_dwg_export.csv"
     config = ExportConfigDTO(
@@ -237,12 +236,12 @@ def test_5_no_current_drawing_graceful(test_setup, tmp_path):
         scope="drawing",
     )
     res = service.export_drawing_comments(config)
-    assert res.success is True
-    assert res.total_rows == 0
+    assert res.success is False
+    assert "No drawing is currently loaded" in res.error_message
 
 
-def test_6_no_current_project_graceful(test_setup, tmp_path):
-    """TEST 6: No current project -> Current Project export handles empty project_id."""
+def test_6_no_current_project_validation(test_setup, tmp_path):
+    """TEST 6: No current project -> Current Project export fails validation with error message."""
     service = ExportService(test_setup["cmt_repo"], test_setup["proj_repo"], test_setup["dwg_repo"])
     out_file = tmp_path / "no_proj_export.csv"
     config = ExportConfigDTO(
@@ -252,8 +251,8 @@ def test_6_no_current_project_graceful(test_setup, tmp_path):
         scope="project",
     )
     res = service.export_drawing_comments(config)
-    # When project_id is None, it defaults to historical fallback or zero
-    assert res.success is True
+    assert res.success is False
+    assert "No project is currently selected" in res.error_message
 
 
 def test_7_empty_project_validation(test_setup, tmp_path):
@@ -283,7 +282,6 @@ def test_9_classification_independence(test_setup):
     """TEST 9: Engineering Department and Error Classification are separate concepts."""
     comments = test_setup["cmt_repo"].get_comments_for_drawing("DWG-A1")
     for c in comments:
-        # Department and category names are distinct fields
         assert "department_name" in c
         assert "category_name" in c
         assert c["department_name"] != c["category_name"]
@@ -307,7 +305,6 @@ def test_10_persistent_export_history(test_setup, tmp_path):
     res = service.export_drawing_comments(config)
     assert res.success is True
 
-    # Query persistent history
     recent = test_setup["hist_repo"].get_recent_exports()
     assert len(recent) >= 1
     latest = recent[0]
@@ -336,14 +333,12 @@ def test_11_persistent_excel_artifact_creation_and_metadata(test_setup, tmp_path
     res = service.export_drawing_comments(config)
     assert res.success is True
 
-    # Check file artifact exists and is non-empty
     recent = test_setup["hist_repo"].get_recent_exports()
     latest = recent[0]
     artifact_path = Path(latest["file_path"])
     assert artifact_path.exists()
     assert artifact_path.stat().st_size > 0
 
-    # Verify metadata fields stored in database
     assert latest["file_name"] == "persistent_excel_test.xlsx"
     assert latest["format"] == "Excel"
     assert latest["scope"] == "drawing"
@@ -355,57 +350,177 @@ def test_11_persistent_excel_artifact_creation_and_metadata(test_setup, tmp_path
     assert "created_at" in latest and latest["created_at"] != ""
 
 
-def test_12_export_history_scope_retention(test_setup, tmp_path):
-    """TEST 12: Verify correct project/drawing scope is retained in persistent history."""
+def test_12_excel_drawing_scope_template_structure(test_setup, tmp_path):
+    """TEST 12: Inspect openpyxl structure for Current Loaded Drawing Excel Template."""
     service = ExportService(
         test_setup["cmt_repo"],
         test_setup["proj_repo"],
         test_setup["dwg_repo"],
         test_setup["dept_repo"],
-        test_setup["hist_repo"],
     )
-    
-    # 1. Drawing Scope
-    dwg_file = tmp_path / "dwg_scope.csv"
-    config_dwg = ExportConfigDTO(
-        output_path=dwg_file,
-        format=ExportFormat.CSV,
-        drawing_id="DWG-A2",
+    out_file = tmp_path / "Drawing_A1_Error_Tracker.xlsx"
+    config = ExportConfigDTO(
+        output_path=out_file,
+        format=ExportFormat.EXCEL,
+        drawing_id="DWG-A1",
         scope="drawing",
+        drawing_no="Drawing_A1",
     )
-    service.export_drawing_comments(config_dwg)
-    
-    # 2. Project Scope
-    proj_id = test_setup["proj_a"]["id"]
-    proj_file = tmp_path / "proj_scope.csv"
-    config_proj = ExportConfigDTO(
-        output_path=proj_file,
-        format=ExportFormat.CSV,
-        project_id=proj_id,
+    res = service.export_drawing_comments(config)
+    assert res.success is True
+
+    wb = openpyxl.load_workbook(out_file)
+    sheet_names = wb.sheetnames
+
+    # Primary sheet must be "Drawing Error Tracker"
+    assert "Drawing Error Tracker" in sheet_names
+    ws = wb["Drawing Error Tracker"]
+
+    # Top header title banner check
+    banner_val = ws.cell(row=1, column=1).value
+    assert "CURRENT LOADED DRAWING" in banner_val
+
+    # Metadata block check (Drawing ID)
+    dwg_id_val = ws.cell(row=4, column=5).value
+    assert dwg_id_val == "DWG-A1"
+
+    # Comment table header check
+    table_hdr = ws.cell(row=8, column=1).value
+    assert table_hdr == "Comment ID"
+
+    # Comment data rows count (A1 has 2 comments)
+    row9_cmt_id = ws.cell(row=9, column=1).value
+    row10_cmt_id = ws.cell(row=10, column=1).value
+    assert row9_cmt_id is not None
+    assert row10_cmt_id is not None
+    assert ws.cell(row=11, column=1).value is None  # Exactly 2 data rows
+
+
+def test_13_excel_project_scope_template_structure(test_setup, tmp_path):
+    """TEST 13: Inspect openpyxl structure for Current Project Excel Template."""
+    service = ExportService(
+        test_setup["cmt_repo"],
+        test_setup["proj_repo"],
+        test_setup["dwg_repo"],
+        test_setup["dept_repo"],
+    )
+    out_file = tmp_path / "Project_A_Project_Error_Tracker.xlsx"
+    config = ExportConfigDTO(
+        output_path=out_file,
+        format=ExportFormat.EXCEL,
+        project_id=test_setup["proj_a"]["id"],
         scope="project",
     )
-    service.export_drawing_comments(config_proj)
+    res = service.export_drawing_comments(config)
+    assert res.success is True
 
-    recent = test_setup["hist_repo"].get_recent_exports(limit=2)
-    latest_proj = recent[0]
-    latest_dwg = recent[1]
+    wb = openpyxl.load_workbook(out_file)
+    sheet_names = wb.sheetnames
 
-    assert latest_proj["scope"] == "project"
-    assert latest_proj["project_id"] == proj_id
+    # Must contain Project Summary and All Drawing Comments
+    assert "Project Summary" in sheet_names
+    assert "All Drawing Comments" in sheet_names
 
-    assert latest_dwg["scope"] == "drawing"
-    assert latest_dwg["drawing_id"] == "DWG-A2"
+    ws_sum = wb["Project Summary"]
+    banner_val = ws_sum.cell(row=1, column=1).value
+    assert "PROJECT ERROR TRACKER SUMMARY" in banner_val
+
+    ws_cmts = wb["All Drawing Comments"]
+    hdr1 = ws_cmts.cell(row=1, column=1).value
+    assert hdr1 == "Drawing ID"
+
+    # Project A comments total = 5 (A1:2 + A2:3). Row 1 is header, so rows 2-6 must be data
+    data_rows = 0
+    for r in range(2, 20):
+        if ws_cmts.cell(row=r, column=1).value is not None:
+            data_rows += 1
+    assert data_rows == 5
 
 
-def test_13_missing_artifact_handled_gracefully(tmp_path):
-    """TEST 13: Handle missing persistent artifact gracefully without crashing."""
-    missing_path = tmp_path / "deleted_export.xlsx"
-    assert not missing_path.exists()
+def test_14_excel_historical_scope_template_structure(test_setup, tmp_path):
+    """TEST 14: Inspect openpyxl structure for All Historical Comments Excel Template."""
+    service = ExportService(
+        test_setup["cmt_repo"],
+        test_setup["proj_repo"],
+        test_setup["dwg_repo"],
+        test_setup["dept_repo"],
+    )
+    out_file = tmp_path / "Historical_Error_Tracker.xlsx"
+    config = ExportConfigDTO(
+        output_path=out_file,
+        format=ExportFormat.EXCEL,
+        scope="all",
+    )
+    res = service.export_drawing_comments(config)
+    assert res.success is True
 
-    # Simulate UI check when opening history item
-    exists = missing_path.exists()
-    assert exists is False
-    # Verify path check does not raise uncaught error
-    status_msg = f"File missing at {missing_path}" if not exists else "File ready"
-    assert "File missing" in status_msg
+    wb = openpyxl.load_workbook(out_file)
+    sheet_names = wb.sheetnames
 
+    # Must contain Historical Summary and Historical Comments
+    assert "Historical Summary" in sheet_names
+    assert "Historical Comments" in sheet_names
+
+    ws_sum = wb["Historical Summary"]
+    banner_val = ws_sum.cell(row=1, column=1).value
+    assert "ALL HISTORICAL COMMENTS" in banner_val
+
+    ws_cmts = wb["Historical Comments"]
+    hdr1 = ws_cmts.cell(row=1, column=1).value
+    assert hdr1 == "Project ID"
+
+    # All historical comments total = 9 (A1:2 + A2:3 + B1:4).
+    data_rows = 0
+    for r in range(2, 20):
+        if ws_cmts.cell(row=r, column=1).value is not None:
+            data_rows += 1
+    assert data_rows == 9
+
+
+def test_15_distinct_templates_and_datasets_proof(test_setup, tmp_path):
+    """TEST 15: Prove Current Drawing != Current Project != All Historical in dataset AND template structure."""
+    service = ExportService(
+        test_setup["cmt_repo"],
+        test_setup["proj_repo"],
+        test_setup["dwg_repo"],
+        test_setup["dept_repo"],
+    )
+
+    # 1. Drawing Scope (A1)
+    file_dwg = tmp_path / "drawing_scope.xlsx"
+    res_dwg = service.export_drawing_comments(ExportConfigDTO(
+        output_path=file_dwg, format=ExportFormat.EXCEL, drawing_id="DWG-A1", scope="drawing"
+    ))
+    assert res_dwg.total_rows == 2
+
+    # 2. Project Scope (Proj A)
+    file_proj = tmp_path / "project_scope.xlsx"
+    res_proj = service.export_drawing_comments(ExportConfigDTO(
+        output_path=file_proj, format=ExportFormat.EXCEL, project_id=test_setup["proj_a"]["id"], scope="project"
+    ))
+    assert res_proj.total_rows == 5
+
+    # 3. All Historical Scope
+    file_hist = tmp_path / "historical_scope.xlsx"
+    res_hist = service.export_drawing_comments(ExportConfigDTO(
+        output_path=file_hist, format=ExportFormat.EXCEL, scope="all"
+    ))
+    assert res_hist.total_rows == 9
+
+    # Verify DATASET inequality
+    assert res_dwg.total_rows != res_proj.total_rows
+    assert res_proj.total_rows != res_hist.total_rows
+    assert res_dwg.total_rows != res_hist.total_rows
+
+    # Verify TEMPLATE STRUCTURE inequality
+    wb_dwg = openpyxl.load_workbook(file_dwg)
+    wb_proj = openpyxl.load_workbook(file_proj)
+    wb_hist = openpyxl.load_workbook(file_hist)
+
+    assert "Drawing Error Tracker" in wb_dwg.sheetnames
+    assert "Project Summary" in wb_proj.sheetnames
+    assert "Historical Summary" in wb_hist.sheetnames
+
+    assert "Drawing Error Tracker" not in wb_proj.sheetnames
+    assert "Project Summary" not in wb_hist.sheetnames
+    assert "Historical Summary" not in wb_dwg.sheetnames

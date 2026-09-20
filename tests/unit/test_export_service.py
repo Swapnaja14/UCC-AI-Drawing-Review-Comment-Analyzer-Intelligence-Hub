@@ -160,7 +160,7 @@ def test_error_tracker_excel_structure_and_styling(tmp_path):
     assert res.file_size_bytes > 0
     assert res.total_rows == 2
     # Executive Summary + 7 standard UCC departments
-    assert res.total_sheets == 8
+    assert res.total_sheets == 9
 
     # Verify Excel internal cell structure and headers
     wb = openpyxl.load_workbook(out_file)
@@ -168,6 +168,7 @@ def test_error_tracker_excel_structure_and_styling(tmp_path):
     # 1. Verify sheet names
     expected_sheets = [
         "Executive Summary",
+        "Drawing Error Tracker",
         "Electrical Engineering",
         "GPD",
         "Pipe Support Engineering",

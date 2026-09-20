@@ -686,13 +686,33 @@ class ExportPage(QWidget):
         fmt_code, filter_str, ext = self._get_format_details()
         today_str = _date.today().isoformat()
 
-        drawing_no = "Error_Tracker"
-        if self._controller and getattr(self._controller, "current_document", None):
-            doc = self._controller.current_document
-            if hasattr(doc, "file_name") and doc.file_name:
-                drawing_no = doc.file_name.rsplit(".", 1)[0]
-
-        default_filename = f"{drawing_no}_Error_Tracker_{today_str}{ext}"
+        if scope_val == "drawing":
+            drawing_no = "Drawing"
+            if self._controller and getattr(self._controller, "current_document", None):
+                doc = self._controller.current_document
+                if hasattr(doc, "file_name") and doc.file_name:
+                    drawing_no = doc.file_name.rsplit(".", 1)[0]
+            elif drawing_id and hasattr(self._controller, "drawing_repo"):
+                try:
+                    dwg = self._controller.drawing_repo.get_drawing_by_id(drawing_id)
+                    if dwg and dwg.get("file_name"):
+                        fname = dwg["file_name"]
+                        drawing_no = fname.rsplit(".", 1)[0]
+                except Exception:
+                    pass
+            default_filename = f"{drawing_no}_Error_Tracker_{today_str}{ext}"
+        elif scope_val == "project":
+            proj_name = "Project"
+            if project_id and hasattr(self._controller, "project_repo"):
+                try:
+                    proj = self._controller.project_repo.get_project_by_id(project_id)
+                    if proj and proj.get("name"):
+                        proj_name = proj["name"].replace(" ", "_")
+                except Exception:
+                    pass
+            default_filename = f"{proj_name}_Project_Error_Tracker_{today_str}{ext}"
+        else:
+            default_filename = f"Historical_Error_Tracker_{today_str}{ext}"
 
         file_path, _ = QFileDialog.getSaveFileName(
             self,
@@ -730,7 +750,7 @@ class ExportPage(QWidget):
                 epod_wo_no=epod_wo_no,
                 designer_name=designer_name,
                 date_str=date_str,
-                drawing_no=drawing_no,
+                drawing_no=drawing_no if scope_val == "drawing" else None,
                 department_name=department_name,
             )
 
@@ -747,20 +767,14 @@ class ExportPage(QWidget):
                     2500, lambda: self._export_btn.setEnabled(True)
                 )
                 self._prog_bar.hide()
-
-                QMessageBox.information(
-                    self,
-                    "Export Successful",
-                    f"Successfully generated Error Tracker Sheet with {result.total_rows} row(s) to:\n{result.output_path}",
-                )
             else:
-                err_msg = getattr(result, "error_message", "") if result else "Unknown error"
+                err_msg = getattr(result, "error_message", "Export failed.") if result else "Export failed."
                 self._export_btn.setText("  ↑  Export Error Tracker Sheet")
                 self._export_btn.setEnabled(True)
                 self._prog_bar.hide()
-                QMessageBox.critical(
+                QMessageBox.warning(
                     self,
-                    "Export Failed",
+                    "Export Error",
                     f"Failed to export data to:\n{out_path}\n\nError: {err_msg}",
                 )
         except Exception as e:

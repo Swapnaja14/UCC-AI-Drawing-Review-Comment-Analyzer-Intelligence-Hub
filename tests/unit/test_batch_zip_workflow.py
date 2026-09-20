@@ -367,7 +367,7 @@ def test_16_error_tracker_export_compatibility(
     engine.execute_batch_workflow([sample_zip_archive], department_id=dept_info["id"])
 
     export_cfg = ExportConfigDTO(
-        drawing_id="",
+        scope="all",
         format=ExportFormat.EXCEL,
         output_path=tmp_path / "export_batch.xlsx"
     )
