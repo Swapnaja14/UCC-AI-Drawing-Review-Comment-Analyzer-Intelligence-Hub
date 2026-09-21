@@ -124,6 +124,7 @@ class PdfViewerPage(QWidget):
         self._toolbar.next_page_requested.connect(self._next_page)
         self._toolbar.page_changed.connect(self._goto_page)
         self._toolbar.show_annotations_toggled.connect(self._toggle_annotations)
+        self._toolbar.toggle_sidebar_requested.connect(self.toggle_sidebar)
         root.addWidget(self._toolbar)
 
         # ── Viewer split ──────────────────────────────────────────
@@ -139,10 +140,10 @@ class PdfViewerPage(QWidget):
         sb_lay.setContentsMargins(8, 8, 8, 8)
         sb_lay.setSpacing(6)
 
-        sb_title = QLabel("DRAWINGS BATCH")
-        sb_title.setFont(QFont("Segoe UI Variable", 10, QFont.Weight.Bold))
-        sb_title.setStyleSheet("color: #64748B; letter-spacing: 0.5px;")
-        sb_lay.addWidget(sb_title)
+        self._sb_title = QLabel("PROJECT DRAWINGS")
+        self._sb_title.setFont(QFont("Segoe UI Variable", 10, QFont.Weight.Bold))
+        self._sb_title.setStyleSheet("color: #64748B; letter-spacing: 0.5px;")
+        sb_lay.addWidget(self._sb_title)
 
         self._dwg_list_widget = QListWidget()
         self._dwg_list_widget.setStyleSheet("""
@@ -170,6 +171,8 @@ class PdfViewerPage(QWidget):
         sb_lay.addWidget(self._dwg_list_widget, 1)
 
         viewer_row.addWidget(self._dwg_sidebar)
+        self._sidebar_manually_toggled = False
+        self._dwg_sidebar.hide()
 
         # Canvas
         self._scene = QGraphicsScene()
@@ -252,14 +255,56 @@ class PdfViewerPage(QWidget):
         self._load_page(1)
         self.reload_drawings()
 
+    def set_sidebar_visible(self, visible: bool) -> None:
+        """Set drawing list sidebar visibility and sync toolbar button state."""
+        self._dwg_sidebar.setVisible(visible)
+        self._toolbar.set_sidebar_button_checked(visible)
+
+    def toggle_sidebar(self) -> None:
+        """Toggle drawing list sidebar visibility."""
+        self._sidebar_manually_toggled = True
+        # Note: in Qt, isVisible() is false if parent isn't shown, so not isHidden() gives the widget's own visibility state
+        is_currently_visible = not self._dwg_sidebar.isHidden()
+        self.set_sidebar_visible(not is_currently_visible)
+
+    def apply_context_visibility(self) -> None:
+        """Apply context-aware visibility based on upload mode (Single vs Batch)."""
+        self._sidebar_manually_toggled = False
+        is_batch = getattr(self._controller, "active_upload_mode", "SINGLE") == "BATCH"
+        batch_ids = getattr(self._controller, "current_batch_drawing_ids", [])
+        if is_batch and batch_ids:
+            self.set_sidebar_visible(True)
+        else:
+            self.set_sidebar_visible(False)
+
     def reload_drawings(self) -> None:
-        """Fetch all drawings from controller, populate combo box & sidebar list, and highlight current drawing."""
+        """Fetch drawings from controller, populate combo box & sidebar list, and highlight current drawing."""
         if not self._controller or self._is_updating_dwg_list:
             return
 
         self._is_updating_dwg_list = True
         try:
-            drawings = self._controller.get_all_drawings()
+            is_batch = getattr(self._controller, "active_upload_mode", "SINGLE") == "BATCH"
+            batch_ids = getattr(self._controller, "current_batch_drawing_ids", [])
+
+            if is_batch and batch_ids:
+                drawings = self._controller.get_batch_drawings()
+                if not drawings:
+                    drawings = self._controller.get_all_drawings()
+                    self._sb_title.setText("PROJECT DRAWINGS")
+                    self._dwg_count_lbl.setText(f"{len(drawings)} drawings available")
+                else:
+                    self._sb_title.setText(f"BATCH DRAWINGS ({len(drawings)})")
+                    self._dwg_count_lbl.setText(f"{len(drawings)} batch drawings")
+                if not self._sidebar_manually_toggled:
+                    self.set_sidebar_visible(True)
+            else:
+                drawings = self._controller.get_all_drawings()
+                self._sb_title.setText("PROJECT DRAWINGS")
+                self._dwg_count_lbl.setText(f"{len(drawings)} drawings available")
+                if not self._sidebar_manually_toggled:
+                    self.set_sidebar_visible(False)
+
             self._dwg_combo.blockSignals(True)
             self._dwg_list_widget.blockSignals(True)
 
@@ -286,8 +331,6 @@ class PdfViewerPage(QWidget):
 
                 if dwg_id == curr_id:
                     target_idx = idx
-
-            self._dwg_count_lbl.setText(f"{len(drawings)} drawings available")
 
             if drawings:
                 self._dwg_combo.setCurrentIndex(target_idx)
