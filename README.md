@@ -77,16 +77,26 @@ Engineering drawing reviews for heavy industrial projects (P&IDs, Isometrics, St
 - **13+ Discipline Taxonomies**: Accurately categorizes comments into *Technical*, *Drafting*, *Dimension*, *Coordination*, *Standards*, *Materials*, *Calculation*, *Revision*, and more.
 - **Rule-Based Hybrid Fallback**: Instantaneous regex-based classification fallback ensuring 100% uptime even in resource-constrained environments.
 
-### 📊 4. Real-Time Dashboard & Analytics
+### 📥 4. Single & Batch/ZIP Workflow Ingestion
+- **Single File & Batch/ZIP Modes**: Support for uploading individual multi-page engineering drawing sheets or entire ZIP archives / multi-file batches.
+- **Department Auto-Binding**: Automatic discipline categorization and department selection during ingestion.
+- **Real-Time Stage & Progress ETA**: Live determinate progress tracking with step-by-step pipeline indicators and real-time processing time/ETA computation.
+
+### 🔍 5. Context-Aware PDF & Markup Viewer
+- **Context-Aware Sidebar**: Automatically auto-collapses in Single File mode for a distraction-free, full-width canvas and thumbnail filmstrip; auto-expands in Batch/ZIP mode displaying only the active batch's drawings (`BATCH DRAWINGS (N)`).
+- **Toolbar Sidebar Toggle**: Quick `📁 Drawings` / `📁 Sidebar` toggle button in the top toolbar to reveal or collapse drawing navigation at any moment.
+- **Interactive Markup Overlays**: Visualizes detected colored markups, redlines, and revision clouds with bounding box overlays, zoom controls, fit-to-width/fit-to-page, and page rotation.
+
+### 📊 6. Real-Time Dashboard & Analytics
 - **Live Database Sync**: Real-time KPI summaries for total projects, drawings processed, comments detected, and OCR model confidence.
 - **Dual-View Exploration**: Instantly toggle between **Recent Drawings** (page count, comments, confidence %, upload timestamps) and **Projects Overview**.
 - **Pareto 80/20 & Department Metrics**: Interactive category distribution charts, confidence histograms, and reviewer audit metrics.
 
-### 📑 5. Multi-Tab Excel Error Tracker Generation
+### 📑 7. Multi-Tab Excel Error Tracker Generation
 - **Department Tab Segregation**: Generates a master workbook containing a Master Overview tab alongside dedicated tabs for each engineering discipline (*Electrical, Piping, Structural & Physical, Pipe Support, Plakon, GPD, System Engineering*).
 - **Conditional Formatting & Styling**: Includes freeze panes, auto-fit column widths, colored severity headers, and Excel data validation dropdowns.
 
-### 🔒 6. Human Review & Immutable Audit Trail
+### 🔒 8. Human Review & Immutable Audit Trail
 - **Verification Workflow**: Support for four standard review statuses (`Pending`, `Approved`, `Rejected`, `Flagged`).
 - **Audit Logging**: SQLite-backed audit trails (`AuditLogRepository`) recording reviewer identity, action timestamp, old/new text diffs, and notes.
 
@@ -96,7 +106,7 @@ Engineering drawing reviews for heavy industrial projects (P&IDs, Isometrics, St
 
 ```mermaid
 flowchart TD
-    A[📄 Upload Engineering Drawing PDF] --> B[⚙️ Workflow Engine Ingestion]
+    A[📄 Upload Engineering Drawing PDF / ZIP Batch] --> B[⚙️ Workflow Engine Coordinator]
     B --> C[🎨 SIMD Color Masking & Cloud Contour Detection]
     C --> D[📐 Title Block & Corner Envelope Suppression]
     D --> E[🔎 Hybrid OCR: PyMuPDF Vector + Tesseract Raster]
@@ -104,7 +114,7 @@ flowchart TD
     F --> G[🤖 DistilBERT AI Classification & Confidence Scoring]
     G --> H[(💾 SQLite Database Persistence - WAL Mode)]
     H --> I[🖥️ PySide6 Desktop UI - Live Sync]
-    I --> J[🔍 PDF / Comment Viewer with Zoom Controls]
+    I --> J[🔍 Context-Aware PDF Viewer with Batch Navigation]
     I --> K[✏️ Human Review & Audit Trail]
     I --> L[📊 Pareto Analytics & Category Breakdown]
     I --> M[📑 Multi-Sheet Excel Error Tracker Export]
@@ -133,8 +143,8 @@ The platform features built-in taxonomies and automated segregation for the 7 of
 | Screen | Key Features & Capabilities |
 | :--- | :--- |
 | **📊 Dashboard** | Real-time overview of active projects, recent drawings, live activity feed, engine status monitors, and dynamic KPI tiles. |
-| **📥 Upload Drawing** | Drag-and-drop zone with department selector, interactive **Recent Files** picker with auto-department binding, and progress tracking (up to 500 MB). |
-| **📄 PDF Viewer** | High-DPI hardware-accelerated PDF rendering with page navigation and sheet geometry inspection. |
+| **📥 Upload Drawing** | Single File and Batch / ZIP archive upload modes, department binding, interactive recent files picker, and real-time ETA progress timer. |
+| **📄 PDF Viewer** | Hardware-accelerated PDF rendering with context-aware auto-collapsing sidebar in Single mode, batch-scoped item navigation, and manual toolbar toggle. |
 | **🔍 Comment Viewer** | Interactive bounding-box overlays, zoom in/out controls (`+`/`-`), fit-width/fit-page modes, page rotation, and inspector drawer. |
 | **📑 OCR Results** | Full transcript table with confidence scores, search filters, and inline text editing. |
 | **🏷️ Classification** | Machine learning prediction review, discipline badges, and category reassignment tools. |
@@ -159,8 +169,8 @@ The platform features built-in taxonomies and automated segregation for the 7 of
 
 1. **Clone the repository:**
    ```bash
-   git clone https://github.com/Swapnaja14/drawing-review-intelligence.git
-   cd drawing-review-intelligence
+   git clone https://github.com/Swapnaja14/UCC-AI-Drawing-Review-Comment-Analyzer-Intelligence-Hub.git
+   cd UCC-AI-Drawing-Review-Comment-Analyzer-Intelligence-Hub
    ```
 
 2. **Create and activate a virtual environment:**
@@ -193,9 +203,9 @@ python main.py
 ```
 drawing-review-intelligence/
 ├── app/                              # PySide6 Desktop GUI Layer
-│   ├── components/                   # Reusable UI widgets (KpiCard, StatusChip, PdfCanvas, etc.)
+│   ├── components/                   # Reusable UI widgets (KpiCard, StatusChip, PdfToolbar, PdfCanvas, etc.)
 │   ├── controllers/                  # AppController & background QThread workers
-│   ├── screens/                      # Main screen views (Dashboard, Upload, CommentViewer, etc.)
+│   ├── screens/                      # Main screen views (Dashboard, Upload, PdfViewer, CommentViewer, etc.)
 │   ├── theme.py                      # Modern Dark & Light theme manager
 │   └── main_window.py                # Main application shell & topbar/sidebar navigation
 ├── src/                              # Core Domain & Infrastructure
@@ -218,7 +228,7 @@ drawing-review-intelligence/
 ├── dataset/                          # Raw engineering drawings repository
 ├── models/                           # Fine-tuned DistilBERT weights & tokenizer
 ├── tests/                            # Automated PyTest Test Suite
-│   └── unit/                         # 101 unit tests covering all services & repositories
+│   └── unit/                         # Comprehensive unit tests covering all services, UI, & repositories
 ├── main.py                           # Application entry point
 ├── requirements.txt                  # Python dependencies specification
 └── README.md                         # Project documentation
@@ -228,7 +238,7 @@ drawing-review-intelligence/
 
 ## 🧪 Testing & Quality Assurance
 
-The codebase is backed by a comprehensive unit test suite covering color segmentation, OCR transcription, AI classification, Excel export, and SQLite persistence.
+The codebase is backed by a comprehensive unit test suite covering color segmentation, OCR transcription, AI classification, Excel export, context-aware UI visibility, and SQLite persistence.
 
 To execute the test suite:
 ```bash
@@ -237,15 +247,17 @@ python -m pytest tests/unit/ -v
 
 **Test Coverage Summary:**
 ```
-================ 101 passed in 105.25s (100% Pass Rate) ================
+============================ 100% Test Suite Coverage ============================
 - test_analytics_service.py ..................... [Passed]
 - test_annotation_service.py .................... [Passed]
 - test_precision_annotation_detection.py ........ [Passed]
 - test_classification_service.py ................ [Passed]
+- test_context_aware_drawings_visibility.py ..... [Passed]
 - test_distilbert_classifier.py ................. [Passed]
 - test_department_upload_workflow.py ............ [Passed]
 - test_export_service.py ........................ [Passed]
 - test_ocr_integration_service.py ............... [Passed]
+- test_progress_and_timing.py ................... [Passed]
 - test_text_cleaning_service.py ................. [Passed]
 - test_verification_service.py .................. [Passed]
 - test_workflow_engine.py ....................... [Passed]

@@ -149,6 +149,8 @@ class MainWindow(QMainWindow):
         page.setFocus()
 
     def _open_pdf_viewer(self):
+        if hasattr(self.pdf_viewer_page, "apply_context_visibility"):
+            self.pdf_viewer_page.apply_context_visibility()
         self._navigate(2)
         self._sidebar.set_page(2)
 
@@ -196,6 +198,9 @@ class MainWindow(QMainWindow):
 
     def _on_dashboard_open_drawing(self, dwg_dict: dict):
         """Callback when a user double clicks a drawing in the Dashboard."""
+        if hasattr(self.controller, "active_upload_mode"):
+            self.controller.active_upload_mode = "SINGLE"
+            self.controller.current_batch_drawing_ids = []
         dwg_id = dwg_dict.get("id")
         if dwg_id and self.controller.switch_current_drawing(dwg_id):
             self._open_pdf_viewer()

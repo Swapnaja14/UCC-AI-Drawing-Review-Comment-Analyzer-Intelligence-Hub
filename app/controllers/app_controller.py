@@ -348,6 +348,8 @@ class AppController(QObject):
         self.last_annotation_result: Optional[Any] = None
 
         self._current_session: Optional[SessionTokenDTO] = None
+        self.active_upload_mode: str = "SINGLE"  # "SINGLE" or "BATCH"
+        self.current_batch_drawing_ids: List[str] = []
 
         # ── Worker references ─────────────────────────────────────
         self._load_worker:           Optional[PDFLoadWorker]       = None
@@ -416,6 +418,8 @@ class AppController(QObject):
     ) -> None:
         """Triggers non-blocking background multi-step workflow execution."""
         path = Path(file_path).resolve()
+        self.active_upload_mode = "SINGLE"
+        self.current_batch_drawing_ids = []
         logger.info(
             f"AppController launching workflow pipeline for: {path.name} "
             f"(department_id={department_id})"
@@ -445,6 +449,8 @@ class AppController(QObject):
         self, file_paths: List[str | Path], department_id: Optional[str] = None
     ) -> None:
         """Triggers non-blocking background batch workflow execution across multiple PDFs/zip folders."""
+        self.active_upload_mode = "BATCH"
+        self.current_batch_drawing_ids = []
         logger.info(
             f"AppController launching batch workflow pipeline for {len(file_paths)} item(s) "
             f"(department_id={department_id})"
@@ -533,8 +539,21 @@ class AppController(QObject):
             return self.drawing_repo.get_all_drawings(project_id=project_id, department_id=department_id)
         return []
 
+    def get_batch_drawings(self) -> List[Dict[str, Any]]:
+        """Return drawings for the active batch if currently in batch mode."""
+        if not self.current_batch_drawing_ids:
+            return []
+        all_dwgs = self.get_all_drawings()
+        id_to_dwg = {d.get("id"): d for d in all_dwgs if d.get("id")}
+        return [id_to_dwg[bid] for bid in self.current_batch_drawing_ids if bid in id_to_dwg]
+
     def _on_workflow_completed(self, result_dto: WorkflowResultDTO) -> None:
         logger.info(f"AppController: Workflow finished for '{result_dto.file_name}'.")
+        self.active_upload_mode = "SINGLE"
+        if result_dto.drawing_id:
+            self.current_batch_drawing_ids = [result_dto.drawing_id]
+        else:
+            self.current_batch_drawing_ids = []
         if hasattr(result_dto, "annotation_result") and result_dto.annotation_result:
             self.last_annotation_result = result_dto.annotation_result
         self.workflow_completed_signal.emit(result_dto)
@@ -547,6 +566,13 @@ class AppController(QObject):
             f"AppController: Batch workflow finished ({batch_result_dto.successful_files_count}/"
             f"{batch_result_dto.total_files_processed} drawings processed)."
         )
+        self.active_upload_mode = "BATCH"
+        if batch_result_dto.results:
+            self.current_batch_drawing_ids = [
+                r.drawing_id for r in batch_result_dto.results if r.drawing_id
+            ]
+        else:
+            self.current_batch_drawing_ids = []
         self.batch_workflow_completed_signal.emit(batch_result_dto)
         self.drawings_updated_signal.emit()
         if batch_result_dto.results:

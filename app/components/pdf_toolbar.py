@@ -8,7 +8,7 @@ Provides:
         coupling to toolbar internals.
 """
 from __future__ import annotations
-from PySide6.QtWidgets import QFrame, QHBoxLayout, QLineEdit, QLabel
+from PySide6.QtWidgets import QFrame, QHBoxLayout, QLineEdit, QLabel, QToolButton
 from PySide6.QtCore import Qt, Signal
 from PySide6.QtGui import QFont
 
@@ -29,6 +29,8 @@ class PdfToolbar(QFrame):
     next_page_requested()
     page_changed(int)
         Emitted (1-indexed) when the user edits the page number field.
+    toggle_sidebar_requested()
+        Emitted when the user clicks the Drawings toggle button.
     """
 
     zoom_in_requested   = Signal()
@@ -39,6 +41,7 @@ class PdfToolbar(QFrame):
     next_page_requested = Signal()
     page_changed        = Signal(int)
     show_annotations_toggled = Signal(bool)  # NEW: annotation visualization toggle
+    toggle_sidebar_requested = Signal()
 
     def __init__(self, total_pages: int = 1, parent=None):
         super().__init__(parent)
@@ -90,6 +93,41 @@ class PdfToolbar(QFrame):
         lay.addWidget(self._annot_btn)
 
         lay.addWidget(ToolbarSeparator())
+
+        # ── Sidebar toggle ────────────────────────────────────────
+        self._toggle_sidebar_btn = QToolButton()
+        self._toggle_sidebar_btn.setText("📁 Drawings")
+        self._toggle_sidebar_btn.setToolTip("Toggle Drawings Sidebar (Show / Hide)")
+        self._toggle_sidebar_btn.setFixedHeight(34)
+        self._toggle_sidebar_btn.setMinimumWidth(95)
+        self._toggle_sidebar_btn.setCheckable(True)
+        self._toggle_sidebar_btn.setChecked(False)
+        self._toggle_sidebar_btn.setStyleSheet("""
+            QToolButton {
+                background-color: #252830;
+                color: #E2E8F0;
+                border: 1px solid #333742;
+                border-radius: 6px;
+                padding: 0 10px;
+                font-family: 'Segoe UI Variable', 'Segoe UI', sans-serif;
+                font-size: 11px;
+                font-weight: bold;
+            }
+            QToolButton:hover {
+                background-color: #2D313A;
+                border-color: #38BDF8;
+                color: #38BDF8;
+            }
+            QToolButton:checked {
+                background-color: #0284C725;
+                border-color: #38BDF8;
+                color: #38BDF8;
+            }
+        """)
+        self._toggle_sidebar_btn.clicked.connect(self.toggle_sidebar_requested)
+        lay.addWidget(self._toggle_sidebar_btn)
+
+        lay.addWidget(ToolbarSeparator())
         lay.addStretch()
 
         # ── Page navigation ───────────────────────────────────────
@@ -127,6 +165,12 @@ class PdfToolbar(QFrame):
         """Update the total-page-count label."""
         self._total_pages = total
         self._page_total_lbl.setText(f"of {total}")
+
+    def set_sidebar_button_checked(self, checked: bool) -> None:
+        """Update the checked state of the toggle sidebar button."""
+        self._toggle_sidebar_btn.blockSignals(True)
+        self._toggle_sidebar_btn.setChecked(checked)
+        self._toggle_sidebar_btn.blockSignals(False)
 
     # ── Private ───────────────────────────────────────────────────
 
