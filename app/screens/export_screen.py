@@ -397,7 +397,7 @@ class ExportPage(QWidget):
         tbl.verticalHeader().hide()
         tbl.horizontalHeader().setStretchLastSection(True)
         tbl.horizontalHeader().setSectionResizeMode(QHeaderView.ResizeMode.ResizeToContents)
-        tbl.horizontalHeader().setSectionResizeMode(0, QHeaderView.ResizeMode.Stretch)
+        # NOTE: per-section setSectionResizeMode must come after setModel()
         tbl.setMinimumHeight(180)
 
         headers = ["File Name", "Format", "Date", "Size"]
@@ -421,4 +421,5 @@ class ExportPage(QWidget):
             model.appendRow(items)
 
         tbl.setModel(model)
+        tbl.horizontalHeader().setSectionResizeMode(0, QHeaderView.ResizeMode.Stretch)
         return tbl
