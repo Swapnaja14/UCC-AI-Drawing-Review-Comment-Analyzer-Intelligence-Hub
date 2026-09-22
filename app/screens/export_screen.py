@@ -459,19 +459,7 @@ class ExportPage(QWidget):
         self._scope_grp.addButton(rb1)
         scope_lay.addLayout(vbox1)
 
-        # Scope 2: Current Project
-        rb2 = QRadioButton("Current Project (All Drawings)")
-        rb2.setStyleSheet(scope_btn_style)
-        self._proj_scope_lbl = QLabel("No project is currently selected")
-        self._proj_scope_lbl.setStyleSheet("color: #FBBF24; font-size: 12px; padding-left: 28px;")
-        vbox2 = QVBoxLayout()
-        vbox2.setSpacing(2)
-        vbox2.addWidget(rb2)
-        vbox2.addWidget(self._proj_scope_lbl)
-        self._scope_grp.addButton(rb2)
-        scope_lay.addLayout(vbox2)
-
-        # Scope 3: All Historical Comments
+        # Scope 2: All Historical Comments
         rb3 = QRadioButton("All Historical Comments")
         rb3.setStyleSheet(scope_btn_style)
         self._hist_scope_lbl = QLabel("Persisted Database: 0 Projects • 0 Drawings • 0 Comments")
@@ -617,19 +605,7 @@ class ExportPage(QWidget):
             self._dwg_scope_lbl.setText("No drawing is currently loaded")
             self._dwg_scope_lbl.setStyleSheet("color: #F87171; font-size: 12px; padding-left: 28px;")
 
-        # 2. Current Project
-        proj_info = counts.get("project", {})
-        if proj_info.get("has_project"):
-            pname = proj_info.get("project_name", "Project")
-            dwg_cnt = proj_info.get("drawings_count", 0)
-            cmt_cnt = proj_info.get("comments_count", 0)
-            self._proj_scope_lbl.setText(f"Project: {pname}  •  Drawings: {dwg_cnt}  •  Comments available: {cmt_cnt}")
-            self._proj_scope_lbl.setStyleSheet("color: #4ADE80; font-size: 12px; padding-left: 28px;")
-        else:
-            self._proj_scope_lbl.setText("No project is currently selected")
-            self._proj_scope_lbl.setStyleSheet("color: #FBBF24; font-size: 12px; padding-left: 28px;")
-
-        # 3. All Historical
+        # 2. All Historical
         hist_info = counts.get("all", {})
         p_cnt = hist_info.get("projects_count", 0)
         d_cnt = hist_info.get("drawings_count", 0)
@@ -657,15 +633,6 @@ class ExportPage(QWidget):
                     self,
                     "Export Validation",
                     "No drawing is currently loaded.",
-                )
-                return
-        elif scope_text == "Current Project (All Drawings)":
-            scope_val = "project"
-            if not project_id:
-                QMessageBox.warning(
-                    self,
-                    "Export Validation",
-                    "No project is currently selected.",
                 )
                 return
         else:
