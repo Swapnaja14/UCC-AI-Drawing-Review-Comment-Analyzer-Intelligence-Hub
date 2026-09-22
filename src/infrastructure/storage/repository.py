@@ -172,7 +172,7 @@ class DatabaseEngine:
                 conn.execute(text("CREATE INDEX IF NOT EXISTS idx_drawings_proj_id ON drawings(project_id);"))
                 conn.execute(text("CREATE INDEX IF NOT EXISTS idx_processing_runs_drawing_id ON processing_runs(drawing_id);"))
                 conn.execute(text("CREATE INDEX IF NOT EXISTS idx_processing_runs_proj_id ON processing_runs(project_id);"))
-                conn.execute(text("CREATE INDEX IF NOT EXISTS idx_export_logs_created_at ON export_logs(created_at);"))
+                conn.execute(text("CREATE INDEX IF NOT EXISTS idx_export_history_created_at ON export_history(created_at);"))
         except Exception as exc:
             logger.warning(f"Database migration check failed: {exc}")
 
