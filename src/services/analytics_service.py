@@ -38,18 +38,85 @@ CATEGORY_COLORS = {
     'Uncategorized': '#9CA3AF'
 }
 
+def _apply_comment_filters(
+    query,
+    session,
+    project_id: Optional[str] = None,
+    drawing_id: Optional[str] = None,
+    department_name: Optional[str] = None,
+    category_name: Optional[str] = None,
+    date_from: Optional[datetime] = None,
+    date_to: Optional[datetime] = None,
+):
+    if drawing_id:
+        query = query.filter(CommentModel.drawing_id == drawing_id)
+    elif project_id:
+        dwg_subquery = session.query(DrawingModel.id).filter(DrawingModel.project_id == project_id)
+        query = query.filter(CommentModel.drawing_id.in_(dwg_subquery))
+    
+    if department_name:
+        if department_name == "Unassigned":
+            query = query.outerjoin(
+                EngineeringDepartmentModel,
+                CommentModel.department_id == EngineeringDepartmentModel.id
+            ).filter(EngineeringDepartmentModel.id.is_(None))
+        else:
+            query = query.join(
+                EngineeringDepartmentModel,
+                CommentModel.department_id == EngineeringDepartmentModel.id
+            ).filter(EngineeringDepartmentModel.name == department_name)
+
+    if category_name and category_name != "All Categories":
+        query = query.filter(CommentModel.category_name == category_name)
+
+    if date_from:
+        query = query.filter(CommentModel.created_at >= date_from)
+    if date_to:
+        if isinstance(date_to, datetime) and date_to.hour == 0 and date_to.minute == 0:
+            date_to_end = date_to.replace(hour=23, minute=59, second=59, microsecond=999999)
+        else:
+            date_to_end = date_to
+        query = query.filter(CommentModel.created_at <= date_to_end)
+
+    return query
+
+
 class AnalyticsService:
     def __init__(self, db_engine: DatabaseEngine):
         self._db = db_engine
 
-    def get_global_kpis(self) -> KPISummaryDTO:
+    def get_global_kpis(
+        self,
+        project_id: Optional[str] = None,
+        drawing_id: Optional[str] = None,
+        department_name: Optional[str] = None,
+        category_name: Optional[str] = None,
+        date_from: Optional[datetime] = None,
+        date_to: Optional[datetime] = None,
+    ) -> KPISummaryDTO:
         with self._db.get_session() as session:
-            total_projects = session.query(func.count(ProjectModel.id)).scalar() or 0
-            total_drawings = session.query(func.count(DrawingModel.id)).scalar() or 0
-            total_pages = session.query(func.count(PageModel.id)).scalar() or 0
+            p_query = session.query(func.count(ProjectModel.id))
+            if project_id:
+                p_query = p_query.filter(ProjectModel.id == project_id)
+            total_projects = p_query.scalar() or 0
+
+            d_query = session.query(func.count(DrawingModel.id))
+            if drawing_id:
+                d_query = d_query.filter(DrawingModel.id == drawing_id)
+            elif project_id:
+                d_query = d_query.filter(DrawingModel.project_id == project_id)
+            total_drawings = d_query.scalar() or 0
+
+            pg_query = session.query(func.count(PageModel.id))
+            if drawing_id:
+                pg_query = pg_query.filter(PageModel.drawing_id == drawing_id)
+            elif project_id:
+                dwg_sub = session.query(DrawingModel.id).filter(DrawingModel.project_id == project_id)
+                pg_query = pg_query.filter(PageModel.drawing_id.in_(dwg_sub))
+            total_pages = pg_query.scalar() or 0
             
-            # Fast-path single SQL aggregation query
-            stats = session.query(
+            # Single SQL aggregation query with comment filters
+            stats_query = session.query(
                 func.count(CommentModel.id),
                 func.sum(case((CommentModel.status == "Approved", 1), else_=0)),
                 func.sum(case((CommentModel.status == "Rejected", 1), else_=0)),
@@ -59,7 +126,11 @@ class AnalyticsService:
                 func.sum(case((CommentModel.confidence >= 0.85, 1), else_=0)),
                 func.sum(case((CommentModel.confidence < 0.60, 1), else_=0)),
                 func.sum(case(((CommentModel.status == "Approved") & (CommentModel.is_verified_by_human == True), 1), else_=0))
-            ).first()
+            )
+            stats_query = _apply_comment_filters(
+                stats_query, session, project_id, drawing_id, department_name, category_name, date_from, date_to
+            )
+            stats = stats_query.first()
             
             if stats:
                 total_comments = stats[0] or 0
@@ -97,39 +168,33 @@ class AnalyticsService:
 
     def get_category_distribution(
         self,
+        project_id: Optional[str] = None,
         drawing_id: Optional[str] = None,
         department_name: Optional[str] = None,
+        category_name: Optional[str] = None,
+        date_from: Optional[datetime] = None,
+        date_to: Optional[datetime] = None,
         include_rejected: bool = True,
     ) -> List[CategoryDistributionDTO]:
         with self._db.get_session() as session:
             query = session.query(CommentModel.category_name, func.count(CommentModel.id))
             if not include_rejected:
                 query = query.filter(CommentModel.status != "Rejected")
+            query = _apply_comment_filters(
+                query, session, project_id, drawing_id, department_name, category_name, date_from, date_to
+            )
             query = query.group_by(CommentModel.category_name)
-            if drawing_id:
-                query = query.filter(CommentModel.drawing_id == drawing_id)
-            if department_name:
-                if department_name == "Unassigned":
-                    query = query.outerjoin(
-                        EngineeringDepartmentModel,
-                        CommentModel.department_id == EngineeringDepartmentModel.id
-                    ).filter(EngineeringDepartmentModel.id.is_(None))
-                else:
-                    query = query.join(
-                        EngineeringDepartmentModel,
-                        CommentModel.department_id == EngineeringDepartmentModel.id
-                    ).filter(EngineeringDepartmentModel.name == department_name)
             
             results = query.all()
             total = sum(count for _, count in results)
             
             distribution = []
-            for category_name, count in results:
-                cat_name = category_name or 'Uncategorized'
+            for cat_n, count in results:
+                c_name = cat_n or 'Uncategorized'
                 pct = (count / total * 100.0) if total > 0 else 0.0
-                color = CATEGORY_COLORS.get(cat_name, '#9CA3AF')
+                color = CATEGORY_COLORS.get(c_name, '#9CA3AF')
                 distribution.append(CategoryDistributionDTO(
-                    category_name=cat_name,
+                    category_name=c_name,
                     count=count,
                     percentage=pct,
                     color_hex=color
@@ -166,14 +231,22 @@ class AnalyticsService:
 
     def get_pareto_analysis(
         self,
+        project_id: Optional[str] = None,
         drawing_id: Optional[str] = None,
         department_name: Optional[str] = None,
+        category_name: Optional[str] = None,
+        date_from: Optional[datetime] = None,
+        date_to: Optional[datetime] = None,
         top_n: int = 10,
         include_rejected: bool = False,
     ) -> List[CategoryDistributionDTO]:
         distribution = self.get_category_distribution(
+            project_id=project_id,
             drawing_id=drawing_id,
             department_name=department_name,
+            category_name=category_name,
+            date_from=date_from,
+            date_to=date_to,
             include_rejected=include_rejected,
         )
         return distribution[:top_n]
@@ -213,12 +286,20 @@ class AnalyticsService:
 
             return results
 
-    def get_status_trend(self, drawing_id: Optional[str] = None) -> List[TrendDataPointDTO]:
+    def get_status_trend(
+        self,
+        project_id: Optional[str] = None,
+        drawing_id: Optional[str] = None,
+        department_name: Optional[str] = None,
+        category_name: Optional[str] = None,
+        date_from: Optional[datetime] = None,
+        date_to: Optional[datetime] = None,
+    ) -> List[TrendDataPointDTO]:
         with self._db.get_session() as session:
             query = session.query(CommentModel.created_at)
-            if drawing_id:
-                query = query.filter(CommentModel.drawing_id == drawing_id)
-                
+            query = _apply_comment_filters(
+                query, session, project_id, drawing_id, department_name, category_name, date_from, date_to
+            )
             dates = [r[0] for r in query.all() if r[0]]
             
             trends = {}

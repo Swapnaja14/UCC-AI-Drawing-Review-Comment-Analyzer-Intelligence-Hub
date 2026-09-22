@@ -21,6 +21,8 @@ from app.components.charts import (
     build_category_pie,
 )
 
+from datetime import datetime
+
 STANDARD_CATEGORIES: List[str] = [
     "Technical",
     "Drafting",
@@ -92,8 +94,8 @@ class AnalyticsPage(QWidget):
 
         self._populate_filters()
 
-        # Connect ALL filter widgets to auto-update charts
-        self._proj_cb.currentIndexChanged.connect(self._apply_filters)
+        # Connect filter widgets to auto-update charts & cascading drawings
+        self._proj_cb.currentIndexChanged.connect(self._on_project_changed)
         self._dwg_cb.currentIndexChanged.connect(self._apply_filters)
         self._dept_cb.currentIndexChanged.connect(self._apply_filters)
         self._cat_cb.currentIndexChanged.connect(self._apply_filters)
@@ -101,7 +103,8 @@ class AnalyticsPage(QWidget):
         from_lbl = QLabel("From:")
         from_lbl.setObjectName("SubCaption")
         fb.addWidget(from_lbl)
-        self._date_from = QDateEdit(QDate(2026, 1, 1))
+        # Default start date: 1 year prior to today
+        self._date_from = QDateEdit(QDate.currentDate().addYears(-1))
         self._date_from.setFixedHeight(36)
         self._date_from.setCalendarPopup(True)
         self._date_from.dateChanged.connect(self._apply_filters)
@@ -139,32 +142,23 @@ class AnalyticsPage(QWidget):
 
     def _populate_filters(self) -> None:
         """Populate project, drawing, department, and category filter dropdowns."""
+        self._proj_cb.blockSignals(True)
         self._proj_cb.clear()
-        projects = ["All Projects"]
+        self._proj_cb.addItem("All Projects", "")
         if self._controller:
             try:
                 records = self._controller.get_all_projects()
                 for p in records:
-                    name = p.get("name", p.get("id", "Project")) if isinstance(p, dict) else getattr(p, "name", "Project")
-                    projects.append(name)
+                    pid = p.get("id", "") if isinstance(p, dict) else getattr(p, "id", "")
+                    name = p.get("name", pid) if isinstance(p, dict) else getattr(p, "name", pid)
+                    self._proj_cb.addItem(name, pid)
             except Exception:
                 pass
-        self._proj_cb.addItems(projects)
+        self._proj_cb.blockSignals(False)
 
-        self._dwg_cb.blockSignals(True)
-        self._dwg_cb.clear()
-        self._dwg_cb.addItem("All Drawings", "")
-        if self._controller:
-            try:
-                drawings = self._controller.get_all_drawings()
-                for d in drawings:
-                    did = d.get("id", "")
-                    fname = d.get("file_name", "Drawing")
-                    self._dwg_cb.addItem(fname, did)
-            except Exception:
-                pass
-        self._dwg_cb.blockSignals(False)
+        self._populate_drawings_for_selected_project()
 
+        self._dept_cb.blockSignals(True)
         self._dept_cb.clear()
         departments = ["All Departments"]
         if self._controller:
@@ -188,14 +182,16 @@ class AnalyticsPage(QWidget):
                 "Unassigned",
             ])
         self._dept_cb.addItems(departments)
+        self._dept_cb.blockSignals(False)
 
+        self._cat_cb.blockSignals(True)
         self._cat_cb.clear()
         categories = ["All Categories"]
         if self._controller:
             try:
-                cat_dist = self._controller.get_category_distribution()
-                for c in cat_dist:
-                    c_name = getattr(c, "category_name", str(c))
+                cat_records = self._controller.get_all_categories()
+                for c in cat_records:
+                    c_name = c.get("name") if isinstance(c, dict) else getattr(c, "name", "")
                     if c_name and c_name not in categories:
                         categories.append(c_name)
             except Exception:
@@ -203,9 +199,55 @@ class AnalyticsPage(QWidget):
         if len(categories) == 1:
             categories.extend(STANDARD_CATEGORIES)
         self._cat_cb.addItems(categories)
+        self._cat_cb.blockSignals(False)
+
+    def _populate_drawings_for_selected_project(self) -> None:
+        """Populate drawing dropdown filtered by current project selection."""
+        proj_id = self._proj_cb.currentData() if hasattr(self, "_proj_cb") else ""
+        self._dwg_cb.blockSignals(True)
+        self._dwg_cb.clear()
+        self._dwg_cb.addItem("All Drawings", "")
+        if self._controller:
+            try:
+                drawings = self._controller.get_all_drawings(project_id=proj_id if proj_id else None)
+                for d in drawings:
+                    did = d.get("id", "")
+                    fname = d.get("file_name", "Drawing")
+                    self._dwg_cb.addItem(fname, did)
+            except Exception:
+                pass
+        self._dwg_cb.blockSignals(False)
+
+    def _on_project_changed(self, index: int) -> None:
+        """Update drawing combobox options when selected project changes and reload data."""
+        self._populate_drawings_for_selected_project()
+        self._apply_filters()
+
+    def _get_active_filters(self) -> dict:
+        """Read current filter state from all widgets."""
+        proj_id = self._proj_cb.currentData() if hasattr(self, "_proj_cb") else ""
+        dwg_id  = self._dwg_cb.currentData() if hasattr(self, "_dwg_cb") else ""
+        dept    = self._dept_cb.currentText() if hasattr(self, "_dept_cb") else "All Departments"
+        cat     = self._cat_cb.currentText() if hasattr(self, "_cat_cb") else "All Categories"
+
+        # Read date limits from QDateEdit
+        qfrom = self._date_from.date() if hasattr(self, "_date_from") else None
+        qto   = self._date_to.date() if hasattr(self, "_date_to") else None
+
+        from_dt = datetime(qfrom.year(), qfrom.month(), qfrom.day()) if qfrom and qfrom.isValid() else None
+        to_dt   = datetime(qto.year(), qto.month(), qto.day(), 23, 59, 59) if qto and qto.isValid() else None
+
+        return {
+            "project_id": proj_id if proj_id else None,
+            "drawing_id": dwg_id if dwg_id else None,
+            "department_name": None if dept in ("All Departments", "") else dept,
+            "category_name": None if cat in ("All Categories", "") else cat,
+            "date_from": from_dt,
+            "date_to": to_dt,
+        }
 
     def _build_kpi_cards(self) -> None:
-        """Fetch real KPI summary data and build/update KPI cards."""
+        """Fetch real KPI summary data using active filters and build KPI cards."""
         while self._kpi_row.count():
             item = self._kpi_row.takeAt(0)
             w = item.widget()
@@ -213,19 +255,27 @@ class AnalyticsPage(QWidget):
                 w.deleteLater()
         self._kpi_cards.clear()
 
-        kpi_data = self._controller.get_dashboard_kpis() if self._controller else None
+        filters = self._get_active_filters()
+        kpi_data = self._controller.get_dashboard_kpis(
+            project_id=filters["project_id"],
+            drawing_id=filters["drawing_id"],
+            department_name=filters["department_name"],
+            category_name=filters["category_name"],
+            date_from=filters["date_from"],
+            date_to=filters["date_to"],
+        ) if self._controller else None
 
         if kpi_data is not None:
             if hasattr(kpi_data, "total_comments"):
                 total_comments = kpi_data.total_comments
                 approved_count = kpi_data.approved_count
                 rejected_count = kpi_data.rejected_count
-                flagged_count = kpi_data.flagged_count
+                flagged_count  = kpi_data.flagged_count
             elif isinstance(kpi_data, dict):
                 total_comments = kpi_data.get("total_comments", 0)
                 approved_count = kpi_data.get("approved_count", 0)
                 rejected_count = kpi_data.get("rejected_count", 0)
-                flagged_count = kpi_data.get("flagged_count", 0)
+                flagged_count  = kpi_data.get("flagged_count", 0)
             else:
                 total_comments, approved_count, rejected_count, flagged_count = 0, 0, 0, 0
         else:
@@ -233,13 +283,13 @@ class AnalyticsPage(QWidget):
 
         approved_pct = f"{(approved_count / total_comments * 100):.1f}%" if total_comments > 0 else "0%"
         rejected_pct = f"{(rejected_count / total_comments * 100):.1f}%" if total_comments > 0 else "0%"
-        flagged_pct = f"{(flagged_count / total_comments * 100):.1f}%" if total_comments > 0 else "0%"
+        flagged_pct  = f"{(flagged_count / total_comments * 100):.1f}%" if total_comments > 0 else "0%"
 
         kpi_items = [
-            ("fa5s.comments",     f"{total_comments:,}", "Total Comments", "Total in DB", "#3E9BFF"),
-            ("fa5s.check-circle", f"{approved_count:,}", "Approved",       approved_pct,  "#4ADE80"),
-            ("fa5s.times-circle", f"{rejected_count:,}", "Rejected",       rejected_pct,  "#F87171"),
-            ("fa5s.flag",         f"{flagged_count:,}",  "Flagged",        flagged_pct,   "#FBBF24"),
+            ("fa5s.comments",     f"{total_comments:,}", "Total Comments", "Total in Query", "#3E9BFF"),
+            ("fa5s.check-circle", f"{approved_count:,}", "Approved",       approved_pct,     "#4ADE80"),
+            ("fa5s.times-circle", f"{rejected_count:,}", "Rejected",       rejected_pct,     "#F87171"),
+            ("fa5s.flag",         f"{flagged_count:,}",  "Flagged",        flagged_pct,      "#FBBF24"),
         ]
 
         for icon, val, lbl, trend, color in kpi_items:
@@ -248,19 +298,8 @@ class AnalyticsPage(QWidget):
             self._kpi_cards.append(card)
             self._kpi_row.addWidget(card, 1)
 
-    def _get_active_filters(self) -> dict:
-        """Read current filter state from all widgets."""
-        dept = self._dept_cb.currentText() if hasattr(self, "_dept_cb") else "All Departments"
-        cat = self._cat_cb.currentText() if hasattr(self, "_cat_cb") else "All Categories"
-        dwg_id = self._dwg_cb.currentData() if hasattr(self, "_dwg_cb") else ""
-        return {
-            "department_name": None if dept == "All Departments" else dept,
-            "category_name": None if cat == "All Categories" else cat,
-            "drawing_id": dwg_id if dwg_id else None,
-        }
-
     def _build_charts(self) -> None:
-        """Fetch real data for charts and populate the grid, using all active filters."""
+        """Fetch real data for charts and populate grid using all active filters."""
         while self._grid.count():
             item = self._grid.takeAt(0)
             w = item.widget()
@@ -268,19 +307,39 @@ class AnalyticsPage(QWidget):
                 w.deleteLater()
 
         filters = self._get_active_filters()
+        proj_id   = filters["project_id"]
+        dwg_id    = filters["drawing_id"]
         dept_name = filters["department_name"]
-        dwg_id = filters["drawing_id"]
+        cat_name  = filters["category_name"]
+        d_from    = filters["date_from"]
+        d_to      = filters["date_to"]
 
-        pareto_data = self._controller.get_pareto_analysis(drawing_id=dwg_id, department_name=dept_name) if self._controller else None
-        category_data = self._controller.get_category_distribution(drawing_id=dwg_id, department_name=dept_name) if self._controller else None
-        trend_data = self._controller.get_status_trend(drawing_id=dwg_id) if self._controller else None
+        pareto_data = self._controller.get_pareto_analysis(
+            project_id=proj_id,
+            drawing_id=dwg_id,
+            department_name=dept_name,
+            category_name=cat_name,
+            date_from=d_from,
+            date_to=d_to,
+        ) if self._controller else None
 
-        # Client-side category filter on chart data
-        cat_filter = filters["category_name"]
-        if cat_filter and pareto_data:
-            pareto_data = [d for d in pareto_data if getattr(d, "category_name", "") == cat_filter]
-        if cat_filter and category_data:
-            category_data = [d for d in category_data if getattr(d, "category_name", "") == cat_filter]
+        category_data = self._controller.get_category_distribution(
+            project_id=proj_id,
+            drawing_id=dwg_id,
+            department_name=dept_name,
+            category_name=cat_name,
+            date_from=d_from,
+            date_to=d_to,
+        ) if self._controller else None
+
+        trend_data = self._controller.get_status_trend(
+            project_id=proj_id,
+            drawing_id=dwg_id,
+            department_name=dept_name,
+            category_name=cat_name,
+            date_from=d_from,
+            date_to=d_to,
+        ) if self._controller else None
 
         pareto_view  = build_pareto_chart(pareto_data)
         monthly_view = build_monthly_chart(trend_data)
@@ -311,3 +370,4 @@ class AnalyticsPage(QWidget):
     def reload_comments(self) -> None:
         """Alias to refresh analytics when comments or drawings update."""
         self.reload_data()
+

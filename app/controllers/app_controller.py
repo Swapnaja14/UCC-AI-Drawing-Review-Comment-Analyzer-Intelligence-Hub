@@ -1138,3 +1138,108 @@ class AppController(QObject):
     def _on_render_error(self, err_msg: str) -> None:
         logger.error(f"AppController render error: {err_msg}")
         self.processing_error_signal.emit(err_msg)
+
+    # ── Analytics Controller API ───────────────────────────────────
+
+    def get_all_projects(self) -> List[Dict[str, Any]]:
+        """Return all project records from database."""
+        return self.project_repo.get_all_projects()
+
+    def get_all_drawings(
+        self,
+        project_id: Optional[str] = None,
+        department_id: Optional[str] = None,
+    ) -> List[Dict[str, Any]]:
+        """Return all drawing records from database, optionally filtered by project or department."""
+        return self.drawing_repo.get_all_drawings(project_id=project_id, department_id=department_id)
+
+    def get_all_departments(self) -> List[Dict[str, Any]]:
+        """Return all engineering department records from database."""
+        return self.department_repo.get_all_departments()
+
+    def get_all_categories(self) -> List[Dict[str, Any]]:
+        """Return all category records from database."""
+        return self.category_repo.get_all_categories()
+
+    def get_dashboard_kpis(
+        self,
+        project_id: Optional[str] = None,
+        drawing_id: Optional[str] = None,
+        department_name: Optional[str] = None,
+        category_name: Optional[str] = None,
+        date_from: Optional[Any] = None,
+        date_to: Optional[Any] = None,
+    ):
+        """Proxy to analytics_service.get_global_kpis with full multi-criteria filtering."""
+        return self.analytics_service.get_global_kpis(
+            project_id=project_id,
+            drawing_id=drawing_id,
+            department_name=department_name,
+            category_name=category_name,
+            date_from=date_from,
+            date_to=date_to,
+        )
+
+    def get_category_distribution(
+        self,
+        project_id: Optional[str] = None,
+        drawing_id: Optional[str] = None,
+        department_name: Optional[str] = None,
+        category_name: Optional[str] = None,
+        date_from: Optional[Any] = None,
+        date_to: Optional[Any] = None,
+        include_rejected: bool = True,
+    ):
+        """Proxy to analytics_service.get_category_distribution with full filtering."""
+        return self.analytics_service.get_category_distribution(
+            project_id=project_id,
+            drawing_id=drawing_id,
+            department_name=department_name,
+            category_name=category_name,
+            date_from=date_from,
+            date_to=date_to,
+            include_rejected=include_rejected,
+        )
+
+    def get_pareto_analysis(
+        self,
+        project_id: Optional[str] = None,
+        drawing_id: Optional[str] = None,
+        department_name: Optional[str] = None,
+        category_name: Optional[str] = None,
+        date_from: Optional[Any] = None,
+        date_to: Optional[Any] = None,
+        top_n: int = 10,
+        include_rejected: bool = False,
+    ):
+        """Proxy to analytics_service.get_pareto_analysis with full filtering."""
+        return self.analytics_service.get_pareto_analysis(
+            project_id=project_id,
+            drawing_id=drawing_id,
+            department_name=department_name,
+            category_name=category_name,
+            date_from=date_from,
+            date_to=date_to,
+            top_n=top_n,
+            include_rejected=include_rejected,
+        )
+
+    def get_status_trend(
+        self,
+        project_id: Optional[str] = None,
+        drawing_id: Optional[str] = None,
+        department_name: Optional[str] = None,
+        category_name: Optional[str] = None,
+        date_from: Optional[Any] = None,
+        date_to: Optional[Any] = None,
+    ):
+        """Proxy to analytics_service.get_status_trend with full filtering."""
+        return self.analytics_service.get_status_trend(
+            project_id=project_id,
+            drawing_id=drawing_id,
+            department_name=department_name,
+            category_name=category_name,
+            date_from=date_from,
+            date_to=date_to,
+        )
+
