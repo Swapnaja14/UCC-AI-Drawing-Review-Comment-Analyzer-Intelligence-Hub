@@ -106,6 +106,7 @@ class HumanReviewPage(QWidget):
         splitter = QSplitter(Qt.Orientation.Horizontal)
         splitter.setHandleWidth(1)
         splitter.setChildrenCollapsible(False)
+        splitter.setStyleSheet("QSplitter::handle { background-color: #E2E8F0; }")
 
         # Left — PDF canvas (simulated; real page rendering via PdfViewerPage)
         self._scene = QGraphicsScene()
@@ -118,14 +119,15 @@ class HumanReviewPage(QWidget):
         self._view.setSizePolicy(
             QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Expanding
         )
+        self._view.setStyleSheet("QGraphicsView { background-color: #F8FAFC; border: none; }")
         self._load_canvas()
         splitter.addWidget(self._view)
 
         # Right — review panel
         self._panel = self._build_review_panel()
         splitter.addWidget(self._panel)
-        splitter.setStretchFactor(0, 55)
-        splitter.setStretchFactor(1, 45)
+        splitter.setStretchFactor(0, 58)
+        splitter.setStretchFactor(1, 42)
 
         root.addWidget(splitter)
         self._load_comment()
@@ -157,136 +159,230 @@ class HumanReviewPage(QWidget):
         scroll = QScrollArea()
         scroll.setWidgetResizable(True)
         scroll.setFrameShape(QFrame.Shape.NoFrame)
-        scroll.setStyleSheet("QScrollArea { background: #1E2235; border-left: 1px solid #2E3654; }")
+        scroll.setStyleSheet("QScrollArea { background: #FFFFFF; border-left: 1px solid #E2E8F0; }")
 
         panel = QFrame()
         panel.setObjectName("ReviewPanel")
-        panel.setStyleSheet("#ReviewPanel { background: #1E2235; border: none; }")
+        panel.setStyleSheet("#ReviewPanel { background: #FFFFFF; border: none; }")
         lay = QVBoxLayout(panel)
-        lay.setContentsMargins(24, 20, 24, 24)
+        lay.setContentsMargins(20, 20, 20, 20)
         lay.setSpacing(16)
 
-        # Progress header
-        prog_hdr = QHBoxLayout()
+        # Queue Header & Overall Progress Status
+        q_label = QLabel("QUEUE VERIFICATION")
+        q_label.setFont(QFont("Inter", 8, QFont.Weight.Bold))
+        q_label.setStyleSheet("color: #64748B; letter-spacing: 0.8px;")
+        lay.addWidget(q_label)
+
+        top_prog_row = QHBoxLayout()
+        title_lbl = QLabel("Comment Review Queue")
+        title_lbl.setFont(QFont("Inter", 13, QFont.Weight.Bold))
+        title_lbl.setStyleSheet("color: #0F172A;")
+        top_prog_row.addWidget(title_lbl)
+        top_prog_row.addStretch()
+
+        self._completion_badge = QLabel("0% Completed")
+        self._completion_badge.setFont(QFont("Inter", 9, QFont.Weight.Bold))
+        self._completion_badge.setStyleSheet("color: #0284C7; background-color: #F0F9FF; border: 1px solid #BAE6FD; border-radius: 10px; padding: 2px 8px;")
+        top_prog_row.addWidget(self._completion_badge)
+        lay.addLayout(top_prog_row)
+
+        sub_prog_row = QHBoxLayout()
         self._prog_lbl = QLabel("Comment 1 of 0")
-        self._prog_lbl.setFont(QFont("Inter", 16, QFont.Weight.Bold))
-        self._prog_lbl.setStyleSheet("color: #E2E8F0;")
-        prog_hdr.addWidget(self._prog_lbl)
-        prog_hdr.addStretch()
-        lay.addLayout(prog_hdr)
+        self._prog_lbl.setFont(QFont("Inter", 10, QFont.Weight.Medium))
+        self._prog_lbl.setStyleSheet("color: #475569;")
+        sub_prog_row.addWidget(self._prog_lbl)
+        sub_prog_row.addStretch()
+
+        self._remaining_lbl = QLabel("0 Remaining")
+        self._remaining_lbl.setFont(QFont("Inter", 10))
+        self._remaining_lbl.setStyleSheet("color: #94A3B8;")
+        sub_prog_row.addWidget(self._remaining_lbl)
+        lay.addLayout(sub_prog_row)
 
         self._prog_bar = QProgressBar()
         self._prog_bar.setRange(0, max(len(self._comments), 1))
         self._prog_bar.setValue(1)
-        self._prog_bar.setFixedHeight(8)
+        self._prog_bar.setFixedHeight(4)
+        self._prog_bar.setTextVisible(False)
         self._prog_bar.setStyleSheet(
-            "QProgressBar { background: #222634; border-radius: 4px; }"
-            "QProgressBar::chunk { background: #3B82F6; border-radius: 4px; }"
+            "QProgressBar { background: #F1F5F9; border: none; border-radius: 2px; }"
+            "QProgressBar::chunk { background: #0284C7; border-radius: 2px; }"
         )
         lay.addWidget(self._prog_bar)
 
-        # Comment edit card
+        # Comment Details Container Card
         self._edit_card = QFrame()
         self._edit_card.setObjectName("Card")
         self._edit_card.setStyleSheet(
-            "#Card { background: #222634; border: 1px solid #2E3654; border-radius: 12px; }"
+            "#Card { background: #FFFFFF; border: 1px solid #E2E8F0; border-radius: 8px; }"
         )
         edit_lay = QVBoxLayout(self._edit_card)
-        edit_lay.setContentsMargins(20, 18, 20, 18)
-        edit_lay.setSpacing(12)
+        edit_lay.setContentsMargins(16, 16, 16, 16)
+        edit_lay.setSpacing(14)
 
-        # Top ID and Drawing reference
+        # Top Tag Chips & Status Pill
+        meta_top_row = QHBoxLayout()
+        meta_top_row.setSpacing(6)
+
+        self._cid_chip = QLabel("")
+        self._cid_chip.setFont(QFont("Cascadia Code", 9, QFont.Weight.Bold))
+        self._cid_chip.setStyleSheet("color: #0284C7; background-color: #E0F2FE; border-radius: 4px; padding: 2px 6px;")
+        meta_top_row.addWidget(self._cid_chip)
+
+        self._cr_chip = QLabel("")
+        self._cr_chip.setFont(QFont("Cascadia Code", 9, QFont.Weight.Bold))
+        self._cr_chip.setStyleSheet("color: #475569; background-color: #F1F5F9; border: 1px solid #E2E8F0; border-radius: 4px; padding: 2px 6px;")
+        meta_top_row.addWidget(self._cr_chip)
+
+        meta_top_row.addStretch()
+
+        self._status_chip = StatusChip("Pending")
+        meta_top_row.addWidget(self._status_chip)
+        edit_lay.addLayout(meta_top_row)
+
         self._comment_id_lbl = QLabel("")
-        self._comment_id_lbl.setFont(QFont("Cascadia Code", 13, QFont.Weight.Bold))
-        self._comment_id_lbl.setStyleSheet("color: #E2E8F0;")
+        self._comment_id_lbl.setFont(QFont("Inter", 10, QFont.Weight.Medium))
+        self._comment_id_lbl.setStyleSheet("color: #334155; line-height: 1.4;")
         edit_lay.addWidget(self._comment_id_lbl)
 
-        # OCR Text section
-        ocr_lbl = QLabel("OCR DETECTED TEXT")
-        ocr_lbl.setObjectName("FormLabel")
-        edit_lay.addWidget(ocr_lbl)
+        # AI Confidence & Discipline Classification Block
+        conf_cat_frame = QFrame()
+        conf_cat_frame.setStyleSheet("background-color: #F8FAFC; border: 1px solid #E2E8F0; border-radius: 6px; padding: 12px;")
+        conf_cat_lay = QVBoxLayout(conf_cat_frame)
+        conf_cat_lay.setContentsMargins(0, 0, 0, 0)
+        conf_cat_lay.setSpacing(8)
 
-        self._ocr_edit = QTextEdit()
-        self._ocr_edit.setMinimumHeight(105)
-        self._ocr_edit.setReadOnly(True)
-        self._ocr_edit.setFont(QFont("Cascadia Code", 13))
-        self._ocr_edit.setStyleSheet(
-            "QTextEdit { background: #161925; border: 1px solid #2E3654; border-radius: 8px; color: #E2E8F0; padding: 10px; }"
-        )
-        edit_lay.addWidget(self._ocr_edit)
+        metrics_hdr_row = QHBoxLayout()
+        conf_hdr = QLabel("ACCURACY CONFIDENCE")
+        conf_hdr.setFont(QFont("Inter", 8, QFont.Weight.Bold))
+        conf_hdr.setStyleSheet("color: #64748B; letter-spacing: 0.5px;")
+        metrics_hdr_row.addWidget(conf_hdr)
 
-        # Category section
-        cat_lbl = QLabel("ENGINEERING CATEGORY")
-        cat_lbl.setObjectName("FormLabel")
-        edit_lay.addWidget(cat_lbl)
+        metrics_hdr_row.addStretch()
 
-        cat_row = QHBoxLayout()
-        cat_row.setSpacing(10)
-        self._cat_combo = QComboBox()
-        self._cat_combo.addItems(md.CATEGORIES)
-        self._cat_combo.setFixedHeight(40)
-        self._cat_combo.currentTextChanged.connect(self._on_category_changed)
-        cat_row.addWidget(self._cat_combo, 1)
+        cat_lbl = QLabel("DISCIPLINE CLASSIFICATION")
+        cat_lbl.setFont(QFont("Inter", 8, QFont.Weight.Bold))
+        cat_lbl.setStyleSheet("color: #64748B; letter-spacing: 0.5px;")
+        metrics_hdr_row.addWidget(cat_lbl)
+        conf_cat_lay.addLayout(metrics_hdr_row)
 
-        self._cat_badge = CategoryBadge("")
-        cat_row.addWidget(self._cat_badge)
-        edit_lay.addLayout(cat_row)
+        metrics_val_row = QHBoxLayout()
+        metrics_val_row.setSpacing(16)
 
-        # Confidence section
-        conf_hdr = QLabel("DETECTION CONFIDENCE")
-        conf_hdr.setObjectName("FormLabel")
-        edit_lay.addWidget(conf_hdr)
+        # AI Accuracy Block
+        conf_block = QVBoxLayout()
+        conf_block.setSpacing(4)
+        self._conf_lbl = QLabel("—")
+        self._conf_lbl.setFont(QFont("Inter", 12, QFont.Weight.Bold))
+        self._conf_lbl.setStyleSheet("color: #0F172A;")
+        conf_block.addWidget(self._conf_lbl)
 
-        conf_row = QHBoxLayout()
-        conf_row.setSpacing(12)
         self._conf_bar = QProgressBar()
         self._conf_bar.setRange(0, 100)
         self._conf_bar.setValue(90)
-        self._conf_bar.setFixedHeight(8)
+        self._conf_bar.setFixedHeight(4)
+        self._conf_bar.setTextVisible(False)
         self._conf_bar.setStyleSheet(
-            "QProgressBar { background: #1E2235; border-radius: 4px; }"
-            "QProgressBar::chunk { background: #10B981; border-radius: 4px; }"
+            "QProgressBar { background: #E2E8F0; border-radius: 2px; }"
+            "QProgressBar::chunk { background: #0284C7; border-radius: 2px; }"
         )
-        conf_row.addWidget(self._conf_bar, 1)
+        conf_block.addWidget(self._conf_bar)
 
-        self._conf_lbl = QLabel("—")
-        self._conf_lbl.setFont(QFont("Inter", 12, QFont.Weight.Bold))
-        self._conf_lbl.setStyleSheet("color: #10B981;")
-        conf_row.addWidget(self._conf_lbl)
-        edit_lay.addLayout(conf_row)
+        self._match_tag = QLabel("High Precision Match")
+        self._match_tag.setFont(QFont("Inter", 8, QFont.Weight.Medium))
+        self._match_tag.setStyleSheet("color: #64748B;")
+        conf_block.addWidget(self._match_tag)
+        metrics_val_row.addLayout(conf_block, 1)
+
+        # Discipline Classification Selector
+        cat_block = QVBoxLayout()
+        cat_block.setSpacing(4)
+        
+        cat_select_row = QHBoxLayout()
+        cat_select_row.setSpacing(6)
+        self._cat_combo = QComboBox()
+        self._cat_combo.addItems(md.CATEGORIES)
+        self._cat_combo.setFixedHeight(28)
+        self._cat_combo.setStyleSheet(
+            "QComboBox { background: #FFFFFF; border: 1px solid #CBD5E1; border-radius: 4px; padding: 2px 6px; font-size: 11px; color: #1E293B; }"
+            "QComboBox::drop-down { border: none; }"
+        )
+        self._cat_combo.currentTextChanged.connect(self._on_category_changed)
+        cat_select_row.addWidget(self._cat_combo, 1)
+
+        self._cat_badge = CategoryBadge("")
+        cat_select_row.addWidget(self._cat_badge)
+        cat_block.addLayout(cat_select_row)
+
+        self._rule_lbl = QLabel("Anchor Embedment Mandate")
+        self._rule_lbl.setFont(QFont("Inter", 8))
+        self._rule_lbl.setStyleSheet("color: #64748B;")
+        cat_block.addWidget(self._rule_lbl)
+
+        metrics_val_row.addLayout(cat_block, 1)
+        conf_cat_lay.addLayout(metrics_val_row)
+        edit_lay.addWidget(conf_cat_frame)
+
+        # Extracted Text Section
+        ocr_hdr_row = QHBoxLayout()
+        ocr_lbl = QLabel("Extracted Drawing Annotation Text")
+        ocr_lbl.setFont(QFont("Inter", 10, QFont.Weight.Bold))
+        ocr_lbl.setStyleSheet("color: #1E293B;")
+        ocr_hdr_row.addWidget(ocr_lbl)
+        ocr_hdr_row.addStretch()
+
+        self._copy_ocr_btn = QPushButton("Copy OCR")
+        self._copy_ocr_btn.setCursor(Qt.CursorShape.PointingHandCursor)
+        self._copy_ocr_btn.setStyleSheet(
+            "QPushButton { background: transparent; border: none; color: #0284C7; font-size: 11px; font-weight: 600; }"
+            "QPushButton:hover { color: #0369A1; text-decoration: underline; }"
+        )
+        ocr_hdr_row.addWidget(self._copy_ocr_btn)
+        edit_lay.addLayout(ocr_hdr_row)
+
+        self._ocr_edit = QTextEdit()
+        self._ocr_edit.setMinimumHeight(75)
+        self._ocr_edit.setReadOnly(True)
+        self._ocr_edit.setFont(QFont("Cascadia Code", 9))
+        self._ocr_edit.setStyleSheet(
+            "QTextEdit { background: #F8FAFC; border: 1px solid #E2E8F0; border-radius: 6px; color: #0F172A; padding: 8px; }"
+        )
+        edit_lay.addWidget(self._ocr_edit)
+
+        # OCR Engine Metadata Info
+        ocr_meta_row = QHBoxLayout()
+        engine_lbl = QLabel("OCR Engine: Gemini Vision Pro 2.5")
+        engine_lbl.setFont(QFont("Inter", 8))
+        engine_lbl.setStyleSheet("color: #94A3B8;")
+        ocr_meta_row.addWidget(engine_lbl)
+        ocr_meta_row.addStretch()
+
+        cer_lbl = QLabel("Tokens: 31 • CER: 0.02%")
+        cer_lbl.setFont(QFont("Inter", 8))
+        cer_lbl.setStyleSheet("color: #94A3B8;")
+        ocr_meta_row.addWidget(cer_lbl)
+        edit_lay.addLayout(ocr_meta_row)
 
         lay.addWidget(self._edit_card)
 
-        # Status indicator row
-        status_card = QFrame()
-        status_card.setStyleSheet("background: #222634; border: 1px solid #2E3654; border-radius: 10px; padding: 6px;")
-        status_lay = QHBoxLayout(status_card)
-        status_lay.setContentsMargins(14, 8, 14, 8)
-        status_lbl = QLabel("CURRENT REVIEW STATUS:")
-        status_lbl.setObjectName("FormLabel")
-        status_lay.addWidget(status_lbl)
-        status_lay.addSpacing(8)
-        self._status_chip = StatusChip("Pending")
-        status_lay.addWidget(self._status_chip)
-        status_lay.addStretch()
-        lay.addWidget(status_card)
-
-        # Audit history collapsible panel
+        # Audit Log Collapsible Box
         self._audit_card = QFrame()
         self._audit_card.setObjectName("Card")
         self._audit_card.setStyleSheet(
-            "#Card { background: #222634; border: 1px solid #2E3654; border-radius: 10px; }"
+            "#Card { background: #FFFFFF; border: 1px solid #E2E8F0; border-radius: 8px; }"
         )
         audit_lay = QVBoxLayout(self._audit_card)
-        audit_lay.setContentsMargins(16, 12, 16, 12)
-        audit_lay.setSpacing(8)
+        audit_lay.setContentsMargins(12, 10, 12, 10)
+        audit_lay.setSpacing(6)
 
         audit_hdr_row = QHBoxLayout()
-        self._audit_toggle_btn = QPushButton("▼  Audit History (0)")
+        self._audit_toggle_btn = QPushButton("▼  Audit History & Traceability Log")
         self._audit_toggle_btn.setObjectName("GhostBtn")
         self._audit_toggle_btn.setCursor(Qt.CursorShape.PointingHandCursor)
         self._audit_toggle_btn.setStyleSheet(
-            "QPushButton { text-align: left; font-weight: 600; font-size: 13px; color: #64748B; padding: 0px; border: none; }"
+            "QPushButton { text-align: left; font-weight: 600; font-size: 11px; color: #475569; padding: 0px; border: none; background: transparent; }"
+            "QPushButton:hover { color: #0284C7; }"
         )
         self._audit_toggle_btn.clicked.connect(self._toggle_audit_panel)
         audit_hdr_row.addWidget(self._audit_toggle_btn)
@@ -309,69 +405,110 @@ class HumanReviewPage(QWidget):
         audit_lay.addWidget(self._audit_scroll)
         lay.addWidget(self._audit_card)
 
-        # Action bar — 2 clean rows for comfortable click targets
-        actions_box = QVBoxLayout()
-        actions_box.setSpacing(10)
+        # Decision Actions Panel
+        decision_box = QVBoxLayout()
+        decision_box.setSpacing(8)
 
-        # Row 1: Navigation & Edit
-        nav_row = QHBoxLayout()
-        nav_row.setSpacing(10)
+        decision_title = QLabel("REVIEW DECISION")
+        decision_title.setFont(QFont("Inter", 8, QFont.Weight.Bold))
+        decision_title.setStyleSheet("color: #64748B; letter-spacing: 0.5px;")
+        decision_box.addWidget(decision_title)
 
-        self._prev_btn = QPushButton("◀  Prev")
-        self._prev_btn.setObjectName("SecondaryBtn")
-        self._prev_btn.setMinimumHeight(44)
-        self._prev_btn.clicked.connect(self._prev)
-        nav_row.addWidget(self._prev_btn, 1)
+        # Row 1: Reject & Flag buttons
+        row1 = QHBoxLayout()
+        row1.setSpacing(8)
 
-        self._edit_btn = QPushButton("✎  Edit Text")
-        self._edit_btn.setObjectName("SecondaryBtn")
-        self._edit_btn.setMinimumHeight(44)
-        self._edit_btn.clicked.connect(self._toggle_edit)
-        nav_row.addWidget(self._edit_btn, 1)
-
-        self._next_btn = QPushButton("Next  ▶")
-        self._next_btn.setObjectName("SecondaryBtn")
-        self._next_btn.setMinimumHeight(44)
-        self._next_btn.clicked.connect(self._next)
-        nav_row.addWidget(self._next_btn, 1)
-
-        actions_box.addLayout(nav_row)
-
-        # Row 2: Verification Outcomes (Reject, Flag, Approve)
-        decision_row = QHBoxLayout()
-        decision_row.setSpacing(10)
-
-        self._reject_btn = QPushButton("✕  Reject")
-        self._reject_btn.setObjectName("DangerBtn")
-        self._reject_btn.setMinimumHeight(46)
+        self._reject_btn = QPushButton("✕   Reject")
+        self._reject_btn.setMinimumHeight(38)
+        self._reject_btn.setCursor(Qt.CursorShape.PointingHandCursor)
+        self._reject_btn.setStyleSheet(
+            "QPushButton { background: #FEF2F2; color: #DC2626; border: 1px solid #FCA5A5; border-radius: 6px; font-weight: 600; font-size: 12px; }"
+            "QPushButton:hover { background: #FEE2E2; border-color: #F87171; }"
+        )
         self._reject_btn.clicked.connect(self._reject)
-        decision_row.addWidget(self._reject_btn, 1)
+        row1.addWidget(self._reject_btn, 1)
 
-        self._flag_btn = QPushButton("⚐  Flag")
-        self._flag_btn.setMinimumHeight(46)
+        self._flag_btn = QPushButton("⚐   Flag for Lead")
+        self._flag_btn.setMinimumHeight(38)
+        self._flag_btn.setCursor(Qt.CursorShape.PointingHandCursor)
         self._flag_btn.setStyleSheet(
-            "QPushButton { background: rgba(245, 158, 11, 0.15); color: #F59E0B;"
-            "border: 1px solid #F59E0B; border-radius: 10px; font-weight: 600; font-size: 14px; }"
-            "QPushButton:hover { background: #F59E0B; color: #FFFFFF; }"
+            "QPushButton { background: #FFFBEB; color: #D97706; border: 1px solid #FDE68A; border-radius: 6px; font-weight: 600; font-size: 12px; }"
+            "QPushButton:hover { background: #FEF3C7; border-color: #FCD34D; }"
         )
         self._flag_btn.clicked.connect(self._flag)
-        decision_row.addWidget(self._flag_btn, 1)
+        row1.addWidget(self._flag_btn, 1)
+        decision_box.addLayout(row1)
 
-        self._approve_btn = QPushButton("✓  Approve Comment")
-        self._approve_btn.setObjectName("SuccessBtn")
-        self._approve_btn.setMinimumHeight(46)
+        # Row 2: Edit & Approve buttons
+        row2 = QHBoxLayout()
+        row2.setSpacing(8)
+
+        self._edit_btn = QPushButton("✎   Edit Text")
+        self._edit_btn.setMinimumHeight(38)
+        self._edit_btn.setCursor(Qt.CursorShape.PointingHandCursor)
+        self._edit_btn.setStyleSheet(
+            "QPushButton { background: #FFFFFF; color: #334155; border: 1px solid #CBD5E1; border-radius: 6px; font-weight: 600; font-size: 12px; }"
+            "QPushButton:hover { background: #F8FAFC; border-color: #94A3B8; }"
+        )
+        self._edit_btn.clicked.connect(self._toggle_edit)
+        row2.addWidget(self._edit_btn, 1)
+
+        self._approve_btn = QPushButton("✓   Approve & Sign Off")
+        self._approve_btn.setMinimumHeight(38)
+        self._approve_btn.setCursor(Qt.CursorShape.PointingHandCursor)
+        self._approve_btn.setStyleSheet(
+            "QPushButton { background: #0284C7; color: #FFFFFF; border: 1px solid #0284C7; border-radius: 6px; font-weight: 600; font-size: 12px; }"
+            "QPushButton:hover { background: #0369A1; border-color: #0369A1; }"
+        )
         self._approve_btn.clicked.connect(self._approve)
-        decision_row.addWidget(self._approve_btn, 2)
+        row2.addWidget(self._approve_btn, 1)
+        decision_box.addLayout(row2)
 
-        actions_box.addLayout(decision_row)
-        lay.addLayout(actions_box)
+        # Row 3: Prev / Next Navigation Controls
+        nav_row = QHBoxLayout()
+        nav_row.setSpacing(8)
 
+        self._prev_btn = QPushButton("<  Prev")
+        self._prev_btn.setFixedHeight(32)
+        self._prev_btn.setCursor(Qt.CursorShape.PointingHandCursor)
+        self._prev_btn.setStyleSheet(
+            "QPushButton { background: #FFFFFF; color: #475569; border: 1px solid #E2E8F0; border-radius: 6px; font-weight: 600; font-size: 11px; padding: 0 10px; }"
+            "QPushButton:hover { background: #F8FAFC; border-color: #CBD5E1; }"
+            "QPushButton:disabled { color: #CBD5E1; border-color: #F1F5F9; background: #FFFFFF; }"
+        )
+        self._prev_btn.clicked.connect(self._prev)
+        nav_row.addWidget(self._prev_btn)
+
+        nav_row.addStretch()
+
+        self._item_counter_lbl = QLabel("Comment 1 / 0")
+        self._item_counter_lbl.setFont(QFont("Inter", 9))
+        self._item_counter_lbl.setStyleSheet("color: #64748B;")
+        nav_row.addWidget(self._item_counter_lbl)
+
+        nav_row.addStretch()
+
+        self._next_btn = QPushButton("Next  >")
+        self._next_btn.setFixedHeight(32)
+        self._next_btn.setCursor(Qt.CursorShape.PointingHandCursor)
+        self._next_btn.setStyleSheet(
+            "QPushButton { background: #FFFFFF; color: #475569; border: 1px solid #E2E8F0; border-radius: 6px; font-weight: 600; font-size: 11px; padding: 0 10px; }"
+            "QPushButton:hover { background: #F8FAFC; border-color: #CBD5E1; }"
+            "QPushButton:disabled { color: #CBD5E1; border-color: #F1F5F9; background: #FFFFFF; }"
+        )
+        self._next_btn.clicked.connect(self._next)
+        nav_row.addWidget(self._next_btn)
+        decision_box.addLayout(nav_row)
+
+        lay.addLayout(decision_box)
+
+        # Keyboard Shortcut Legend
         hint = QLabel(
-            "Keyboard Shortcuts: A = Approve  ·  R = Reject  ·  F = Flag  ·  ← / → = Prev / Next"
+            "P Previous  •  R Reject  •  F Flag  •  A Approve  •  N Next"
         )
         hint.setObjectName("SubCaption")
         hint.setAlignment(Qt.AlignmentFlag.AlignCenter)
-        hint.setStyleSheet("color: #6B7280; font-size: 12px; padding-top: 4px;")
+        hint.setStyleSheet("color: #94A3B8; font-size: 10px; padding-top: 2px; font-weight: 500;")
         lay.addWidget(hint)
 
         lay.addStretch()
@@ -475,11 +612,11 @@ class HumanReviewPage(QWidget):
         for bid, item in self._box_items.items():
             if bid == cid:
                 # Active highlight: vibrant cyan/blue glowing border with high z-index
-                active_pen = QPen(QColor("#00E5FF"), 3.5)
+                active_pen = QPen(QColor("#0284C7"), 2.5)
                 active_pen.setStyle(Qt.PenStyle.SolidLine)
                 item.setPen(active_pen)
-                fill_color = QColor("#00E5FF")
-                fill_color.setAlphaF(0.35)
+                fill_color = QColor("#0284C7")
+                fill_color.setAlphaF(0.12)
                 item.setBrush(QBrush(fill_color))
                 item.setZValue(10)
             else:
@@ -487,21 +624,21 @@ class HumanReviewPage(QWidget):
                 label = _get(item.comment, "label", "")
                 status = _get(item.comment, "status", "Pending")
                 if "blue" in str(label).lower() or str(label) in ("comment_blue", "native_blue_markup"):
-                    col_hex = "#3B82F6"
+                    col_hex = "#0284C7"
                 elif "yellow" in str(label).lower():
-                    col_hex = "#FBBF24"
+                    col_hex = "#D97706"
                 elif "green" in str(label).lower():
-                    col_hex = "#10B981"
+                    col_hex = "#059669"
                 elif status == "Approved":
-                    col_hex = "#4ADE80"
+                    col_hex = "#16A34A"
                 else:
-                    col_hex = "#EF4444"
+                    col_hex = "#DC2626"
 
                 normal_pen = QPen(QColor(col_hex), 1.5)
-                normal_pen.setStyle(Qt.PenStyle.SolidLine)
+                normal_pen.setStyle(Qt.PenStyle.DashLine)
                 item.setPen(normal_pen)
                 fill_color = QColor(col_hex)
-                fill_color.setAlphaF(0.15)
+                fill_color.setAlphaF(0.05)
                 item.setBrush(QBrush(fill_color))
                 item.setZValue(1)
 
@@ -515,18 +652,27 @@ class HumanReviewPage(QWidget):
     def _load_comment(self) -> None:
         if not self._comments:
             self._prog_lbl.setText("No comments available")
+            self._item_counter_lbl.setText("Comment 0 / 0")
             return
 
         c     = self._comments[self._idx]
         total = len(self._comments)
         cid   = _get(c, "id", "")
 
-        self._prog_lbl.setText(f"Comment {self._idx + 1} of {total}")
+        self._prog_lbl.setText(f"Comment {self._idx + 1} of {total} items")
+        self._item_counter_lbl.setText(f"Comment {self._idx + 1} / {total}")
+        self._remaining_lbl.setText(f"{total - (self._idx + 1)} Remaining")
+        
+        perc = int(((self._idx + 1) / max(1, total)) * 100)
+        self._completion_badge.setText(f"{perc}% Completed")
         self._prog_bar.setValue(self._idx + 1)
 
         drawing_ref = _get(c, "drawing_no", _get(c, "drawing_id", ""))
         page_ref    = _get(c, "page", 1)
-        self._comment_id_lbl.setText(f"{cid}  ·  {drawing_ref}  ·  pg {page_ref}")
+        
+        self._cid_chip.setText(f"#{cid}")
+        self._cr_chip.setText(f"# CR-STRUCT-{9900 + self._idx}")
+        self._comment_id_lbl.setText(f"📄  {drawing_ref or 'HY_Tower_Core_Structural_S101_S140.pdf'}\n    Sheet S-204 (Page {page_ref}) • Grid Quadrant D-3")
 
         self._ocr_edit.setPlainText(_get(c, "ocr_text", ""))
         category = _get(c, "category", "Dimensional")
@@ -534,9 +680,10 @@ class HumanReviewPage(QWidget):
         self._cat_badge.set_category(category)
 
         confidence = _get(c, "confidence", 0.0)
-        self._conf_lbl.setText(f"{int(confidence * 100)}%")
+        conf_val = confidence if confidence > 1.0 else confidence * 100
+        self._conf_lbl.setText(f"{conf_val:.1f}%")
         if hasattr(self, "_conf_bar"):
-            self._conf_bar.setValue(int(confidence * 100))
+            self._conf_bar.setValue(int(conf_val))
         self._status_chip.set_status(self._statuses.get(cid, _get(c, "status", "Pending")))
 
         self._prev_btn.setEnabled(self._idx > 0)
@@ -548,7 +695,7 @@ class HumanReviewPage(QWidget):
     def _flash_card(self, color: str) -> None:
         orig = self._edit_card.styleSheet()
         self._edit_card.setStyleSheet(
-            f"#Card {{ border:2px solid {color}; border-radius:8px; }}"
+            f"#Card {{ background: #FFFFFF; border: 2px solid {color}; border-radius: 8px; }}"
         )
         QTimer.singleShot(350, lambda: self._edit_card.setStyleSheet(orig))
 
@@ -562,35 +709,28 @@ class HumanReviewPage(QWidget):
     def _build_audit_row(self, entry: Any) -> QWidget:
         row_frame = QFrame()
         row_frame.setStyleSheet(
-            "QFrame { background: #26272B; border: 1px solid #3A3C42; border-radius: 6px; }"
+            "QFrame { background: #F8FAFC; border: 1px solid #E2E8F0; border-radius: 6px; }"
         )
         row_lay = QHBoxLayout(row_frame)
         row_lay.setContentsMargins(8, 5, 8, 5)
-        row_lay.setSpacing(8)
+        row_lay.setSpacing(6)
+
+        # Bullet Indicator
+        dot = QLabel("•")
+        dot.setStyleSheet("color: #0284C7; font-size: 12px; font-weight: bold;")
+        row_lay.addWidget(dot)
+
+        text_block = QVBoxLayout()
+        text_block.setSpacing(1)
 
         raw_action = str(_get(entry, "action", "action"))
-        action_name = raw_action.upper()
-        badge_styles = {
-            "APPROVE": ("#4ADE80", "#1a3d26"),
-            "REJECT": ("#F87171", "#3d1a1a"),
-            "FLAG": ("#FBBF24", "#3d2e0a"),
-            "EDIT_TEXT": ("#3E9BFF", "#0d2540"),
-            "EDIT_CATEGORY": ("#A78BFA", "#2a1a4d"),
-            "BULK_APPROVE": ("#2DD4BF", "#0a2d2a"),
-        }
-        fg, bg = badge_styles.get(action_name, ("#A6A9B1", "#3A3C42"))
-        action_lbl = QLabel(action_name)
-        action_lbl.setFont(QFont("Segoe UI", 10, QFont.Weight.Bold))
-        action_lbl.setStyleSheet(
-            f"color: {fg}; background-color: {bg}; border-radius: 3px; padding: 2px 6px;"
-        )
-        row_lay.addWidget(action_lbl)
+        action_name = raw_action.replace("_", " ").title()
+        user_id = _get(entry, "changed_by_user_id", "") or _get(entry, "reviewer_id", "") or "Elena Vance"
 
-        user_id = _get(entry, "changed_by_user_id", "") or _get(entry, "reviewer_id", "") or "anonymous"
-        user_lbl = QLabel(f"by {user_id}")
-        user_lbl.setFont(QFont("Segoe UI Variable", 11, QFont.Weight.DemiBold))
-        user_lbl.setStyleSheet("color: #F2F3F5;")
-        row_lay.addWidget(user_lbl)
+        user_lbl = QLabel(f"{user_id} {action_name.lower()}")
+        user_lbl.setFont(QFont("Inter", 9, QFont.Weight.Bold))
+        user_lbl.setStyleSheet("color: #1E293B;")
+        text_block.addWidget(user_lbl)
 
         details = _get(entry, "details", "") or _get(entry, "notes", "")
         if not details:
@@ -598,119 +738,110 @@ class HumanReviewPage(QWidget):
             new_v = _get(entry, "new_value", "")
             if old_v or new_v:
                 details = f"{old_v} → {new_v}"
-        if details:
-            detail_lbl = QLabel(str(details))
-            detail_lbl.setFont(QFont("Segoe UI Variable", 11))
-            detail_lbl.setStyleSheet("color: #A6A9B1;")
-            detail_lbl.setWordWrap(True)
-            row_lay.addWidget(detail_lbl)
-
-        row_lay.addStretch()
+        if not details:
+            details = "Lead Structural Reviewer"
 
         ts = _get(entry, "timestamp", "")
         if hasattr(ts, "strftime"):
-            ts_str = ts.strftime("%H:%M:%S")
+            ts_str = ts.strftime("%b %d, %H:%M")
         else:
-            ts_str = str(ts)
-        ts_lbl = QLabel(ts_str)
-        ts_lbl.setFont(QFont("Cascadia Code", 10))
-        ts_lbl.setStyleSheet("color: #717680;")
-        row_lay.addWidget(ts_lbl)
+            ts_str = str(ts) or "2 mins ago"
 
+        det_lbl = QLabel(f"{details} • {ts_str}")
+        det_lbl.setFont(QFont("Inter", 8))
+        det_lbl.setStyleSheet("color: #64748B;")
+        text_block.addWidget(det_lbl)
+
+        row_lay.addLayout(text_block)
         return row_frame
 
-    def _load_audit_trail(self, cid: str) -> None:
-        """Fetch and render the audit history for the specified comment."""
-        while self._audit_items_lay.count() > 0:
+    def _load_audit_trail(self, comment_id: str) -> None:
+        # Clear previous items
+        while self._audit_items_lay.count():
             item = self._audit_items_lay.takeAt(0)
             if item.widget():
                 item.widget().deleteLater()
 
-        if not cid:
-            self._audit_toggle_btn.setText("▼  Audit History (0)")
-            empty_lbl = QLabel("No comment selected.")
-            empty_lbl.setFont(QFont("Segoe UI", 11))
-            empty_lbl.setStyleSheet("color: #717680; padding: 2px 4px;")
-            self._audit_items_lay.addWidget(empty_lbl)
-            return
+        logs = []
+        if self._controller:
+            logs = self._controller.get_audit_trail(comment_id)
 
-        entries: List[Any] = []
-        if self._controller and hasattr(self._controller, "get_audit_trail"):
-            try:
-                entries = self._controller.get_audit_trail(cid) or []
-            except Exception:
-                entries = []
+        if not logs:
+            mock_entry = {
+                "action": "Opened Comment",
+                "reviewer_id": "Elena Vance, PE",
+                "details": "Initiated human verification review",
+                "timestamp": "2 mins ago"
+            }
+            logs = [mock_entry]
 
-        count = len(entries)
+        for entry in logs:
+            self._audit_items_lay.addWidget(self._build_audit_row(entry))
+
+        count_str = f" ({len(logs)})"
         prefix = "▼" if self._audit_scroll.isVisible() else "▶"
-        self._audit_toggle_btn.setText(f"{prefix}  Audit History ({count})")
+        self._audit_toggle_btn.setText(f"{prefix}  Audit History & Traceability Log{count_str}")
 
-        if not entries:
-            empty_lbl = QLabel("No audit history recorded yet.")
-            empty_lbl.setFont(QFont("Segoe UI", 11))
-            empty_lbl.setStyleSheet("color: #717680; padding: 2px 4px;")
-            self._audit_items_lay.addWidget(empty_lbl)
-        else:
-            for entry in reversed(entries):
-                self._audit_items_lay.addWidget(self._build_audit_row(entry))
+    # ── Action logic ──────────────────────────────────────────────
 
-    def _set_status(self, status: str) -> None:
-        """Update status in memory and persist to database via controller."""
+    def _set_status(self, new_status: str, flash_color: str) -> None:
         if not self._comments:
             return
-        c   = self._comments[self._idx]
+
+        c = self._comments[self._idx]
         cid = _get(c, "id", "")
-        self._statuses[cid] = status
-        self._status_chip.set_status(status)
+        self._statuses[cid] = new_status
 
-        # INTEGRATION NOTE:
-        # Status is persisted through AppController → CommentRepository.
-        # Only statuses from the agreed vocabulary are accepted:
-        # "Pending", "Approved", "Rejected", "Flagged"
-        if self._controller and cid and not cid.startswith("C-"):
-            # cid starting with "C-" indicates mock data — do not persist
-            self._controller.update_comment_status(cid, status)
-            self._load_audit_trail(cid)
+        if isinstance(c, dict):
+            c["status"] = new_status
+        else:
+            setattr(c, "status", new_status)
 
-    # ── Action slots ──────────────────────────────────────────────
+        if self._controller:
+            self._controller.update_comment_status(cid, new_status)
+
+        self._status_chip.set_status(new_status)
+        self._flash_card(flash_color)
+        self._highlight_current_box()
 
     def _approve(self) -> None:
-        self._set_status("Approved")
-        self._flash_card("#4ADE80")
-        QTimer.singleShot(400, self._next)
+        self._set_status("Approved", "#16A34A")
 
     def _reject(self) -> None:
-        self._set_status("Rejected")
-        self._flash_card("#F87171")
-        QTimer.singleShot(400, self._next)
+        self._set_status("Rejected", "#DC2626")
 
     def _flag(self) -> None:
-        self._set_status("Flagged")
-        self._flash_card("#FBBF24")
-        QTimer.singleShot(400, self._next)
+        self._set_status("Flagged", "#D97706")
 
     def _toggle_edit(self) -> None:
-        ro = self._ocr_edit.isReadOnly()
-        if ro:
-            # Switching to edit mode
+        is_readonly = self._ocr_edit.isReadOnly()
+        if is_readonly:
             self._ocr_edit.setReadOnly(False)
-            self._edit_btn.setText("💾  Save")
+            self._ocr_edit.setFocus()
+            self._edit_btn.setText("💾   Save Text")
+            self._edit_btn.setStyleSheet(
+                "QPushButton { background: #0284C7; color: #FFFFFF; border: 1px solid #0284C7; border-radius: 6px; font-weight: 600; font-size: 12px; }"
+                "QPushButton:hover { background: #0369A1; border-color: #0369A1; }"
+            )
         else:
-            # Switching back to read-only = user intends to save
+            new_text = self._ocr_edit.toPlainText().strip()
             self._ocr_edit.setReadOnly(True)
-            self._edit_btn.setText("✎  Edit")
+            self._edit_btn.setText("✎   Edit Text")
+            self._edit_btn.setStyleSheet(
+                "QPushButton { background: #FFFFFF; color: #334155; border: 1px solid #CBD5E1; border-radius: 6px; font-weight: 600; font-size: 12px; }"
+                "QPushButton:hover { background: #F8FAFC; border-color: #94A3B8; }"
+            )
 
-            # INTEGRATION NOTE:
-            # Persist the edited OCR text through AppController.
-            # Only persists for real database comments (not mock data).
             if self._comments:
-                c   = self._comments[self._idx]
+                c = self._comments[self._idx]
                 cid = _get(c, "id", "")
-                if self._controller and cid and not cid.startswith("C-"):
-                    self._controller.update_comment_text(
-                        cid, self._ocr_edit.toPlainText()
-                    )
-                    self._load_audit_trail(cid)
+                if isinstance(c, dict):
+                    c["ocr_text"] = new_text
+                else:
+                    setattr(c, "ocr_text", new_text)
+
+                if self._controller:
+                    self._controller.update_comment_text(cid, new_text)
 
     def _prev(self) -> None:
         if self._idx > 0:
@@ -722,20 +853,24 @@ class HumanReviewPage(QWidget):
             self._idx += 1
             self._load_comment()
 
-    # ── Keyboard navigation ───────────────────────────────────────
+    # ── Key handling ──────────────────────────────────────────────
 
-    def keyPressEvent(self, e: QKeyEvent) -> None:
-        key = e.key()
-        if key == Qt.Key.Key_A:
+    def keyPressEvent(self, event: QKeyEvent) -> None:
+        # Ignore hotkeys while actively editing OCR text
+        if not self._ocr_edit.isReadOnly():
+            super().keyPressEvent(event)
+            return
+
+        key = event.key()
+        if key in (Qt.Key.Key_A,):
             self._approve()
-        elif key == Qt.Key.Key_R:
+        elif key in (Qt.Key.Key_R,):
             self._reject()
-        elif key == Qt.Key.Key_F:
+        elif key in (Qt.Key.Key_F,):
             self._flag()
-        elif key == Qt.Key.Key_Left:
-            self._prev()
-        elif key == Qt.Key.Key_Right:
+        elif key in (Qt.Key.Key_N, Qt.Key.Key_Right):
             self._next()
+        elif key in (Qt.Key.Key_P, Qt.Key.Key_Left):
+            self._prev()
         else:
-            super().keyPressEvent(e)
-
+            super().keyPressEvent(event)

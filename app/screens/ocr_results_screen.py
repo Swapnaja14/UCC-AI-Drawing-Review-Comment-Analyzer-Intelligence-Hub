@@ -1,10 +1,10 @@
 """
-ocr_results_screen.py — OCR Results screen.
+ocr_results_screen.py — Redesigned OCR Results screen matching enterprise Stitch UI.
 
 Provides:
     OcrResultsPage(QWidget)
         Editable table of OCR-extracted comment text with confidence bars,
-        status chips, a search bar, status filter, and pagination controls.
+        status chips, search bar, status filter, and pagination controls.
 
 ARCHITECTURE NOTE:
 This screen loads comments through AppController.get_comments_for_drawing()
@@ -18,17 +18,29 @@ UI code in this file must NOT:
 MOCK DATA FALLBACK:
 When no controller is present or the database has no comments for the loaded
 drawing, the screen falls back to app/mock_data.py COMMENTS so that the UI
-remains functional during development. This fallback is intentional and must
-be retained until the OCR/AI pipeline populates the database.
+remains functional during development.
 """
 from __future__ import annotations
 from typing import Any, Dict, List, Optional, Union
 
-from PySide6.QtWidgets import (QWidget, QVBoxLayout, QHBoxLayout, QFrame,
-                                QLabel, QTableView, QPushButton, QComboBox,
-                                QHeaderView, QAbstractItemView, QDialog,
-                                QTextEdit, QScrollArea, QMessageBox)
-from PySide6.QtGui import QFont, QStandardItemModel, QStandardItem
+from PySide6.QtWidgets import (
+    QWidget,
+    QVBoxLayout,
+    QHBoxLayout,
+    QFrame,
+    QLabel,
+    QTableView,
+    QPushButton,
+    QComboBox,
+    QHeaderView,
+    QAbstractItemView,
+    QDialog,
+    QTextEdit,
+    QScrollArea,
+    QMessageBox,
+    QGraphicsDropShadowEffect,
+)
+from PySide6.QtGui import QFont, QStandardItemModel, QStandardItem, QColor
 from PySide6.QtCore import Qt, QSortFilterProxyModel
 
 from app import mock_data as md
@@ -36,6 +48,34 @@ from app.components.comment_table import ConfidenceDelegate, StatusDelegate
 from app.components.search_bar import SearchBar
 from src.services.text_cleaning_service import TextCleaningService
 from src.core.dtos.comment_processing_dtos import CleanedCommentDTO, CorrectionDTO
+
+
+def _get(c: Union[Dict[str, Any], Any], field: str, default: Any = "") -> Any:
+    """Access a field from either a normalised display dict or a mock dataclass."""
+    if isinstance(c, dict):
+        return c.get(field, default)
+    return getattr(c, field, default)
+
+
+def _card(parent=None) -> QFrame:
+    """Creates a light rounded card with soft drop shadow matching Stitch theme."""
+    f = QFrame(parent)
+    f.setObjectName("StitchCard")
+    f.setStyleSheet(
+        """
+        QFrame#StitchCard {
+            background-color: #FFFFFF;
+            border: 1px solid #E2E8F0;
+            border-radius: 8px;
+        }
+        """
+    )
+    shadow = QGraphicsDropShadowEffect(f)
+    shadow.setBlurRadius(12)
+    shadow.setColor(QColor(15, 23, 42, 10))
+    shadow.setOffset(0, 3)
+    f.setGraphicsEffect(shadow)
+    return f
 
 
 class CleanTextDialog(QDialog):
@@ -56,6 +96,7 @@ class CleanTextDialog(QDialog):
         self.setMinimumWidth(540)
         self.setMinimumHeight(440)
         self.resize(580, 500)
+        self.setStyleSheet("QDialog { background-color: #F8FAFC; }")
 
         layout = QVBoxLayout(self)
         layout.setContentsMargins(24, 24, 24, 24)
@@ -63,42 +104,54 @@ class CleanTextDialog(QDialog):
 
         # ── Header ────────────────────────────────────────────────
         title_lbl = QLabel("OCR Text Cleaning & Corrections")
-        title_lbl.setObjectName("CardHeader")
+        title_lbl.setFont(QFont("Inter", 14, QFont.Weight.Bold))
+        title_lbl.setStyleSheet("color: #0F172A;")
         layout.addWidget(title_lbl)
 
         cid_lbl = QLabel(f"Comment ID: {comment_id}")
-        cid_lbl.setObjectName("SubCaption")
+        cid_lbl.setFont(QFont("Inter", 9))
+        cid_lbl.setStyleSheet("color: #64748B;")
         layout.addWidget(cid_lbl)
 
         # ── Original Text ─────────────────────────────────────────
         orig_lbl = QLabel("Original Text:")
-        orig_lbl.setStyleSheet("font-weight: 600;")
+        orig_lbl.setFont(QFont("Inter", 9.5, QFont.Weight.Bold))
+        orig_lbl.setStyleSheet("color: #334155;")
         layout.addWidget(orig_lbl)
 
         self._orig_edit = QTextEdit()
         self._orig_edit.setPlainText(original_text)
         self._orig_edit.setReadOnly(True)
         self._orig_edit.setMaximumHeight(70)
+        self._orig_edit.setStyleSheet(
+            "QTextEdit { background-color: #F1F5F9; border: 1px solid #CBD5E1; "
+            "border-radius: 6px; color: #475569; font-family: 'Inter'; font-size: 11px; padding: 6px; }"
+        )
         layout.addWidget(self._orig_edit)
 
         # ── Cleaned Text ──────────────────────────────────────────
         clean_lbl = QLabel("Cleaned Text (Editable):")
-        clean_lbl.setStyleSheet("font-weight: 600;")
+        clean_lbl.setFont(QFont("Inter", 9.5, QFont.Weight.Bold))
+        clean_lbl.setStyleSheet("color: #334155;")
         layout.addWidget(clean_lbl)
 
         self._clean_edit = QTextEdit()
         self._clean_edit.setPlainText(cleaned_dto.cleaned_text)
         self._clean_edit.setMaximumHeight(80)
+        self._clean_edit.setStyleSheet(
+            "QTextEdit { background-color: #FFFFFF; border: 1px solid #0284C7; "
+            "border-radius: 6px; color: #0F172A; font-family: 'Inter'; font-size: 11px; padding: 6px; }"
+        )
         layout.addWidget(self._clean_edit)
 
         # ── Corrections List ──────────────────────────────────────
         corr_count = len(cleaned_dto.corrections) if cleaned_dto.corrections else 0
         corr_header = QLabel(f"Corrections Applied ({corr_count}):")
-        corr_header.setStyleSheet("font-weight: 600;")
+        corr_header.setFont(QFont("Inter", 9.5, QFont.Weight.Bold))
+        corr_header.setStyleSheet("color: #334155;")
         layout.addWidget(corr_header)
 
-        corr_container = QFrame()
-        corr_container.setObjectName("Card")
+        corr_container = _card()
         corr_lay = QVBoxLayout(corr_container)
         corr_lay.setContentsMargins(14, 12, 14, 12)
         corr_lay.setSpacing(8)
@@ -107,15 +160,17 @@ class CleanTextDialog(QDialog):
             for corr in cleaned_dto.corrections:
                 c_type = getattr(corr, "correction_type", "correction")
                 c_lbl = QLabel(
-                    f"• <b>{corr.original}</b> → <b>{corr.corrected}</b> "
-                    f"<i>({c_type})</i>"
+                    f"• <b>{corr.original}</b> → <b style='color: #059669;'>{corr.corrected}</b> "
+                    f"<i style='color: #64748B;'>({c_type})</i>"
                 )
+                c_lbl.setFont(QFont("Inter", 9))
                 c_lbl.setTextFormat(Qt.TextFormat.RichText)
                 c_lbl.setWordWrap(True)
                 corr_lay.addWidget(c_lbl)
         else:
             no_corr_lbl = QLabel("No corrections were necessary — text is already clean.")
-            no_corr_lbl.setStyleSheet("color: #A6A9B1; font-style: italic;")
+            no_corr_lbl.setFont(QFont("Inter", 9))
+            no_corr_lbl.setStyleSheet("color: #94A3B8; font-style: italic;")
             corr_lay.addWidget(no_corr_lbl)
 
         scroll = QScrollArea()
@@ -131,14 +186,22 @@ class CleanTextDialog(QDialog):
         btn_box.addStretch()
 
         cancel_btn = QPushButton("Cancel")
-        cancel_btn.setObjectName("SecondaryBtn")
-        cancel_btn.setFixedHeight(36)
+        cancel_btn.setFixedHeight(34)
+        cancel_btn.setStyleSheet(
+            "QPushButton { background: #FFFFFF; border: 1px solid #CBD5E1; border-radius: 6px; "
+            "padding: 0 14px; color: #334155; font-weight: 500; font-size: 11px; }"
+            "QPushButton:hover { background: #F8FAFC; border-color: #94A3B8; }"
+        )
         cancel_btn.clicked.connect(self.reject)
         btn_box.addWidget(cancel_btn)
 
         save_btn = QPushButton("Save to Comment")
-        save_btn.setObjectName("PrimaryBtn")
-        save_btn.setFixedHeight(36)
+        save_btn.setFixedHeight(34)
+        save_btn.setStyleSheet(
+            "QPushButton { background: #0284C7; border: none; border-radius: 6px; "
+            "padding: 0 16px; color: #FFFFFF; font-weight: 600; font-size: 11px; }"
+            "QPushButton:hover { background: #0369A1; }"
+        )
         save_btn.clicked.connect(self.accept)
         btn_box.addWidget(save_btn)
 
@@ -147,14 +210,6 @@ class CleanTextDialog(QDialog):
     def get_cleaned_text(self) -> str:
         """Return the (potentially user-edited) cleaned text."""
         return self._clean_edit.toPlainText().strip()
-
-
-
-def _get(c: Union[Dict[str, Any], Any], field: str, default: Any = "") -> Any:
-    """Access a field from either a normalised display dict or a mock dataclass."""
-    if isinstance(c, dict):
-        return c.get(field, default)
-    return getattr(c, field, default)
 
 
 class OcrResultsPage(QWidget):
@@ -169,23 +224,72 @@ class OcrResultsPage(QWidget):
         self._page      = 0
         self._page_size = 10
 
-        # Load comments from DB or fall back to mock data
-        # INTEGRATION NOTE:
-        # DB comments are normalised dicts. Mock data items are dataclass objects.
-        # The _get() helper handles both. Once the OCR pipeline populates the DB,
-        # the fallback will naturally be bypassed.
         self._comments: List[Any] = self._load_comments()
 
+        self.setObjectName("OcrResultsRoot")
+        self.setStyleSheet(
+            """
+            QWidget#OcrResultsRoot {
+                background-color: #F8FAFC;
+            }
+            QLabel {
+                background-color: transparent;
+            }
+            """
+        )
+
         root = QVBoxLayout(self)
-        root.setContentsMargins(24, 24, 24, 24)
-        root.setSpacing(16)
+        root.setContentsMargins(20, 16, 20, 16)
+        root.setSpacing(14)
+
+        # ── Header Banner Bar ─────────────────────────────────────────────────
+        header_bar = _card()
+        hb_lay = QHBoxLayout(header_bar)
+        hb_lay.setContentsMargins(16, 12, 16, 12)
+        hb_lay.setSpacing(12)
+
+        doc_icon = QLabel("📄")
+        doc_icon.setFont(QFont("Inter", 14))
+        hb_lay.addWidget(doc_icon)
+
+        title_vbox = QVBoxLayout()
+        title_vbox.setSpacing(2)
+
+        dwg_title_row = QHBoxLayout()
+        dwg_title_row.setSpacing(8)
+
+        lbl_dwg_name = QLabel("OCR Extraction Results")
+        lbl_dwg_name.setFont(QFont("Inter", 12, QFont.Weight.Bold))
+        lbl_dwg_name.setStyleSheet("color: #0F172A;")
+
+        badge_version = QLabel("Live Pipeline")
+        badge_version.setFont(QFont("Inter", 8, QFont.Weight.Bold))
+        badge_version.setStyleSheet(
+            "background: #EFF6FF; color: #2563EB; border: 1px solid #BFDBFE; border-radius: 4px; padding: 2px 6px;"
+        )
+
+        dwg_title_row.addWidget(lbl_dwg_name)
+        dwg_title_row.addWidget(badge_version)
+        dwg_title_row.addStretch()
+
+        lbl_dwg_meta = QLabel("Deep-learning Optical Character Recognition telemetry and spatial coordinates")
+        lbl_dwg_meta.setFont(QFont("Inter", 9.5))
+        lbl_dwg_meta.setStyleSheet("color: #64748B;")
+
+        title_vbox.addLayout(dwg_title_row)
+        title_vbox.addWidget(lbl_dwg_meta)
+        hb_lay.addLayout(title_vbox, 1)
+
+        root.addWidget(header_bar)
 
         # ── Toolbar ───────────────────────────────────────────────
-        tb = QHBoxLayout()
-        tb.setSpacing(12)
+        tb_card = _card()
+        tb = QHBoxLayout(tb_card)
+        tb.setContentsMargins(12, 10, 12, 10)
+        tb.setSpacing(10)
 
         search = SearchBar(
-            placeholder="  🔍  Search OCR text, drawing number…",
+            placeholder="🔍  Search OCR text, drawing number…",
             fixed_width=320,
         )
         tb.addWidget(search)
@@ -193,29 +297,41 @@ class OcrResultsPage(QWidget):
 
         filt = QComboBox()
         filt.addItems(["All Status", "Pending", "Approved", "Rejected", "Flagged"])
-        filt.setFixedHeight(36)
-        filt.setFixedWidth(160)
+        filt.setFixedHeight(34)
+        filt.setFixedWidth(140)
+        filt.setStyleSheet(
+            "QComboBox { background: #FFFFFF; border: 1px solid #CBD5E1; border-radius: 6px; "
+            "padding: 0 8px; color: #334155; font-size: 11px; font-weight: 500; }"
+            "QComboBox::drop-down { border: none; }"
+        )
         tb.addWidget(filt)
 
         clean_btn = QPushButton("✨ Clean Text")
-        clean_btn.setObjectName("PrimaryBtn")
-        clean_btn.setFixedHeight(36)
+        clean_btn.setFixedHeight(34)
         clean_btn.setToolTip("Run TextCleaningService and view corrections")
+        clean_btn.setStyleSheet(
+            "QPushButton { background: #0284C7; border: none; border-radius: 6px; "
+            "padding: 0 14px; color: #FFFFFF; font-weight: 600; font-size: 11px; }"
+            "QPushButton:hover { background: #0369A1; }"
+        )
         clean_btn.clicked.connect(self.clean_selected_comment)
         tb.addWidget(clean_btn)
 
-        export_btn = QPushButton("  ↑  Export")
-        export_btn.setObjectName("SecondaryBtn")
-        export_btn.setFixedHeight(36)
+        export_btn = QPushButton("↑ Export")
+        export_btn.setFixedHeight(34)
+        export_btn.setStyleSheet(
+            "QPushButton { background: #FFFFFF; border: 1px solid #CBD5E1; border-radius: 6px; "
+            "padding: 0 12px; color: #334155; font-weight: 500; font-size: 11px; }"
+            "QPushButton:hover { background: #F8FAFC; border-color: #94A3B8; }"
+        )
         tb.addWidget(export_btn)
 
-        root.addLayout(tb)
+        root.addWidget(tb_card)
 
-        # ── Table ─────────────────────────────────────────────────
-        table_card = QFrame()
-        table_card.setObjectName("Card")
+        # ── Table Card Container ──────────────────────────────────
+        table_card = _card()
         tc_lay = QVBoxLayout(table_card)
-        tc_lay.setContentsMargins(0, 0, 0, 0)
+        tc_lay.setContentsMargins(1, 1, 1, 1)
 
         self._model = self._build_model()
         self._proxy = QSortFilterProxyModel()
@@ -235,57 +351,98 @@ class OcrResultsPage(QWidget):
         self._table.setItemDelegateForColumn(2, ConfidenceDelegate(self._table))
         self._table.setItemDelegateForColumn(3, StatusDelegate(self._table))
 
+        self._table.setStyleSheet(
+            """
+            QTableView {
+                background-color: #FFFFFF;
+                border: none;
+                gridline-color: #F1F5F9;
+                selection-background-color: #F0F9FF;
+                selection-color: #0F172A;
+                font-family: 'Inter';
+                font-size: 11px;
+            }
+            QTableView::item {
+                padding: 8px 10px;
+                border-bottom: 1px solid #F1F5F9;
+            }
+            QTableView::item:selected {
+                background-color: #F0F9FF;
+                color: #0F172A;
+            }
+            QHeaderView::section {
+                background-color: #F8FAFC;
+                color: #64748B;
+                padding: 8px 10px;
+                font-weight: 700;
+                font-size: 10px;
+                border: none;
+                border-bottom: 2px solid #E2E8F0;
+            }
+            """
+        )
+
         hdr = self._table.horizontalHeader()
         hdr.setSectionResizeMode(0, QHeaderView.ResizeMode.ResizeToContents)
         hdr.setSectionResizeMode(1, QHeaderView.ResizeMode.Stretch)
         hdr.setSectionResizeMode(2, QHeaderView.ResizeMode.Fixed)
-        self._table.setColumnWidth(2, 130)
+        self._table.setColumnWidth(2, 140)
         hdr.setSectionResizeMode(3, QHeaderView.ResizeMode.Fixed)
-        self._table.setColumnWidth(3, 120)
+        self._table.setColumnWidth(3, 130)
 
-        # Connect text edits to persistence
-        # INTEGRATION NOTE:
-        # When a user double-clicks and edits OCR text, dataChanged fires.
-        # _on_text_edited() resolves the comment ID from the ID column and
-        # calls AppController.update_comment_text(). For mock data IDs
-        # (format "C-NNNN"), persistence is skipped.
         self._model.dataChanged.connect(self._on_text_edited)
 
         tc_lay.addWidget(self._table)
         root.addWidget(table_card, 1)
 
-        # ── Pagination ────────────────────────────────────────────
-        pag = QHBoxLayout()
+        # ── Pagination Bar ─────────────────────────────────────────
+        pag_card = _card()
+        pag = QHBoxLayout(pag_card)
+        pag.setContentsMargins(12, 8, 12, 8)
         pag.setSpacing(8)
 
         rpp_lbl = QLabel("Rows per page:")
-        rpp_lbl.setObjectName("SubCaption")
+        rpp_lbl.setFont(QFont("Inter", 8.5, QFont.Weight.Medium))
+        rpp_lbl.setStyleSheet("color: #64748B;")
         pag.addWidget(rpp_lbl)
 
         rpp = QComboBox()
         rpp.addItems(["10", "25", "50"])
-        rpp.setFixedHeight(32)
-        rpp.setFixedWidth(70)
+        rpp.setFixedHeight(28)
+        rpp.setFixedWidth(60)
+        rpp.setStyleSheet(
+            "QComboBox { background: #FFFFFF; border: 1px solid #CBD5E1; border-radius: 4px; "
+            "padding: 0 4px; color: #334155; font-size: 10.5px; font-weight: 500; }"
+        )
         pag.addWidget(rpp)
 
         pag.addStretch()
 
         total = len(self._comments)
         self._pg_lbl = QLabel(f"1–{min(self._page_size, total)} of {total}")
-        self._pg_lbl.setObjectName("SubCaption")
+        self._pg_lbl.setFont(QFont("Inter", 8.5, QFont.Weight.Medium))
+        self._pg_lbl.setStyleSheet("color: #64748B;")
         pag.addWidget(self._pg_lbl)
 
         prev_btn = QPushButton("‹")
-        prev_btn.setObjectName("SecondaryBtn")
-        prev_btn.setFixedSize(32, 32)
+        prev_btn.setFixedSize(28, 28)
+        prev_btn.setStyleSheet(
+            "QPushButton { background: #FFFFFF; border: 1px solid #CBD5E1; border-radius: 4px; "
+            "color: #334155; font-weight: bold; font-size: 12px; }"
+            "QPushButton:hover { background: #F8FAFC; }"
+        )
         pag.addWidget(prev_btn)
 
         next_btn = QPushButton("›")
-        next_btn.setObjectName("SecondaryBtn")
-        next_btn.setFixedSize(32, 32)
+        next_btn.setFixedSize(28, 28)
+        next_btn.setStyleSheet(
+            "QPushButton { background: #FFFFFF; border: 1px solid #CBD5E1; border-radius: 4px; "
+            "color: #334155; font-weight: bold; font-size: 12px; }"
+            "QPushButton:hover { background: #F8FAFC; }"
+        )
         pag.addWidget(next_btn)
 
-        root.addLayout(pag)
+        root.addWidget(pag_card)
 
     # ── Data loading ──────────────────────────────────────────────
 
@@ -312,7 +469,7 @@ class OcrResultsPage(QWidget):
     def _build_model(self) -> QStandardItemModel:
         model = QStandardItemModel(0, 4)
         model.setHorizontalHeaderLabels(
-            ["Comment ID", "OCR Text", "Confidence", "Status"]
+            ["COMMENT ID", "EXTRACTED TEXT PAYLOAD", "CONFIDENCE", "STATUS"]
         )
         for c in self._comments:
             self._append_row(c, model)
@@ -333,11 +490,12 @@ class OcrResultsPage(QWidget):
         status     = _get(c, "status", "Pending")
 
         id_item = QStandardItem(cid)
-        id_item.setFont(QFont("Cascadia Code", 12))
+        id_item.setFont(QFont("Cascadia Code", 10, QFont.Weight.Bold))
+        id_item.setForeground(QColor("#0284C7"))
         id_item.setEditable(False)
 
         text_item = QStandardItem(ocr_text)
-        text_item.setEditable(True)   # Inline editing enabled
+        text_item.setEditable(True)
 
         conf_item = QStandardItem()
         conf_item.setData(float(confidence), Qt.ItemDataRole.UserRole)
@@ -359,7 +517,6 @@ class OcrResultsPage(QWidget):
         Clean OCR text for the currently selected comment and display corrections dialog.
         Saves cleaned text back to the database when confirmed by the user.
         """
-        # Determine the selected row
         selection = self._table.selectionModel().selectedRows()
         if not selection:
             current = self._table.currentIndex()
@@ -388,7 +545,6 @@ class OcrResultsPage(QWidget):
         comment_id = id_item.text()
         raw_text = text_item.text()
 
-        # Call text cleaning service via controller
         if self._controller and hasattr(self._controller, "text_cleaning_service") and self._controller.text_cleaning_service:
             cleaning_service = self._controller.text_cleaning_service
         else:
@@ -405,15 +561,12 @@ class OcrResultsPage(QWidget):
 
         if dialog.exec() == QDialog.DialogCode.Accepted:
             new_text = dialog.get_cleaned_text()
-            # Update the table cell
             text_item.setText(new_text)
 
-            # Persist to database via controller
             if self._controller and hasattr(self._controller, "update_comment_text"):
                 if not comment_id.startswith("C-"):
                     self._controller.update_comment_text(comment_id, new_text)
 
-            # Update local in-memory comment list
             for c in self._comments:
                 if _get(c, "id") == comment_id:
                     if isinstance(c, dict):
@@ -425,14 +578,6 @@ class OcrResultsPage(QWidget):
     def _on_text_edited(self, top_left, bottom_right, roles) -> None:
         """
         Persist inline OCR text edits to the database.
-
-        INTEGRATION NOTE:
-        Only column 1 (OCR Text) is editable. When the edit role fires,
-        we retrieve the comment ID from column 0 of the same row and call
-        AppController.update_comment_text().
-
-        Mock data IDs (format "C-NNNN") are skipped — they cannot be
-        persisted because they are not in the database.
         """
         if Qt.ItemDataRole.EditRole not in roles:
             return
@@ -448,6 +593,5 @@ class OcrResultsPage(QWidget):
         comment_id = id_item.text()
         new_text   = text_item.text()
 
-        # Skip mock data — IDs in mock data use "C-NNNN" format
         if self._controller and comment_id and not comment_id.startswith("C-"):
             self._controller.update_comment_text(comment_id, new_text)

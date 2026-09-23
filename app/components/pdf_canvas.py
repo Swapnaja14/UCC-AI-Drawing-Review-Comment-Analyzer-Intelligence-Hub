@@ -48,10 +48,10 @@ from app import mock_data as md
 # ── Status-to-colour mapping ──────────────────────────────────────────────────
 
 _BOX_COLORS: dict[str, tuple[str, float]] = {
-    "Approved": ("#4ADE80", 0.25),
-    "Pending":  ("#FBBF24", 0.25),
-    "Flagged":  ("#F87171", 0.30),
-    "Rejected": ("#F87171", 0.20),
+    "Approved": ("#4EDEA3", 0.25),
+    "Pending":  ("#ADC6FF", 0.25),
+    "Flagged":  ("#FFB95F", 0.30),
+    "Rejected": ("#FFB4AB", 0.20),
 }
 
 # Annotation region colors by detection method/label

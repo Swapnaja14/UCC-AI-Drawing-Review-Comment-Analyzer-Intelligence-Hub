@@ -10,50 +10,50 @@ from PySide6.QtCore import QObject, Signal
 
 THEMES = {
     "dark": {
-        "bg_primary":    "#161925",
-        "bg_secondary":  "#1E2235",
-        "bg_elevated":   "#222634",
-        "bg_hover":      "#2A2F42",
-        "border":        "#2E3654",
-        "border_subtle": "#252B3D",
-        "text_primary":  "#E2E8F0",
-        "text_secondary":"#94A3B8",
-        "text_muted":    "#64748B",
-        "accent":        "#3B82F6",
-        "accent_hover":  "#60A5FA",
-        "accent_muted":  "rgba(59, 130, 246, 0.18)",
-        "success":       "#10B981",
+        "bg_primary":    "#070B12",  # Deep Obsidian Ground
+        "bg_secondary":  "#0F172A",  # Obsidian Surface 1
+        "bg_elevated":   "#1E293B",  # Obsidian Elevated Panel
+        "bg_hover":      "#334155",  # Obsidian Hover State
+        "border":        "#334155",  # Obsidian Divider
+        "border_subtle": "#1E293B",  # Inner Sub-border
+        "text_primary":  "#F8FAFC",  # Obsidian Ice White
+        "text_secondary":"#94A3B8",  # Cyber Slate Text
+        "text_muted":    "#64748B",  # Muted Slate
+        "accent":        "#06B6D4",  # Electric Cyber Teal
+        "accent_hover":  "#2DD4BF",  # Bright Cyber Teal
+        "accent_muted":  "rgba(6, 182, 212, 0.18)", # Cyber Teal Glow
+        "success":       "#10B981",  # Cyber Emerald
         "success_muted": "rgba(16, 185, 129, 0.18)",
-        "warning":       "#F59E0B",
+        "warning":       "#F59E0B",  # Cyber Amber
         "warning_muted": "rgba(245, 158, 11, 0.18)",
-        "danger":        "#EF4444",
-        "danger_muted":  "rgba(239, 68, 68, 0.18)",
-        "info":          "#818CF8",
-        "shadow":        "rgba(0, 0, 0, 0.45)",
-        "scrim":         "rgba(0, 0, 0, 0.65)",
+        "danger":        "#F43F5E",  # Cyber Crimson
+        "danger_muted":  "rgba(244, 63, 94, 0.18)",
+        "info":          "#00F2FE",  # Neon Cyan
+        "shadow":        "rgba(0, 0, 0, 0.65)",
+        "scrim":         "rgba(7, 11, 18, 0.85)",
     },
     "light": {
-        "bg_primary":    "#F8FAFC",
-        "bg_secondary":  "#FFFFFF",
+        "bg_primary":    "#FAF8FF",
+        "bg_secondary":  "#F2F3FF",
         "bg_elevated":   "#FFFFFF",
-        "bg_hover":      "#F1F5F9",
-        "border":        "#E2E8F0",
-        "border_subtle": "#EDF2F7",
-        "text_primary":  "#0F172A",
-        "text_secondary":"#475569",
-        "text_muted":    "#64748B",
-        "accent":        "#2563EB",
-        "accent_hover":  "#1D4ED8",
-        "accent_muted":  "rgba(37, 99, 235, 0.08)",
-        "success":       "#059669",
-        "success_muted": "rgba(5, 150, 105, 0.10)",
-        "warning":       "#D97706",
-        "warning_muted": "rgba(217, 119, 6, 0.10)",
-        "danger":        "#DC2626",
-        "danger_muted":  "rgba(220, 38, 38, 0.10)",
-        "info":          "#4F46E5",
-        "shadow":        "rgba(15, 23, 42, 0.06)",
-        "scrim":         "rgba(15, 23, 42, 0.25)",
+        "bg_hover":      "#EAEDFF",
+        "border":        "#C2C6D4",
+        "border_subtle": "#E2E7FF",
+        "text_primary":  "#131B2E",
+        "text_secondary":"#424752",
+        "text_muted":    "#727784",
+        "accent":        "#0057B8",
+        "accent_hover":  "#00408B",
+        "accent_muted":  "rgba(0, 87, 184, 0.12)",
+        "success":       "#10B981",
+        "success_muted": "rgba(16, 185, 129, 0.12)",
+        "warning":       "#F59E0B",
+        "warning_muted": "rgba(245, 158, 11, 0.12)",
+        "danger":        "#BA1A1A",
+        "danger_muted":  "rgba(186, 26, 26, 0.12)",
+        "info":          "#006688",
+        "shadow":        "rgba(19, 27, 46, 0.08)",
+        "scrim":         "rgba(19, 27, 46, 0.35)",
     },
 }
 

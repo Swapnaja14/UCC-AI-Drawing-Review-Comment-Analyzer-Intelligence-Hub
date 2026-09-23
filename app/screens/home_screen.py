@@ -65,12 +65,12 @@ class _QuickActionTile(QFrame):
 # ── Tile data: (icon, title, description, accent, sidebar page index) ─────────
 
 _QUICK_ACTIONS = [
-    ("📂", "Upload Drawing",   "Import a PDF drawing for analysis",       "#3E9BFF", 1),
-    ("🔍", "PDF Viewer",       "Open and inspect engineering drawings",    "#8B9CFF", 2),
-    ("🏷",  "Review Comments", "Approve, reject, or flag OCR results",    "#4ADE80", 6),
-    ("📊", "Analytics",        "Explore trends and category breakdowns",   "#FBBF24", 7),
+    ("📂", "Upload Drawing",   "Import a PDF drawing for analysis",       "#3B82F6", 1),
+    ("🔍", "PDF Viewer",       "Open and inspect engineering drawings",    "#ADC6FF", 2),
+    ("🏷",  "Review Comments", "Approve, reject, or flag OCR results",    "#4EDEA3", 6),
+    ("📊", "Analytics",        "Explore trends and category breakdowns",   "#FFB95F", 7),
     ("📤", "Export Report",    "Export reviewed data to Excel / PDF",      "#FB923C", 8),
-    ("⚙",  "Settings",         "Manage application preferences",           "#A6A9B1", 9),
+    ("⚙",  "Settings",         "Manage application preferences",           "#C2C6D6", 9),
 ]
 
 
@@ -97,19 +97,20 @@ class HomeScreen(QWidget):
 
         # ── Hero header ───────────────────────────────────────────
         greet = QLabel("Welcome to UCC Analyzer")
-        greet.setFont(QFont("Segoe UI Variable", 28, QFont.Weight.Bold))
+        greet.setFont(QFont("Inter", 28, QFont.Weight.Bold))
         root.addWidget(greet)
 
         sub = QLabel(
             "AI-powered engineering drawing review and comment analysis platform."
         )
         sub.setObjectName("SubCaption")
-        sub.setFont(QFont("Segoe UI", 14))
+        sub.setFont(QFont("Inter", 14))
         root.addWidget(sub)
 
         # ── Section label ─────────────────────────────────────────
         tiles_lbl = QLabel("Quick Actions")
-        tiles_lbl.setFont(QFont("Segoe UI Variable", 17, QFont.Weight.DemiBold))
+        tiles_lbl.setFont(QFont("Inter", 17, QFont.Weight.DemiBold))
+        tiles_lbl.setObjectName("CardHeader")
         tiles_lbl.setObjectName("CardHeader")
         root.addWidget(tiles_lbl)
 

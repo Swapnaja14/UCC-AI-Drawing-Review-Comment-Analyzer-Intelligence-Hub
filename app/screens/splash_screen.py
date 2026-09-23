@@ -50,16 +50,16 @@ class SplashScreen(QWidget):
 
         # App name
         title = QLabel("UCC Analyzer")
-        title.setFont(QFont("Segoe UI Variable", 28, QFont.Weight.Bold))
+        title.setFont(QFont("Inter", 28, QFont.Weight.Bold))
         title.setAlignment(Qt.AlignmentFlag.AlignCenter)
-        title.setStyleSheet("color: #F2F3F5;")
+        title.setStyleSheet("color: #DAE2FD;")
         root.addWidget(title)
 
         # Tagline
         tag = QLabel("AI-Powered Drawing Review & Comment Analysis")
-        tag.setFont(QFont("Segoe UI", 12))
+        tag.setFont(QFont("Inter", 12))
         tag.setAlignment(Qt.AlignmentFlag.AlignCenter)
-        tag.setStyleSheet("color: #A6A9B1;")
+        tag.setStyleSheet("color: #C2C6D6;")
         root.addWidget(tag)
 
         root.addSpacing(28)
@@ -69,9 +69,9 @@ class SplashScreen(QWidget):
         self._bar.setRange(0, 0)
         self._bar.setFixedHeight(4)
         self._bar.setStyleSheet(
-            "QProgressBar { background:#3A3C42; border-radius:2px; }"
+            "QProgressBar { background:#2D3449; border-radius:2px; }"
             "QProgressBar::chunk { background: qlineargradient(x1:0,y1:0,x2:1,y2:0,"
-            "stop:0 #3E9BFF, stop:1 #8B9CFF); border-radius:2px; }"
+            "stop:0 #3B82F6, stop:1 #ADC6FF); border-radius:2px; }"
         )
         root.addWidget(self._bar)
 
@@ -79,9 +79,9 @@ class SplashScreen(QWidget):
 
         # Version
         ver = QLabel("v1.0.0  ·  © 2026 UCC Engineering")
-        ver.setFont(QFont("Segoe UI", 10))
+        ver.setFont(QFont("Inter", 10))
         ver.setAlignment(Qt.AlignmentFlag.AlignCenter)
-        ver.setStyleSheet("color: #5B5F6A;")
+        ver.setStyleSheet("color: #8C909F;")
         root.addWidget(ver)
 
     def paintEvent(self, _) -> None:
@@ -92,8 +92,8 @@ class SplashScreen(QWidget):
 
         # Background gradient
         grad = QLinearGradient(0, 0, 0, self.height())
-        grad.setColorAt(0, QColor("#26272B"))
-        grad.setColorAt(1, QColor("#1E1F22"))
+        grad.setColorAt(0, QColor("#131B2E"))
+        grad.setColorAt(1, QColor("#0B1326"))
         p.fillPath(path, grad)
 
         # Subtle accent glow at top-centre
@@ -101,8 +101,8 @@ class SplashScreen(QWidget):
             self.width() // 2 - 100, 0,
             self.width() // 2 + 100, 80,
         )
-        glow.setColorAt(0,   QColor(62, 155, 255, 0))
-        glow.setColorAt(0.5, QColor(62, 155, 255, 35))
-        glow.setColorAt(1,   QColor(62, 155, 255, 0))
+        glow.setColorAt(0,   QColor(59, 130, 246, 0))
+        glow.setColorAt(0.5, QColor(59, 130, 246, 35))
+        glow.setColorAt(1,   QColor(59, 130, 246, 0))
         p.fillPath(path, glow)
         p.end()

@@ -5,10 +5,10 @@ from PySide6.QtCore import Qt
 from PySide6.QtGui import QFont
 
 _STATUS_COLORS = {
-    "Pending":  ("#9CA3AF", "#252B37", "#3A4252"),
-    "Approved": ("#10B981", "#064E3B", "#059669"),
-    "Rejected": ("#EF4444", "#451A1A", "#DC2626"),
-    "Flagged":  ("#F59E0B", "#452F0A", "#D97706"),
+    "Pending":  ("#C2C6D6", "rgba(194, 198, 214, 0.12)", "#424754"),
+    "Approved": ("#4EDEA3", "rgba(78, 222, 163, 0.12)", "rgba(78, 222, 163, 0.3)"),
+    "Rejected": ("#FFB4AB", "rgba(255, 180, 171, 0.12)", "rgba(255, 180, 171, 0.3)"),
+    "Flagged":  ("#FFB95F", "rgba(255, 185, 95, 0.12)", "rgba(255, 185, 95, 0.3)"),
 }
 _STATUS_COLORS_LIGHT = {
     "Pending":  ("#475569", "#F1F5F9", "#CBD5E1"),
@@ -62,13 +62,16 @@ _CATEGORY_COLORS_LIGHT = {
 
 
 class StatusChip(QLabel):
-    def __init__(self, status: str, dark: bool = False, parent=None):
+    def __init__(self, status: str, dark: bool | None = None, parent=None):
         super().__init__(parent)
+        from app.theme import CURRENT_THEME
+        if dark is None:
+            dark = (CURRENT_THEME == "dark")
         self.set_status(status, dark)
 
-    def set_status(self, status: str, dark: bool = False):
+    def set_status(self, status: str, dark: bool = True):
         palette = _STATUS_COLORS if dark else _STATUS_COLORS_LIGHT
-        text_c, bg_c, border_c = palette.get(status, ("#475569", "#F1F5F9", "#CBD5E1"))
+        text_c, bg_c, border_c = palette.get(status, ("#C2C6D6", "#171F33", "#424754"))
         self.setText(status.upper())
         self.setFont(QFont("Inter", 11, QFont.Weight.Bold))
         self.setAlignment(Qt.AlignmentFlag.AlignCenter)
@@ -81,13 +84,16 @@ class StatusChip(QLabel):
 
 
 class CategoryBadge(QLabel):
-    def __init__(self, category: str, dark: bool = False, parent=None):
+    def __init__(self, category: str, dark: bool | None = None, parent=None):
         super().__init__(parent)
+        from app.theme import CURRENT_THEME
+        if dark is None:
+            dark = (CURRENT_THEME == "dark")
         self.set_category(category, dark)
 
-    def set_category(self, category: str, dark: bool = False):
+    def set_category(self, category: str, dark: bool = True):
         palette = _CATEGORY_COLORS if dark else _CATEGORY_COLORS_LIGHT
-        text_c, bg_c, border_c = palette.get(category, ("#475569", "#F1F5F9", "#E2E8F0"))
+        text_c, bg_c, border_c = palette.get(category, ("#C2C6D6", "#171F33", "#424754"))
         self.setText(category.upper())
         self.setFont(QFont("Inter", 11, QFont.Weight.Bold))
         self.setAlignment(Qt.AlignmentFlag.AlignCenter)

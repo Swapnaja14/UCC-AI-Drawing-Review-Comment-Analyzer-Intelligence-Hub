@@ -72,8 +72,8 @@ class KpiCard(QFrame):
             is_up = trend.startswith("+")
             t_lbl = QLabel(f" {trend} ")
             t_lbl.setFont(QFont("Inter", 11, QFont.Weight.Bold))
-            t_color = "#10B981" if is_up else "#EF4444"
-            t_bg = "rgba(16, 185, 129, 0.15)" if is_up else "rgba(239, 68, 68, 0.15)"
+            t_color = "#4EDEA3" if is_up else "#FFB4AB"
+            t_bg = "rgba(78, 222, 163, 0.15)" if is_up else "rgba(255, 180, 171, 0.15)"
             t_lbl.setStyleSheet(
                 f"color: {t_color}; background-color: {t_bg};"
                 f"border-radius: 6px; padding: 3px 8px;"

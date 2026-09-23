@@ -1,5 +1,5 @@
 """
-classification_screen.py — Classification screen.
+classification_screen.py — Classification screen (Light Mode).
 
 Provides:
     ClassificationPage(QWidget)
@@ -28,8 +28,7 @@ from typing import Any, Dict, List, Optional, Union
 
 from PySide6.QtWidgets import (QWidget, QVBoxLayout, QHBoxLayout, QFrame,
                                 QLabel, QTableView, QPushButton, QComboBox,
-                                QHeaderView, QAbstractItemView,
-                                QSizePolicy)
+                                QHeaderView, QAbstractItemView, QSizePolicy)
 from PySide6.QtGui import QFont, QStandardItemModel, QStandardItem
 from PySide6.QtCore import Qt, QSortFilterProxyModel, QModelIndex
 
@@ -41,25 +40,25 @@ from app.components.statistics_cards import CategorySummaryCard
 from app.components.search_bar import SearchBar
 
 _CATEGORY_ICONS = {
-    "Technical":     ("🔧", "#F87171"),
-    "Drafting":      ("📐", "#A78BFA"),
-    "Dimension":     ("📏", "#38BDF8"),
-    "Cosmetic":      ("🎨", "#F472B6"),
-    "Standards":     ("📋", "#FBBF24"),
-    "Coordination":  ("🔄", "#34D399"),
-    "Documentation": ("📄", "#94A3B8"),
-    "Revision":      ("🏷",  "#FB923C"),
-    "Calculation":   ("🔢", "#818CF8"),
-    "Feasibility":   ("🏗",  "#2DD4BF"),
-    "Material":      ("🧱", "#06B6D4"),
-    "Notes":         ("📝", "#A3E635"),
-    "BOM":           ("📦", "#C084FC"),
+    "Technical":     ("🔧", "#DC2626"),
+    "Drafting":      ("📐", "#7C3AED"),
+    "Dimension":     ("📏", "#0284C7"),
+    "Cosmetic":      ("🎨", "#DB2777"),
+    "Standards":     ("📋", "#D97706"),
+    "Coordination":  ("🔄", "#059669"),
+    "Documentation": ("📄", "#475569"),
+    "Revision":      ("🏷",  "#EA580C"),
+    "Calculation":   ("🔢", "#4F46E5"),
+    "Feasibility":   ("🏗",  "#0D9488"),
+    "Material":      ("🧱", "#0891B2"),
+    "Notes":         ("📝", "#65A30D"),
+    "BOM":           ("📦", "#9333EA"),
     # Backwards compatibility
-    "Dimensional":   ("📏", "#38BDF8"),
-    "Structural":    ("🏗",  "#A78BFA"),
-    "Electrical":    ("⚡",  "#FBBF24"),
-    "Other":         ("❓",  "#94A3B8"),
-    "Mechanical":    ("⚙",   "#FB923C"),
+    "Dimensional":   ("📏", "#0284C7"),
+    "Structural":    ("🏗",  "#7C3AED"),
+    "Electrical":    ("⚡",  "#D97706"),
+    "Other":         ("❓",  "#64748B"),
+    "Mechanical":    ("⚙",   "#EA580C"),
 }
 
 
@@ -73,7 +72,7 @@ def _get(c: Union[Dict[str, Any], Any], field: str, default: Any = "") -> Any:
 class ClassificationPage(QWidget):
     """
     Classification — category summary cards, comment table with badges,
-    and a slide-in inspector drawer.
+    and a slide-in inspector drawer (Light Mode).
     """
 
     def __init__(self, controller=None, parent=None):
@@ -107,11 +106,36 @@ class ClassificationPage(QWidget):
         outer.setContentsMargins(0, 0, 0, 0)
         outer.setSpacing(0)
 
+        # Light Theme Color Palette
+        bg_color = "#F8FAFC"
+        card_bg = "#FFFFFF"
+        border_col = "#E2E8F0"
+        text_primary = "#0F172A"
+        text_secondary = "#475569"
+        combo_bg = "#FFFFFF"
+        combo_border = "#CBD5E1"
+
         # ── Main content ──────────────────────────────────────────
         main = QWidget()
+        main.setStyleSheet(f"background-color: {bg_color};")
         root = QVBoxLayout(main)
         root.setContentsMargins(24, 24, 24, 24)
         root.setSpacing(16)
+
+        # Header Title Area
+        hdr_layout = QVBoxLayout()
+        hdr_layout.setSpacing(4)
+        title_lbl = QLabel("Classification")
+        title_lbl.setFont(QFont("Inter", 16, QFont.Weight.Bold))
+        title_lbl.setStyleSheet(f"color: {text_primary};")
+        
+        subtitle_lbl = QLabel("Automated NLP category identification, rule tag separation, and technical compliance validation.")
+        subtitle_lbl.setFont(QFont("Inter", 10))
+        subtitle_lbl.setStyleSheet(f"color: {text_secondary};")
+        
+        hdr_layout.addWidget(title_lbl)
+        hdr_layout.addWidget(subtitle_lbl)
+        root.addLayout(hdr_layout)
 
         # Category summary cards
         cat_row = QHBoxLayout()
@@ -120,7 +144,7 @@ class ClassificationPage(QWidget):
         display_cats = list(category_counts.keys()) if category_counts else list(md.CATEGORIES)
         for cat in display_cats:
             count = category_counts.get(cat, 0)
-            icon_text, color = _CATEGORY_ICONS.get(cat, ("●", "#A6A9B1"))
+            icon_text, color = _CATEGORY_ICONS.get(cat, ("●", "#64748B"))
             card = CategorySummaryCard(icon_text, count, cat, color)
             self._cat_cards[cat] = card
             cat_row.addWidget(card, 1)
@@ -131,28 +155,40 @@ class ClassificationPage(QWidget):
         tb.setSpacing(12)
 
         search = SearchBar(
-            placeholder="  🔍  Search comments, categories…",
-            fixed_width=300,
+            placeholder="🔍  Search comments, categories, extracted text…",
+            fixed_width=320,
         )
         tb.addWidget(search)
         tb.addStretch()
 
+        combo_style = (
+            f"QComboBox {{ background: {combo_bg}; border: 1px solid {combo_border}; "
+            f"border-radius: 6px; padding: 4px 10px; font-size: 12px; color: {text_primary}; font-family: Inter; }}"
+            f"QComboBox::drop-down {{ border: none; }}"
+            f"QComboBox QAbstractItemView {{ background: {card_bg}; color: {text_primary}; selection-background-color: #0284C7; selection-color: #FFFFFF; }}"
+        )
+
         cat_filt = QComboBox()
         cat_filt.addItems(["All Categories"] + list(category_counts.keys()))
         cat_filt.setFixedHeight(36)
+        cat_filt.setStyleSheet(combo_style)
         tb.addWidget(cat_filt)
 
         st_filt = QComboBox()
         st_filt.addItems(["All Status", "Pending", "Approved", "Rejected", "Flagged"])
         st_filt.setFixedHeight(36)
+        st_filt.setStyleSheet(combo_style)
         tb.addWidget(st_filt)
         root.addLayout(tb)
 
-        # Table
+        # Table Card Container
         table_card = QFrame()
-        table_card.setObjectName("Card")
+        table_card.setObjectName("TableCard")
+        table_card.setStyleSheet(
+            f"#TableCard {{ background: {card_bg}; border: 1px solid {border_col}; border-radius: 8px; }}"
+        )
         tc_lay = QVBoxLayout(table_card)
-        tc_lay.setContentsMargins(0, 0, 0, 0)
+        tc_lay.setContentsMargins(1, 1, 1, 1)
 
         self._model = self._build_model()
         self._proxy = QSortFilterProxyModel()
@@ -171,12 +207,27 @@ class ClassificationPage(QWidget):
         self._table.setItemDelegateForColumn(1, CategoryDelegate(self._table))
         self._table.setItemDelegateForColumn(2, ConfidenceDelegate(self._table))
 
+        # Table Light Styling
+        alt_bg = "#F8FAFC"
+        header_bg = "#F1F5F9"
+        sel_bg = "#E0F2FE"
+        
+        self._table.setStyleSheet(
+            f"QTableView {{ background-color: {card_bg}; alternate-background-color: {alt_bg}; "
+            f"color: {text_primary}; gridline-color: transparent; border: none; font-family: Inter; font-size: 12px; }}"
+            f"QTableView::item {{ border-bottom: 1px solid {border_col}; padding: 8px; }}"
+            f"QTableView::item:selected {{ background-color: {sel_bg}; color: {text_primary}; }}"
+            f"QHeaderView::section {{ background-color: {header_bg}; color: {text_secondary}; "
+            f"font-weight: 700; font-size: 11px; font-family: Inter; border: none; "
+            f"border-bottom: 1px solid {border_col}; padding: 8px; text-transform: uppercase; }}"
+        )
+
         hdr = self._table.horizontalHeader()
         hdr.setSectionResizeMode(0, QHeaderView.ResizeMode.Stretch)
         hdr.setSectionResizeMode(1, QHeaderView.ResizeMode.Fixed)
-        self._table.setColumnWidth(1, 150)
+        self._table.setColumnWidth(1, 160)
         hdr.setSectionResizeMode(2, QHeaderView.ResizeMode.Fixed)
-        self._table.setColumnWidth(2, 130)
+        self._table.setColumnWidth(2, 140)
         hdr.setSectionResizeMode(3, QHeaderView.ResizeMode.Fixed)
         self._table.setColumnWidth(3, 120)
         hdr.setStretchLastSection(False)
@@ -276,39 +327,62 @@ class ClassificationPage(QWidget):
 
         self._drawer.set_title(f"Inspector — {cid}")
 
+        text_primary = "#0F172A"
+        text_muted = "#64748B"
+        box_bg = "#F8FAFC"
+        border_col = "#E2E8F0"
+        combo_bg = "#FFFFFF"
+        combo_border = "#CBD5E1"
+
         def _row(key: str, val: str) -> None:
             k = QLabel(key)
-            k.setObjectName("FormLabel")
+            k.setFont(QFont("Inter", 8, QFont.Weight.Bold))
+            k.setStyleSheet(f"color: {text_muted}; text-transform: uppercase; letter-spacing: 0.5px;")
             lay.addWidget(k)
             v = QLabel(val)
-            v.setFont(QFont("Cascadia Code", 12))
+            v.setFont(QFont("Cascadia Code", 11))
+            v.setStyleSheet(f"color: {text_primary};")
             v.setWordWrap(True)
             lay.addWidget(v)
 
         _row("Drawing", drawing_no)
         _row("Project", project_id)
 
+        txt_lbl = QLabel("EXTRACTED OCR TEXT")
+        txt_lbl.setFont(QFont("Inter", 8, QFont.Weight.Bold))
+        txt_lbl.setStyleSheet(f"color: {text_muted}; letter-spacing: 0.5px;")
+        lay.addWidget(txt_lbl)
+
         full_text = QLabel(str(ocr_text))
+        full_text.setFont(QFont("Cascadia Code", 9))
         full_text.setWordWrap(True)
         full_text.setStyleSheet(
-            "color:#F2F3F5; font-size:13px; padding:8px;"
-            " background:#2D2F34; border-radius:6px;"
+            f"color: {text_primary}; font-size: 12px; padding: 10px; "
+            f"background: {box_bg}; border: 1px solid {border_col}; border-radius: 6px;"
         )
         lay.addWidget(full_text)
 
-        cat_lbl = QLabel("Category")
-        cat_lbl.setObjectName("FormLabel")
+        cat_lbl = QLabel("CATEGORY")
+        cat_lbl.setFont(QFont("Inter", 8, QFont.Weight.Bold))
+        cat_lbl.setStyleSheet(f"color: {text_muted}; letter-spacing: 0.5px;")
         lay.addWidget(cat_lbl)
         lay.addWidget(CategoryBadge(str(category)))
 
         cat_override = QComboBox()
         cat_override.addItems(md.CATEGORIES)
         cat_override.setCurrentText(str(category))
-        cat_override.setFixedHeight(36)
+        cat_override.setFixedHeight(32)
+        cat_override.setStyleSheet(
+            f"QComboBox {{ background: {combo_bg}; border: 1px solid {combo_border}; border-radius: 4px; padding: 2px 6px; font-size: 11px; color: {text_primary}; }}"
+            f"QComboBox::drop-down {{ border: none; }}"
+            f"QComboBox QAbstractItemView {{ background: {combo_bg}; color: {text_primary}; selection-background-color: #0284C7; selection-color: #FFFFFF; }}"
+        )
         lay.addWidget(cat_override)
 
-        conf_lbl = QLabel(f"Confidence: {int(float(confidence) * 100)}%")
-        conf_lbl.setObjectName("SubCaption")
+        conf_lbl = QLabel(f"Confidence Score: {int(float(confidence) * 100)}%")
+        conf_lbl.setFont(QFont("Inter", 9, QFont.Weight.Medium))
+        conf_lbl.setStyleSheet(f"color: {text_muted}; padding-top: 4px;")
         lay.addWidget(conf_lbl)
 
         self._drawer.open_drawer()
+

@@ -1,5 +1,5 @@
 """
-dashboard_screen.py — Redesigned Home Dashboard screen.
+dashboard_screen.py — Redesigned Home Dashboard screen with Modern Light Theme UI.
 
 Displays:
     - 4 KPI metric cards (Total Projects, Drawings Processed, Comments Detected, OCR Accuracy)
@@ -12,8 +12,8 @@ from typing import Any, Dict, List, Optional
 from PySide6.QtWidgets import (QWidget, QVBoxLayout, QHBoxLayout, QFrame,
                                 QLabel, QTableView, QListWidget, QListWidgetItem,
                                 QPushButton, QProgressBar, QHeaderView, QSizePolicy,
-                                QAbstractItemView, QScrollArea)
-from PySide6.QtGui import QFont, QStandardItemModel, QStandardItem
+                                QAbstractItemView, QScrollArea, QGraphicsDropShadowEffect)
+from PySide6.QtGui import QFont, QStandardItemModel, QStandardItem, QColor
 from PySide6.QtCore import Qt, Signal, QSize
 
 from app.components.kpi_card import KpiCard
@@ -49,16 +49,26 @@ DEFAULT_JOBS: List[Dict[str, Any]] = [
 def _card(parent=None) -> QFrame:
     f = QFrame(parent)
     f.setObjectName("Card")
-    f.setStyleSheet(
-        "#Card { background: #222634; border: 1px solid #2E3654; border-radius: 12px; }"
-    )
+    f.setStyleSheet("""
+        QFrame#Card {
+            background-color: #FFFFFF;
+            border: 1px solid #E2E8F0;
+            border-radius: 14px;
+        }
+    """)
+    # Add subtle soft shadow to replicate modern SaaS elevation
+    shadow = QGraphicsDropShadowEffect(f)
+    shadow.setBlurRadius(16)
+    shadow.setColor(QColor(15, 23, 42, 10))
+    shadow.setOffset(0, 4)
+    f.setGraphicsEffect(shadow)
     return f
 
 
 def _h2(text: str) -> QLabel:
     lbl = QLabel(text)
-    lbl.setFont(QFont("Inter", 16, QFont.Weight.Bold))
-    lbl.setStyleSheet("color: #E2E8F0;")
+    lbl.setFont(QFont("Inter", 15, QFont.Weight.Bold))
+    lbl.setStyleSheet("color: #0F172A; background: transparent; border: none;")
     lbl.setObjectName("CardHeader")
     return lbl
 
@@ -76,20 +86,75 @@ class DashboardPage(QWidget):
         self._controller = controller
         self._kpi_cards: List[KpiCard] = []
 
+        self.setStyleSheet("""
+            QWidget {
+                background-color: #F8FAFC;
+                font-family: 'Inter', system-ui, -apple-system, sans-serif;
+            }
+            QScrollArea {
+                background-color: transparent;
+                border: none;
+            }
+            QLabel#PageTitle {
+                color: #0F172A;
+                font-weight: 700;
+                background: transparent;
+            }
+            QLabel#PageSubtitle {
+                color: #64748B;
+                font-size: 13px;
+                background: transparent;
+            }
+            QLabel#SubCaption {
+                color: #0284C7;
+                background: #F0F9FF;
+                border: 1px solid #BAE6FD;
+                border-radius: 6px;
+                padding: 3px 8px;
+                font-size: 11px;
+                font-weight: 600;
+            }
+            QTableView {
+                background-color: #FFFFFF;
+                border: 1px solid #F1F5F9;
+                border-radius: 8px;
+                gridline-color: transparent;
+                color: #334155;
+                font-size: 12px;
+                selection-background-color: #F0F9FF;
+                selection-color: #0369A1;
+            }
+            QTableView::item {
+                padding: 8px;
+                border-bottom: 1px solid #F8FAFC;
+            }
+            QHeaderView::section {
+                background-color: #F8FAFC;
+                color: #475569;
+                padding: 8px;
+                font-weight: 600;
+                font-size: 11px;
+                border: none;
+                border-bottom: 1px solid #E2E8F0;
+                text-transform: uppercase;
+            }
+        """)
+
         scroll = QScrollArea(self)
         scroll.setWidgetResizable(True)
         scroll.setFrameShape(QFrame.Shape.NoFrame)
 
         container = QWidget()
+        container.setStyleSheet("background-color: #F8FAFC;")
         root = QVBoxLayout(container)
-        root.setContentsMargins(28, 24, 28, 32)
+        root.setContentsMargins(32, 28, 32, 36)
         root.setSpacing(24)
 
         # ── Dashboard Title ───────────────────────────────────────
         hdr_box = QVBoxLayout()
-        hdr_box.setSpacing(4)
+        hdr_box.setSpacing(6)
         title = QLabel("Engineering Drawing Review Dashboard")
-        title.setFont(QFont("Inter", 24, QFont.Weight.Bold))
+        title.setFont(QFont("Inter", 22, QFont.Weight.Bold))
         title.setObjectName("PageTitle")
         hdr_box.addWidget(title)
 
@@ -111,8 +176,8 @@ class DashboardPage(QWidget):
         # Chart 1: Pareto Bar
         c1 = _card()
         c1_lay = QVBoxLayout(c1)
-        c1_lay.setContentsMargins(16, 16, 16, 16)
-        c1_lay.setSpacing(10)
+        c1_lay.setContentsMargins(18, 18, 18, 18)
+        c1_lay.setSpacing(12)
         c1_lay.addWidget(_h2("Comments by Category"))
         cat_data = self._controller.get_category_distribution() if self._controller else None
         c1_lay.addWidget(build_pareto_chart(cat_data), 1)
@@ -121,8 +186,8 @@ class DashboardPage(QWidget):
         # Chart 2: Donut Distribution
         c2 = _card()
         c2_lay = QVBoxLayout(c2)
-        c2_lay.setContentsMargins(16, 16, 16, 16)
-        c2_lay.setSpacing(10)
+        c2_lay.setContentsMargins(18, 18, 18, 18)
+        c2_lay.setSpacing(12)
         c2_lay.addWidget(_h2("Category Distribution"))
         c2_lay.addWidget(build_category_pie(cat_data), 1)
         charts_row.addWidget(c2, 3)
@@ -130,8 +195,8 @@ class DashboardPage(QWidget):
         # Chart 3: Monthly Trend
         c3 = _card()
         c3_lay = QVBoxLayout(c3)
-        c3_lay.setContentsMargins(16, 16, 16, 16)
-        c3_lay.setSpacing(10)
+        c3_lay.setContentsMargins(18, 18, 18, 18)
+        c3_lay.setSpacing(12)
         c3_lay.addWidget(_h2("Comment Trend Over Time"))
         c3_lay.addWidget(build_monthly_chart(), 1)
         charts_row.addWidget(c3, 3)
@@ -149,8 +214,8 @@ class DashboardPage(QWidget):
         # Recent Projects Table Card
         proj_card = _card()
         proj_lay = QVBoxLayout(proj_card)
-        proj_lay.setContentsMargins(18, 16, 18, 18)
-        proj_lay.setSpacing(12)
+        proj_lay.setContentsMargins(20, 18, 20, 20)
+        proj_lay.setSpacing(14)
 
         proj_hdr = QHBoxLayout()
         proj_hdr.addWidget(_h2("Recent Projects"))
@@ -174,8 +239,8 @@ class DashboardPage(QWidget):
         # Recent Drawings Table Card
         dwg_card = _card()
         dwg_lay = QVBoxLayout(dwg_card)
-        dwg_lay.setContentsMargins(18, 16, 18, 18)
-        dwg_lay.setSpacing(12)
+        dwg_lay.setContentsMargins(20, 18, 20, 20)
+        dwg_lay.setSpacing(14)
 
         dwg_hdr = QHBoxLayout()
         dwg_hdr.addWidget(_h2("Recent Drawings Processed"))
@@ -205,8 +270,8 @@ class DashboardPage(QWidget):
         # Activity Feed Card
         act_card = _card()
         act_lay = QVBoxLayout(act_card)
-        act_lay.setContentsMargins(18, 16, 18, 18)
-        act_lay.setSpacing(12)
+        act_lay.setContentsMargins(20, 18, 20, 20)
+        act_lay.setSpacing(14)
         act_lay.addWidget(_h2("Recent Activity"))
         act_lay.addWidget(self._build_activity_list(), 1)
         right_col.addWidget(act_card, 1)
@@ -214,8 +279,8 @@ class DashboardPage(QWidget):
         # Processing Status Card
         proc_card = _card()
         proc_lay = QVBoxLayout(proc_card)
-        proc_lay.setContentsMargins(18, 16, 18, 18)
-        proc_lay.setSpacing(12)
+        proc_lay.setContentsMargins(20, 18, 20, 20)
+        proc_lay.setSpacing(14)
         proc_lay.addWidget(_h2("System Processing Status"))
         for job in DEFAULT_JOBS:
             proc_lay.addLayout(self._build_job_row(job))
@@ -263,11 +328,12 @@ class DashboardPage(QWidget):
 
         total_projects, total_drawings, total_comments, accuracy_str = self._get_kpi_values()
 
+        # Modern vibrant primary and accent color pairings
         kpis = [
-            ("fa5s.folder-open", str(total_projects), "Total Projects",    "+2",       "#3B82F6"),
-            ("fa5s.file-alt",    str(total_drawings), "Drawings Processed", "+18",      "#6366F1"),
-            ("fa5s.comments",    str(total_comments), "Comments Detected", "+143",     "#F59E0B"),
-            ("fa5s.check-circle", accuracy_str,       "OCR Accuracy",      "+0.8%",    "#10B981"),
+            ("fa5s.folder-open", str(total_projects), "Total Projects",    "+2",       "#0284C7"),
+            ("fa5s.file-alt",    str(total_drawings), "Drawings Processed", "+18",      "#2563EB"),
+            ("fa5s.comments",    str(total_comments), "Comments Detected", "+143",     "#D97706"),
+            ("fa5s.check-circle", accuracy_str,       "OCR Accuracy",      "+0.8%",    "#16A34A"),
         ]
         for icon, val, lbl, trend, color in kpis:
             card = KpiCard(icon, val, lbl, trend, color)
@@ -359,39 +425,54 @@ class DashboardPage(QWidget):
 
     def _build_activity_list(self) -> QListWidget:
         lst = QListWidget()
-        lst.setSpacing(6)
-        lst.setObjectName("ActivityList"); lst.setStyleSheet("/* migrated */" 
-            " "
-            " "
-            " "
-        )
+        lst.setSpacing(8)
+        lst.setObjectName("ActivityList")
+        lst.setStyleSheet("""
+            QListWidget#ActivityList {
+                background: transparent;
+                border: none;
+                outline: none;
+            }
+            QListWidget#ActivityList::item {
+                background: transparent;
+                border: none;
+            }
+        """)
+        
         for act in DEFAULT_ACTIVITIES:
             item = QListWidgetItem()
             item.setSizeHint(QSize(280, 68))
             card = QFrame()
+            card.setStyleSheet("""
+                QFrame {
+                    background-color: #F8FAFC;
+                    border: 1px solid #E2E8F0;
+                    border-radius: 8px;
+                }
+            """)
             lay = QVBoxLayout(card)
-            lay.setContentsMargins(6, 4, 6, 4)
+            lay.setContentsMargins(10, 8, 10, 8)
             lay.setSpacing(4)
 
             top = QHBoxLayout()
             tag = QLabel(act.get("tag", "System"))
-            tag.setFont(QFont("Inter", 10, QFont.Weight.Bold))
+            tag.setFont(QFont("Inter", 9, QFont.Weight.Bold))
             tag.setStyleSheet(
-                "color: #60A5FA; background: rgba(59, 130, 246, 0.18); border-radius: 4px; padding: 2px 6px;"
+                "color: #0284C7; background: #E0F2FE; border-radius: 4px; padding: 2px 6px; border: none;"
             )
             top.addWidget(tag)
             top.addStretch()
 
             t_lbl = QLabel(act["time"])
-            t_lbl.setFont(QFont("Inter", 11))
-            t_lbl.setStyleSheet("color: #64748B;")
+            t_lbl.setFont(QFont("Inter", 10))
+            t_lbl.setStyleSheet("color: #94A3B8; background: transparent; border: none;")
             top.addWidget(t_lbl)
             lay.addLayout(top)
 
             desc = QLabel(act["text"])
-            desc.setFont(QFont("Inter", 12))
+            desc.setFont(QFont("Inter", 11))
             desc.setWordWrap(True)
-            desc.setStyleSheet("color: #94A3B8;")
+            desc.setStyleSheet("color: #334155; background: transparent; border: none;")
             lay.addWidget(desc)
 
             lst.addItem(item)
@@ -405,14 +486,14 @@ class DashboardPage(QWidget):
 
         hdr = QHBoxLayout()
         name = QLabel(job["name"])
-        name.setFont(QFont("Inter", 13, QFont.Weight.Medium))
-        name.setStyleSheet("color: #E2E8F0;")
+        name.setFont(QFont("Inter", 12, QFont.Weight.Medium))
+        name.setStyleSheet("color: #1E293B; background: transparent; border: none;")
         hdr.addWidget(name)
         hdr.addStretch()
 
-        stat = QLabel("● Ready")
+        stat = QLabel("● Active")
         stat.setFont(QFont("Inter", 11, QFont.Weight.Bold))
-        stat.setStyleSheet("color: #10B981;")
+        stat.setStyleSheet("color: #16A34A; background: transparent; border: none;")
         hdr.addWidget(stat)
         lay.addLayout(hdr)
 
@@ -420,12 +501,20 @@ class DashboardPage(QWidget):
         bar.setRange(0, 100)
         bar.setValue(job["progress"])
         bar.setFixedHeight(6)
-        bar.setStyleSheet(
-            "QProgressBar { background: #1E2235; border-radius: 3px; }"
-            "QProgressBar::chunk { background: #10B981; border-radius: 3px; }"
-        )
+        bar.setTextVisible(False)
+        bar.setStyleSheet("""
+            QProgressBar {
+                background: #E2E8F0;
+                border: none;
+                border-radius: 3px;
+            }
+            QProgressBar::chunk {
+                background: #16A34A;
+                border-radius: 3px;
+            }
+        """)
         lay.addWidget(bar)
-        lay.addSpacing(6)
+        lay.addSpacing(4)
         return lay
 
     def refresh_data(self) -> None:
