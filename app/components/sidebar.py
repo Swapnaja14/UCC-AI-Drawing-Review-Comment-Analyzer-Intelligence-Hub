@@ -1,5 +1,6 @@
 """
-SidebarNav — collapsible left navigation panel with animated width.
+SidebarNav — collapsible left navigation panel with 240px enterprise layout,
+app branding, bottom version status, and animated toggle.
 """
 from __future__ import annotations
 from PySide6.QtWidgets import (QWidget, QVBoxLayout, QHBoxLayout, QLabel,
@@ -45,42 +46,43 @@ class SidebarNav(QWidget):
 
         # ── Logo area ────────────────────────────────────────────
         logo_frame = QFrame()
-        logo_frame.setFixedHeight(64)
+        logo_frame.setFixedHeight(72)
         logo_frame.setStyleSheet("background: transparent;")
         logo_lay = QHBoxLayout(logo_frame)
-        logo_lay.setContentsMargins(16, 0, 16, 0)
+        logo_lay.setContentsMargins(18, 0, 18, 0)
+        logo_lay.setSpacing(12)
 
-        self._logo_icon = QLabel("🔍")
-        self._logo_icon.setFont(QFont("Segoe UI", 20))
+        self._logo_icon = QLabel("📐")
+        self._logo_icon.setFont(QFont("Segoe UI Emoji", 20))
         logo_lay.addWidget(self._logo_icon)
 
         self._logo_text = QLabel("UCC Analyzer")
-        self._logo_text.setFont(QFont("Segoe UI Variable", 14, QFont.Weight.DemiBold))
-        self._logo_text.setStyleSheet("color: #3E9BFF;")
+        self._logo_text.setFont(QFont("Inter", 16, QFont.Weight.Bold))
+        self._logo_text.setStyleSheet("color: #3B82F6; letter-spacing: -0.3px;")
         logo_lay.addWidget(self._logo_text, 1)
         root.addWidget(logo_frame)
 
         sep = QFrame()
         sep.setFrameShape(QFrame.Shape.HLine)
-        sep.setStyleSheet("color: #3A3C42;")
+        sep.setStyleSheet("color: #2F3545; background-color: #2F3545;")
         root.addWidget(sep)
 
         # ── Navigation list ──────────────────────────────────────
         self._nav = QListWidget()
         self._nav.setObjectName("NavList")
-        self._nav.setIconSize(QSize(20, 20))
+        self._nav.setIconSize(QSize(18, 18))
         self._nav.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Expanding)
         self._nav.setHorizontalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
-        self._nav.setSpacing(2)
+        self._nav.setSpacing(3)
 
         for label, icon_name, idx in _NAV_ITEMS:
             item = QListWidgetItem(label)
             if _HAS_QTA:
                 try:
-                    item.setIcon(qta.icon(icon_name, color="#A6A9B1"))
+                    item.setIcon(qta.icon(icon_name, color="#9CA3AF"))
                 except Exception:
                     pass
-            item.setSizeHint(QSize(EXPANDED_W, 40))
+            item.setSizeHint(QSize(EXPANDED_W - 20, 44))
             item.setData(Qt.ItemDataRole.UserRole, idx)
             self._nav.addItem(item)
 
@@ -88,27 +90,57 @@ class SidebarNav(QWidget):
         self._nav.currentRowChanged.connect(self._on_nav_change)
         root.addWidget(self._nav, 1)
 
-        # ── Divider ──────────────────────────────────────────────
+        # ── Bottom status & version ──────────────────────────────
         sep2 = QFrame()
         sep2.setFrameShape(QFrame.Shape.HLine)
-        sep2.setStyleSheet("color: #3A3C42;")
+        sep2.setStyleSheet("color: #2F3545; background-color: #2F3545;")
         root.addWidget(sep2)
+
+        self._status_frame = QFrame()
+        self._status_frame.setStyleSheet("background: transparent;")
+        status_lay = QVBoxLayout(self._status_frame)
+        status_lay.setContentsMargins(16, 12, 16, 12)
+        status_lay.setSpacing(6)
+
+        # Backend connection indicator
+        conn_row = QHBoxLayout()
+        conn_row.setSpacing(8)
+        self._status_dot = QLabel("●")
+        self._status_dot.setStyleSheet("color: #10B981; font-size: 11px;")
+        conn_row.addWidget(self._status_dot)
+
+        self._conn_lbl = QLabel("Backend Connected")
+        self._conn_lbl.setFont(QFont("Inter", 12, QFont.Weight.Medium))
+        self._conn_lbl.setStyleSheet("color: #10B981;")
+        conn_row.addWidget(self._conn_lbl)
+        conn_row.addStretch()
+        status_lay.addLayout(conn_row)
+
+        # Version string
+        self._ver_lbl = QLabel("UCC AI Review · v1.0.0")
+        self._ver_lbl.setFont(QFont("Inter", 11))
+        self._ver_lbl.setStyleSheet("color: #6B7280;")
+        status_lay.addWidget(self._ver_lbl)
+
+        root.addWidget(self._status_frame)
 
         # ── Collapse toggle ──────────────────────────────────────
         self._toggle_btn = QToolButton()
-        self._toggle_btn.setFixedHeight(44)
+        self._toggle_btn.setFixedHeight(40)
         self._toggle_btn.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Fixed)
-        self._toggle_btn.setStyleSheet("border: none; color: #A6A9B1; font-size: 14px;")
-        self._toggle_btn.setText("◀  Collapse")
+        self._toggle_btn.setStyleSheet(
+            "border: none; color: #9CA3AF; font-size: 13px; font-weight: 500; padding: 4px;"
+        )
+        self._toggle_btn.setText("◀  Collapse Menu")
         self._toggle_btn.clicked.connect(self.toggle_collapse)
         root.addWidget(self._toggle_btn)
 
         # Width animation
         self._anim = QPropertyAnimation(self, b"minimumWidth")
-        self._anim.setDuration(200)
+        self._anim.setDuration(180)
         self._anim.setEasingCurve(QEasingCurve.Type.OutCubic)
         self._anim_max = QPropertyAnimation(self, b"maximumWidth")
-        self._anim_max.setDuration(200)
+        self._anim_max.setDuration(180)
         self._anim_max.setEasingCurve(QEasingCurve.Type.OutCubic)
 
     def _on_nav_change(self, row: int):
@@ -133,7 +165,8 @@ class SidebarNav(QWidget):
         self._anim_max.start()
 
         self._logo_text.setVisible(self._expanded)
-        self._toggle_btn.setText("◀  Collapse" if self._expanded else "▶")
+        self._status_frame.setVisible(self._expanded)
+        self._toggle_btn.setText("◀  Collapse Menu" if self._expanded else "▶")
         for i in range(self._nav.count()):
             item = self._nav.item(i)
             if item:

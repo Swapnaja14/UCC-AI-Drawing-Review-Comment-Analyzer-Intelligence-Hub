@@ -140,6 +140,7 @@ class MainWindow(QMainWindow):
     def _navigate(self, idx: int):
         self._stack.setCurrentIndex(idx)
         self._topbar.set_breadcrumb(_PAGE_TITLES[idx])
+        self._sidebar.set_page(idx)
         page = self._pages[idx]
         # Auto-refresh the target page so it always shows the latest DB state
         if hasattr(page, "reload_data"):

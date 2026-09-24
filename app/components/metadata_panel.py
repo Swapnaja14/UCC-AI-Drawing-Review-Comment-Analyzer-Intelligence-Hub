@@ -1,89 +1,82 @@
 """
-metadata_panel.py — Drawing metadata side panel.
+metadata_panel.py — Redesigned Drawing metadata side panel.
 
 Provides:
-    DrawingMetadataPanel(QFrame)
+    DrawingMetadataPanel(QScrollArea)
         Renders a labelled list of engineering drawing metadata fields
-        in a fixed-width right-side panel.
+        in a dedicated, scrollable right-side panel with distinct label/value hierarchy.
 """
 from __future__ import annotations
 from typing import Sequence, Tuple
-from PySide6.QtWidgets import QFrame, QVBoxLayout, QLabel
+from PySide6.QtWidgets import (QFrame, QVBoxLayout, QHBoxLayout, QLabel,
+                                QScrollArea, QWidget, QSizePolicy)
+from PySide6.QtCore import Qt
 from PySide6.QtGui import QFont
 
-# Default sample fields (used when no data is supplied at construction time)
 _DEFAULT_FIELDS: Sequence[Tuple[str, str]] = (
     ("Drawing Number", "UCC-E-101"),
-    ("Drawing Title",  "P&ID Unit 4-A"),
+    ("Drawing Title",  "P&ID Unit 4-A Process Flow"),
     ("Revision",       "Rev A"),
     ("Project Name",   "UCC Site-4 Expansion"),
-    ("Discipline",     "Process/Piping"),
-    ("Sheet",          "1 of 3"),
-    ("Scale",          "1:50"),
-    ("Date",           "2026-07-28"),
+    ("Discipline",     "Process / Piping"),
+    ("Sheet Number",   "1 of 7"),
+    ("Scale",          "1:50 Engineering"),
+    ("Date Processed", "2026-07-28"),
+    ("Detected Regions","71 Annotation Regions"),
+    ("Detection Method","Color Segmentation (HSV)"),
+    ("Coverage",       "All Colored Markup & Text"),
 )
 
 
-class DrawingMetadataPanel(QFrame):
+class DrawingMetadataPanel(QScrollArea):
     """
-    Right-side panel displaying engineering drawing metadata as form rows.
-
-    Each field is shown as a grey label above a monospace value label.
-    The panel can be refreshed at runtime via ``update_fields()``.
-
-    Parameters
-    ----------
-    fields:
-        Sequence of ``(label, value)`` string pairs.  Defaults to
-        ``_DEFAULT_FIELDS`` (sample data for the mockup).
-    fixed_width:
-        Panel width in pixels (default 280).
+    Scrollable right-side panel displaying drawing metadata with high contrast
+    and zero vertical overflow/clipping.
     """
 
     def __init__(
         self,
         fields: Sequence[Tuple[str, str]] | None = None,
-        fixed_width: int = 280,
+        fixed_width: int = 300,
         parent=None,
     ):
         super().__init__(parent)
-        self.setObjectName("Card")
         self.setFixedWidth(fixed_width)
+        self.setWidgetResizable(True)
+        self.setFrameShape(QFrame.Shape.NoFrame)
+        self.setHorizontalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
         self.setStyleSheet(
-            "#Card { border-radius:0; border-top:none;"
-            " border-bottom:none; border-right:none; }"
+            "QScrollArea { background: #FFFFFF; border-left: 1px solid #E2E8F0; }"
+            "QWidget { background: #FFFFFF; }"
         )
 
-        self._lay = QVBoxLayout(self)
-        self._lay.setContentsMargins(16, 16, 16, 16)
-        self._lay.setSpacing(12)
+        self._container = QWidget()
+        self._lay = QVBoxLayout(self._container)
+        self._lay.setContentsMargins(18, 16, 18, 20)
+        self._lay.setSpacing(14)
 
         # Header
-        hdr = QLabel("Drawing Metadata")
-        hdr.setFont(QFont("Segoe UI Variable", 15, QFont.Weight.DemiBold))
-        self._lay.addWidget(hdr)
+        hdr_row = QHBoxLayout()
+        hdr = QLabel("Drawing Properties")
+        hdr.setFont(QFont("Inter", 15, QFont.Weight.Bold))
+        hdr.setStyleSheet("color: #F3F4F6;")
+        hdr_row.addWidget(hdr)
+        hdr_row.addStretch()
+        self._lay.addLayout(hdr_row)
 
         sep = QFrame()
         sep.setFrameShape(QFrame.Shape.HLine)
+        sep.setStyleSheet("color: #2F3545; background-color: #2F3545;")
         self._lay.addWidget(sep)
 
-        # Field rows
         self._field_start_index = self._lay.count()
         self._append_fields(fields or _DEFAULT_FIELDS)
         self._lay.addStretch()
 
-    # ── Public API ────────────────────────────────────────────────
+        self.setWidget(self._container)
 
     def update_fields(self, fields: Sequence[Tuple[str, str]]) -> None:
-        """
-        Replace all field rows with new data without recreating the header.
-
-        Parameters
-        ----------
-        fields:
-            New sequence of ``(label, value)`` pairs.
-        """
-        # Remove existing field widgets (keep header + separator)
+        """Replace all field rows with new data without recreating the header."""
         while self._lay.count() > self._field_start_index:
             item = self._lay.takeAt(self._lay.count() - 1)
             if item.widget():
@@ -92,15 +85,23 @@ class DrawingMetadataPanel(QFrame):
         self._append_fields(fields)
         self._lay.addStretch()
 
-    # ── Private helpers ───────────────────────────────────────────
-
     def _append_fields(self, fields: Sequence[Tuple[str, str]]) -> None:
         for key, val in fields:
-            k_lbl = QLabel(key)
-            k_lbl.setObjectName("FormLabel")
-            self._lay.addWidget(k_lbl)
+            row_card = QFrame()
+            row_card.setObjectName("Card")
+            r_lay = QVBoxLayout(row_card)
+            r_lay.setContentsMargins(12, 10, 12, 10)
+            r_lay.setSpacing(4)
 
-            v_lbl = QLabel(val)
-            v_lbl.setFont(QFont("Cascadia Code", 12))
+            k_lbl = QLabel(key.upper())
+            k_lbl.setObjectName("FormLabel")
+            k_lbl.setFont(QFont("Inter", 10, QFont.Weight.Bold))
+            r_lay.addWidget(k_lbl)
+
+            v_lbl = QLabel(str(val))
+            v_lbl.setFont(QFont("Inter", 13, QFont.Weight.Medium))
             v_lbl.setWordWrap(True)
-            self._lay.addWidget(v_lbl)
+            v_lbl.setTextInteractionFlags(Qt.TextInteractionFlag.TextSelectableByMouse)
+            r_lay.addWidget(v_lbl)
+
+            self._lay.addWidget(row_card)

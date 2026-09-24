@@ -1,21 +1,32 @@
 """
-comment_viewer_screen.py — Comment Highlight Viewer screen with interactive zoom and page controls.
+comment_viewer_screen.py — Comment Highlight Viewer screen with interactive zoom, page controls, and filterable comment panel.
 
 Provides:
     CommentHighlightPage(QWidget)
-        Annotated PDF canvas with Zoom In/Out toolbar, mouse-wheel zooming,
-        fit-width, page navigation, and a scrollable comment list panel.
+        Annotated drawing canvas with Zoom In/Out toolbar, mouse-wheel zooming,
+        fit-width, page navigation, and a scrollable comment review panel.
         Clicking a list item pans & zooms the canvas to the matching bounding box.
 """
 from __future__ import annotations
 from typing import Any, Dict, List, Optional, Union
 
-from PySide6.QtWidgets import (QWidget, QHBoxLayout, QVBoxLayout, QFrame,
-                                QLabel, QListWidget, QListWidgetItem,
-                                QGraphicsView, QGraphicsScene, QComboBox,
-                                QSizePolicy)
+from PySide6.QtWidgets import (
+    QWidget,
+    QHBoxLayout,
+    QVBoxLayout,
+    QFrame,
+    QLabel,
+    QListWidget,
+    QListWidgetItem,
+    QGraphicsView,
+    QGraphicsScene,
+    QPushButton,
+    QComboBox,
+    QSizePolicy,
+    QGraphicsDropShadowEffect,
+)
 from PySide6.QtCore import Qt, QRectF, QSize, Signal
-from PySide6.QtGui import QFont, QPainter, QPixmap, QWheelEvent, QKeyEvent
+from PySide6.QtGui import QFont, QPainter, QPixmap, QColor, QWheelEvent, QKeyEvent
 
 from app import mock_data as md
 from app.components.pdf_toolbar import PdfToolbar
@@ -33,6 +44,7 @@ def _get(c: Union[Dict[str, Any], Any], field: str, default: Any = "") -> Any:
     return getattr(c, field, default)
 
 
+<<<<<<< HEAD
 class ZoomableGraphicsView(QGraphicsView):
     """
     Enhanced QGraphicsView supporting:
@@ -102,10 +114,31 @@ class ZoomableGraphicsView(QGraphicsView):
         self.zoom_changed.emit(self._current_zoom)
 
 
+def _card(parent=None) -> QFrame:
+    """Creates a light rounded card matching the clean dashboard style."""
+    f = QFrame(parent)
+    f.setObjectName("StitchCard")
+    f.setStyleSheet(
+        """
+        QFrame#StitchCard {
+            background-color: #FFFFFF;
+            border: 1px solid #E2E8F0;
+            border-radius: 8px;
+        }
+        """
+    )
+    shadow = QGraphicsDropShadowEffect(f)
+    shadow.setBlurRadius(8)
+    shadow.setColor(QColor(15, 23, 42, 8))
+    shadow.setOffset(0, 2)
+    f.setGraphicsEffect(shadow)
+    return f
+
+
 class CommentHighlightPage(QWidget):
     """
     Comment Highlight Viewer — annotated drawing canvas with Zoom In/Out controls,
-    page navigation, and a synchronised comment list panel.
+    page navigation, and a synchronised, filterable comment review panel.
     """
 
     def __init__(self, controller=None, parent=None):
@@ -116,20 +149,32 @@ class CommentHighlightPage(QWidget):
         self._zoom = 1.0
         self._box_items: Dict[str, BBoxItem] = {}
         self._pm_item = None
+        self._active_filter = "All"
+        self._filtered_comments: List[Any] = []
 
-        # Load comments from DB or fall back to mock data if standalone
+        # Load comments from DB or fall back to mock data
         if self._controller and self._controller.current_drawing_id:
             db_comments = self._controller.get_comments_for_drawing(
                 self._controller.current_drawing_id
             )
-            self._comments: List[Any] = db_comments if db_comments else []
-        elif self._controller:
-            self._comments = []
+            self._comments: List[Any] = db_comments if db_comments else list(md.COMMENTS)
         else:
             self._comments = list(md.COMMENTS)
 
         if self._controller and self._controller.current_document:
             self._total_pages = max(1, self._controller.current_document.total_pages)
+
+        self.setObjectName("CommentViewerRoot")
+        self.setStyleSheet(
+            """
+            QWidget#CommentViewerRoot {
+                background-color: #F8FAFC;
+            }
+            QLabel {
+                background-color: transparent;
+            }
+            """
+        )
 
         root = QHBoxLayout(self)
         root.setContentsMargins(0, 0, 0, 0)
@@ -165,52 +210,110 @@ class CommentHighlightPage(QWidget):
         root.addWidget(canvas_container, 3)
 
         # ── Right Comment List Panel ─────────────────────────────
-        panel = QFrame()
-        panel.setObjectName("Card")
-        panel.setFixedWidth(340)
-        panel.setStyleSheet("#Card { border-radius:0; }")
+        panel = _card()
+        panel.setFixedWidth(380)
         panel_lay = QVBoxLayout(panel)
-        panel_lay.setContentsMargins(0, 0, 0, 0)
-        panel_lay.setSpacing(0)
+        panel_lay.setContentsMargins(12, 12, 12, 12)
+        panel_lay.setSpacing(8)
 
-        # Panel header
-        hdr = QFrame()
-        hdr.setFixedHeight(80)
-        hdr.setStyleSheet(
-            "background: #2D2F34; border-bottom: 1px solid #3A3C42;"
-        )
-        hdr_lay = QVBoxLayout(hdr)
-        hdr_lay.setContentsMargins(12, 8, 12, 8)
-        hdr_lay.setSpacing(4)
+        # Panel header with drawing filter
+        hdr_box = QVBoxLayout()
+        hdr_box.setSpacing(6)
 
         top_hdr = QHBoxLayout()
-        self._count_lbl = QLabel(f"🔍  {len(self._comments)} comments found")
-        self._count_lbl.setFont(QFont("Segoe UI Variable", 13, QFont.Weight.DemiBold))
+        self._count_lbl = QLabel("Detected Comments")
+        self._count_lbl.setFont(QFont("Inter", 11, QFont.Weight.Bold))
+        self._count_lbl.setStyleSheet("color: #0F172A;")
+
+        self._lbl_found = QLabel(f"{len(self._comments)} comments found")
+        self._lbl_found.setFont(QFont("Inter", 8))
+        self._lbl_found.setStyleSheet("color: #2563EB; background: #EFF6FF; border-radius: 4px; padding: 2px 6px; font-weight: 500;")
+
         top_hdr.addWidget(self._count_lbl)
-        hdr_lay.addLayout(top_hdr)
+        top_hdr.addWidget(self._lbl_found)
+        top_hdr.addStretch()
+        hdr_box.addLayout(top_hdr)
 
         self._dwg_filt = QComboBox()
-        self._dwg_filt.setFixedHeight(28)
-        self._dwg_filt.setStyleSheet("QComboBox { background: #1E2024; color: #E2E8F0; font-size: 11px; border: 1px solid #3A3C42; border-radius: 4px; padding: 2px 6px; }")
+        self._dwg_filt.setFixedHeight(30)
+        self._dwg_filt.setStyleSheet(
+            "QComboBox { background: #FFFFFF; color: #0F172A; font-size: 11px; border: 1px solid #CBD5E1; border-radius: 6px; padding: 2px 8px; }"
+            "QComboBox::drop-down { border: none; }"
+            "QComboBox QAbstractItemView { background: #FFFFFF; color: #0F172A; selection-background-color: #0284C7; selection-color: #FFFFFF; }"
+        )
         self._dwg_filt.currentIndexChanged.connect(self._on_drawing_filter_changed)
-        hdr_lay.addWidget(self._dwg_filt)
+        hdr_box.addWidget(self._dwg_filt)
 
-        panel_lay.addWidget(hdr)
+        panel_lay.addLayout(hdr_box)
 
-        # Comment list
+        # Filter Chips Bar
+        filter_bar = QHBoxLayout()
+        filter_bar.setSpacing(4)
+
+        self._filter_btns: Dict[str, QPushButton] = {}
+        for ftag in ["All", "Technical", "General", "Pending", "Approved"]:
+            btn = QPushButton(ftag)
+            btn.setCheckable(True)
+            btn.setChecked(ftag == "All")
+            btn.setFixedHeight(24)
+            btn.setStyleSheet(
+                "QPushButton { background: #F1F5F9; color: #475569; border: 1px solid #CBD5E1; "
+                "border-radius: 4px; padding: 0 8px; font-size: 10px; font-weight: 600; }"
+                "QPushButton:hover { background: #E2E8F0; color: #0F172A; }"
+                "QPushButton:checked { background: #0284C7; color: #FFFFFF; border-color: #0284C7; }"
+            )
+            btn.clicked.connect(self._make_filter_handler(ftag))
+            self._filter_btns[ftag] = btn
+            filter_bar.addWidget(btn)
+
+        panel_lay.addLayout(filter_bar)
+
+        # Independently Scrollable Comment List
         self._list = QListWidget()
-        self._list.setSpacing(4)
+        self._list.setSpacing(6)
         self._list.setStyleSheet(
-            "QListWidget { border:none; background:#26272B; padding:8px; }"
-            "QListWidget::item { background:transparent; border-radius:8px; }"
-            "QListWidget::item:hover { background: #2D2F34; }"
-            "QListWidget::item:selected { background: #3E9BFF1A; }"
+            "QListWidget { border: none; background: transparent; padding: 0px; }"
+            "QListWidget::item { background: transparent; border-radius: 6px; padding: 0px; margin-bottom: 2px; }"
+            "QListWidget::item:hover { background: transparent; }"
+            "QListWidget::item:selected { background: transparent; }"
         )
         self._list.currentRowChanged.connect(self._on_list_select)
-        self._populate_list()
         panel_lay.addWidget(self._list, 1)
 
-        root.addWidget(panel)
+        self._apply_filter("All")
+        workspace_lay.addWidget(panel)
+
+        root.addLayout(workspace_lay, 1)
+        self._load_canvas()
+
+    def _make_filter_handler(self, tag: str):
+        def handler():
+            for t, b in self._filter_btns.items():
+                b.setChecked(t == tag)
+            self._apply_filter(tag)
+        return handler
+
+    def _apply_filter(self, tag: str) -> None:
+        self._active_filter = tag
+        if tag == "All":
+            self._filtered_comments = list(self._comments)
+        elif tag in ("Pending", "Approved", "Rejected", "Flagged"):
+            self._filtered_comments = [
+                c for c in self._comments if _get(c, "status", "Pending") == tag
+            ]
+        elif tag == "Technical":
+            self._filtered_comments = [
+                c for c in self._comments if _get(c, "category", "") == "Technical"
+            ]
+        elif tag == "General":
+            self._filtered_comments = [
+                c for c in self._comments if _get(c, "category", "") != "Technical"
+            ]
+        else:
+            self._filtered_comments = list(self._comments)
+
+        self._lbl_found.setText(f"{len(self._filtered_comments)} comments found")
+        self._populate_list()
 
     # ── Public API ───────────────────────────────────────────────
 
@@ -270,12 +373,12 @@ class CommentHighlightPage(QWidget):
             if self._controller.current_document:
                 self._total_pages = max(1, self._controller.current_document.total_pages)
             if hasattr(self, '_count_lbl'):
-                self._count_lbl.setText(f"🔍  {len(self._comments)} comments found")
+                self._count_lbl.setText("Detected Comments")
             if hasattr(self, '_toolbar'):
                 self._toolbar.set_total_pages(self._total_pages)
                 self._toolbar.set_current_page(self._current_page)
+            self._apply_filter(self._active_filter)
             self._load_canvas(page_num=self._current_page)
-            self._populate_list()
 
     # ── Zoom & Navigation Actions ────────────────────────────────
 
@@ -339,7 +442,6 @@ class CommentHighlightPage(QWidget):
                 self._toolbar.set_total_pages(self._total_pages)
                 self._toolbar.set_current_page(self._current_page)
 
-        # Render real PDF page if available
         if self._controller and self._controller.current_document:
             try:
                 rendered_dto = self._controller.pdf_service.get_page_render(
@@ -349,9 +451,9 @@ class CommentHighlightPage(QWidget):
                 pm.loadFromData(rendered_dto.image_bytes)
             except Exception as e:
                 logger.debug(f"Could not render real page {page_num}: {e}")
-                pm = make_page_pixmap(740, 960, comments=[])
+                pm = make_page_pixmap(780, 1000, comments=[])
         else:
-            pm = make_page_pixmap(740, 960, comments=[])
+            pm = make_page_pixmap(780, 1000, comments=[])
 
         self._pm_item = self._scene.addPixmap(pm)
         self._scene.setSceneRect(QRectF(pm.rect()))
@@ -378,85 +480,116 @@ class CommentHighlightPage(QWidget):
             self._scene.addItem(item)
             self._box_items[cid] = item
 
-        self._toolbar.set_zoom_label(int(self._view._current_zoom * 100))
+        if hasattr(self, '_toolbar'):
+            self._toolbar.set_zoom_label(int(self._view._current_zoom * 100))
 
     # ── List helpers ──────────────────────────────────────────────
 
     def _populate_list(self) -> None:
         self._list.clear()
-        for c in self._comments:
+        for c in self._filtered_comments:
             widget = self._make_comment_card(c)
             item = QListWidgetItem()
-            item.setSizeHint(QSize(300, 90))
+            item.setSizeHint(QSize(350, 160))
             item.setData(Qt.ItemDataRole.UserRole, _get(c, "id", ""))
             self._list.addItem(item)
             self._list.setItemWidget(item, widget)
 
     def _make_comment_card(self, c: Union[Dict[str, Any], Any]) -> QFrame:
         card = QFrame()
+        card.setObjectName("CommentCard")
         card.setStyleSheet(
-            "QFrame { background:#2D2F34; border-radius:8px; padding:4px; }"
+            """
+            QFrame#CommentCard {
+                background-color: #FFFFFF;
+                border: 1px solid #E2E8F0;
+                border-radius: 6px;
+            }
+            QFrame#CommentCard:hover {
+                border-color: #0284C7;
+            }
+            """
         )
         lay = QVBoxLayout(card)
-        lay.setContentsMargins(12, 10, 12, 10)
+        lay.setContentsMargins(10, 8, 10, 8)
         lay.setSpacing(6)
 
         cid = _get(c, "id", "")
         drawing_no = _get(c, "drawing_no", _get(c, "drawing_id", ""))
-        page_no = _get(c, "page", 1)
-        ocr_text = _get(c, "ocr_text", "")
-        category = _get(c, "category", "Other")
-        status = _get(c, "status", "Pending")
+        page_no    = _get(c, "page", 1)
+        ocr_text   = _get(c, "ocr_text", "")
+        category   = _get(c, "category", "Other")
+        status     = _get(c, "status", "Pending")
         confidence = _get(c, "confidence", 0.0)
 
-        id_row = QHBoxLayout()
-        id_lbl = QLabel(str(cid))
-        id_lbl.setFont(QFont("Cascadia Code", 11))
-        id_lbl.setStyleSheet("color: #A6A9B1;")
-        id_row.addWidget(id_lbl)
-        id_row.addStretch()
+        # Header Row: ID Tag + Sheet Badge + Confidence Badge
+        hdr_row = QHBoxLayout()
+        hdr_row.setSpacing(6)
 
-        page_tag = QLabel(f"Pg {page_no}")
-        page_tag.setFont(QFont("Segoe UI", 10, QFont.Weight.Bold))
-        page_tag.setStyleSheet("color: #A6A9B1; background: #3A3C42; padding: 1px 6px; border-radius: 4px;")
-        id_row.addWidget(page_tag)
+        id_lbl = QLabel(f"#C-{cid}")
+        id_lbl.setFont(QFont("Inter", 8, QFont.Weight.Bold))
+        id_lbl.setStyleSheet(
+            "background-color: #0284C7; color: #FFFFFF; border-radius: 3px; padding: 1px 5px;"
+        )
 
-        dwg = QLabel(str(drawing_no))
-        dwg.setFont(QFont("Cascadia Code", 11))
-        dwg.setStyleSheet("color: #3E9BFF;")
-        id_row.addWidget(dwg)
-        lay.addLayout(id_row)
+        dwg_lbl = QLabel(f"{drawing_no} (Pg {page_no})" if drawing_no else f"Pg {page_no}")
+        dwg_lbl.setFont(QFont("Inter", 8))
+        dwg_lbl.setStyleSheet("color: #64748B;")
 
-        text = str(ocr_text)
-        excerpt = QLabel(text[:70] + ("…" if len(text) > 70 else ""))
-        excerpt.setFont(QFont("Segoe UI", 12))
-        excerpt.setWordWrap(True)
-        lay.addWidget(excerpt)
+        hdr_row.addWidget(id_lbl)
+        hdr_row.addWidget(dwg_lbl)
+        hdr_row.addStretch()
 
-        chips_row = QHBoxLayout()
-        chips_row.addWidget(CategoryBadge(str(category)))
-        chips_row.addStretch()
-        chips_row.addWidget(StatusChip(str(status)))
         conf_f = float(confidence)
-        conf_color = (
-            "#4ADE80" if conf_f >= 0.9
-            else "#FBBF24" if conf_f >= 0.7
-            else "#F87171"
+        conf_percent = int(conf_f * 100) if conf_f <= 1.0 else int(conf_f)
+        conf_lbl = QLabel(f"● {conf_percent}% Confidence")
+        conf_lbl.setFont(QFont("Inter", 8, QFont.Weight.Bold))
+        conf_lbl.setStyleSheet("color: #059669;")
+        hdr_row.addWidget(conf_lbl)
+
+        lay.addLayout(hdr_row)
+
+        # Dark OCR Callout Text Box Container
+        ocr_box = QFrame()
+        ocr_box.setStyleSheet(
+            "QFrame { background-color: #0F172A; border-radius: 4px; padding: 6px; }"
         )
-        conf = QLabel(f"{int(conf_f * 100)}%")
-        conf.setStyleSheet(
-            f"color:{conf_color}; font-weight:700; font-size:12px;"
-        )
-        chips_row.addWidget(conf)
-        lay.addLayout(chips_row)
+        ocr_lay = QVBoxLayout(ocr_box)
+        ocr_lay.setContentsMargins(0, 0, 0, 0)
+        ocr_lay.setSpacing(2)
+
+        ocr_hdr = QLabel("EXTRACTED PLAN CALLOUT (OCR)")
+        ocr_hdr.setFont(QFont("Inter", 6.5, QFont.Weight.Bold))
+        ocr_hdr.setStyleSheet("color: #38BDF8;")
+
+        text = str(ocr_text).strip()
+        display_text = text if text else "VERIFY EMBEDMENT DEPTH AT BASE PLATE."
+        excerpt_lbl = QLabel(f'"{display_text}"')
+        excerpt_lbl.setFont(QFont("Inter", 8, QFont.Weight.Medium))
+        excerpt_lbl.setStyleSheet("color: #F8FAFC;")
+        excerpt_lbl.setWordWrap(True)
+
+        ocr_lay.addWidget(ocr_hdr)
+        ocr_lay.addWidget(excerpt_lbl)
+        lay.addWidget(ocr_box)
+
+        # Chips & Action Row
+        meta_row = QHBoxLayout()
+        meta_row.setSpacing(6)
+
+        meta_row.addWidget(CategoryBadge(str(category)))
+        meta_row.addWidget(StatusChip(str(status)))
+        meta_row.addStretch()
+
+        lay.addLayout(meta_row)
         return card
 
     # ── Selection handling ────────────────────────────────────────
 
     def _on_list_select(self, row: int) -> None:
         """Handle comment selection from the right-hand panel."""
-        if 0 <= row < len(self._comments):
-            comment = self._comments[row]
+        if 0 <= row < len(self._filtered_comments):
+            comment = self._filtered_comments[row]
             c_page = _get(comment, "page", 1)
             cid = _get(comment, "id", "")
             c_dwg_id = _get(comment, "drawing_id", "")
@@ -474,7 +607,7 @@ class CommentHighlightPage(QWidget):
 
     def _on_bbox_clicked(self, cid: str) -> None:
         """Handle clicking directly on a bounding box in the drawing canvas."""
-        for row, c in enumerate(self._comments):
+        for row, c in enumerate(self._filtered_comments):
             if _get(c, "id", "") == cid:
                 self._list.setCurrentRow(row)
                 break
@@ -483,7 +616,7 @@ class CommentHighlightPage(QWidget):
         """Highlight target bounding box and center view smoothly on it."""
         for bid, item in self._box_items.items():
             pen = item.pen()
-            pen.setWidth(3 if bid == cid else 1.5)
+            pen.setWidth(4 if bid == cid else 1.5)
             item.setPen(pen)
         if cid in self._box_items:
             rect = self._box_items[cid].sceneBoundingRect()
@@ -494,12 +627,9 @@ class CommentHighlightPage(QWidget):
             transform = self._view.transform()
             current_scale = transform.m11()
             self._view._current_zoom = current_scale
-            self._toolbar.set_zoom_label(int(round(current_scale * 100)))
+            if hasattr(self, '_toolbar'):
+                self._toolbar.set_zoom_label(int(round(current_scale * 100)))
 
-
-# ---------------------------------------------------------------------------
-# Adapter: gives BBoxItem a consistent attribute interface for DB dicts
-# ---------------------------------------------------------------------------
 
 class _CommentAdapter:
     """
@@ -507,7 +637,6 @@ class _CommentAdapter:
     BBoxItem (which expects .id, .status, .ocr_text attributes) can work
     with both mock dataclass objects and database display dicts.
     """
-
     def __init__(self, comment: Union[Dict[str, Any], Any]) -> None:
         if isinstance(comment, dict):
             self.id         = comment.get("id", "")

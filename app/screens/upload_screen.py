@@ -1,4 +1,5 @@
 """
+<<<<<<< HEAD
 upload_screen.py — Superior Dual Single & Batch/Zip Upload Screen for Engineering Drawings.
 
 Provides:
@@ -8,10 +9,20 @@ Provides:
         - Mode 2: SINGLE FILE UPLOAD (individual PDF drawing review)
         - Independent Engineering Department selectors for each upload card.
         - Independent Process buttons inside each card for completely segregated workflow execution.
+=======
+upload_screen.py — Redesigned Upload Drawing screen.
+
+Provides:
+    UploadPage(QWidget)
+        Polished enterprise drop zone, horizontal uploaded file cards with tooltips,
+        real-time pipeline progress indicators, and post-processing completion view.
+>>>>>>> origin/feature/ui-overhaul
 """
 from __future__ import annotations
 import os
+import time
 from pathlib import Path
+<<<<<<< HEAD
 from typing import List, Dict, Any, Optional
 
 from PySide6.QtWidgets import (
@@ -23,6 +34,14 @@ from PySide6.QtWidgets import (
 import time
 from PySide6.QtCore import Qt, Signal, QTimer
 from PySide6.QtGui import QFont, QIcon, QColor
+=======
+from PySide6.QtWidgets import (QWidget, QVBoxLayout, QHBoxLayout, QLabel,
+                                QPushButton, QProgressBar, QFrame,
+                                QToolButton, QSizePolicy, QMenu, QScrollArea,
+                                QGraphicsDropShadowEffect)
+from PySide6.QtCore import Qt, QTimer, Signal
+from PySide6.QtGui import QFont, QColor
+>>>>>>> origin/feature/ui-overhaul
 
 from app.components.upload_widget import DropZone
 from app.components.dialogs import open_pdf_file, open_multiple_pdf_or_zip_files
@@ -39,12 +58,17 @@ logger = get_logger("UploadScreen")
 
 class UploadPage(QWidget):
     """
+<<<<<<< HEAD
     Dual Single & Batch/Zip Drawing Upload Screen with Isolated Options, Dropdowns & Buttons.
 
     Signals
     -------
     open_viewer_requested : Signal()
         Emitted when user completes processing and requests to view drawings.
+=======
+    Upload screen — drag-and-drop a PDF drawing or browse for one.
+    Integrates with AppController & ProcessingWorkflowEngine backend.
+>>>>>>> origin/feature/ui-overhaul
     """
 
     open_viewer_requested = Signal()
@@ -57,6 +81,7 @@ class UploadPage(QWidget):
         super().__init__(parent)
         self.setAcceptDrops(True)
         self._controller = controller
+<<<<<<< HEAD
         
         # State: Single file mode
         self._single_filepath: str | None = None
@@ -194,6 +219,352 @@ class UploadPage(QWidget):
         s_icon.setAlignment(Qt.AlignmentFlag.AlignCenter)
         s_icon.setStyleSheet("color: #3E9BFF;")
         s_drop_lay.addWidget(s_icon)
+=======
+        self._start_time: float | None = None
+
+        # Main background theme setup matching clean light design
+        self.setObjectName("UploadRoot")
+        self.setStyleSheet("""
+            QWidget#UploadRoot { 
+                background-color: #F8FAFC; 
+                font-family: 'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+            }
+            QScrollArea { 
+                background-color: transparent; 
+                border: none; 
+            }
+        """)
+
+        scroll = QScrollArea(self)
+        scroll.setWidgetResizable(True)
+        scroll.setFrameShape(QFrame.Shape.NoFrame)
+
+        container = QWidget()
+        container.setObjectName("UploadRoot")
+        root = QVBoxLayout(container)
+        root.setContentsMargins(40, 32, 40, 40)
+        root.setSpacing(24)
+        root.setAlignment(Qt.AlignmentFlag.AlignHCenter)
+
+        # ── Header ───────────────────────────────────────────────
+        hdr_box = QVBoxLayout()
+        hdr_box.setSpacing(6)
+        
+        # Pipeline status badge above title
+        pipeline_badge = QLabel("• INGESTION PIPELINE  ·  High-Resolution CAD / PDF Ingestion Engine")
+        pipeline_badge.setFont(QFont("Inter", 9, QFont.Weight.Bold))
+        pipeline_badge.setStyleSheet("""
+            color: #0284C7; 
+            background-color: #F0F9FF; 
+            border: 1px solid #BAE6FD; 
+            border-radius: 6px; 
+            padding: 4px 10px;
+        """)
+        pipeline_badge.setFixedWidth(430)
+        hdr_box.addWidget(pipeline_badge)
+        hdr_box.addSpacing(4)
+
+        title = QLabel("Upload Construction Drawings")
+        title.setFont(QFont("Inter", 22, QFont.Weight.Bold))
+        title.setStyleSheet("color: #0F172A; background: transparent;")
+        hdr_box.addWidget(title)
+
+        subtitle = QLabel("Upload scanned or native digital PDF drawings to detect comments, run OCR, and classify issues across architectural, structural, and MEP sheets.")
+        subtitle.setFont(QFont("Inter", 11))
+        subtitle.setStyleSheet("color: #64748B; background: transparent;")
+        hdr_box.addWidget(subtitle)
+        root.addLayout(hdr_box)
+
+        # ── Centered Drop Zone ────────────────────────────────────
+        self._drop = DropZone()
+        self._drop.setMinimumHeight(280)
+        self._drop.setMaximumWidth(780)
+        self._drop.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Fixed)
+        self._drop.setObjectName("DashedDropZone")
+        self._drop.setStyleSheet(
+            """
+            QFrame#DashedDropZone {
+                background-color: #FFFFFF;
+                border: 2px dashed #CBD5E1;
+                border-radius: 14px;
+            }
+            QFrame#DashedDropZone:hover {
+                border-color: #0284C7;
+                background-color: #F0F9FF;
+            }
+            """
+        )
+        
+        # Soft elevation shadow for dropzone
+        shadow_drop = QGraphicsDropShadowEffect(self._drop)
+        shadow_drop.setBlurRadius(16)
+        shadow_drop.setColor(QColor(15, 23, 42, 10))
+        shadow_drop.setOffset(0, 4)
+        self._drop.setGraphicsEffect(shadow_drop)
+
+        self._drop.file_dropped.connect(self._on_file)
+
+        inner = QVBoxLayout(self._drop)
+        inner.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        inner.setContentsMargins(32, 32, 32, 32)
+        inner.setSpacing(12)
+
+        icon = QLabel("☁")
+        icon.setFont(QFont("Segoe UI Emoji", 38))
+        icon.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        icon.setStyleSheet("""
+            color: #0284C7; 
+            background: #E0F2FE; 
+            border-radius: 28px; 
+            min-width: 56px; 
+            max-width: 56px; 
+            min-height: 56px; 
+            max-height: 56px;
+        """)
+        inner.addWidget(icon, 0, Qt.AlignmentFlag.AlignCenter)
+
+        instr = QLabel("Drag & drop drawing PDF sets here")
+        instr.setFont(QFont("Inter", 15, QFont.Weight.Bold))
+        instr.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        instr.setStyleSheet("color: #0F172A; background: transparent;")
+        inner.addWidget(instr)
+
+        sub = QLabel("Supports multi-page drawings up to 500 MB (Architectural, Structural, MEP, Civil)")
+        sub.setFont(QFont("Inter", 10))
+        sub.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        sub.setStyleSheet("color: #64748B; background: transparent;")
+        inner.addWidget(sub)
+
+        inner.addSpacing(6)
+
+        btn_row = QHBoxLayout()
+        btn_row.setSpacing(12)
+        btn_row.setAlignment(Qt.AlignmentFlag.AlignCenter)
+
+        browse_btn = QPushButton(" Browse PDF File ")
+        browse_btn.setFont(QFont("Inter", 10, QFont.Weight.Bold))
+        browse_btn.setFixedHeight(40)
+        browse_btn.setMinimumWidth(180)
+        browse_btn.setCursor(Qt.CursorShape.PointingHandCursor)
+        browse_btn.setStyleSheet(
+            """
+            QPushButton {
+                background-color: #0284C7;
+                color: #FFFFFF;
+                border: none;
+                border-radius: 8px;
+                padding: 0px 18px;
+            }
+            QPushButton:hover { background-color: #0369A1; }
+            QPushButton:pressed { background-color: #075985; }
+            """
+        )
+        browse_btn.clicked.connect(self._browse)
+        btn_row.addWidget(browse_btn)
+
+        recent_btn = QPushButton("Recent Drawings ▾")
+        recent_btn.setFont(QFont("Inter", 10, QFont.Weight.Medium))
+        recent_btn.setFixedHeight(40)
+        recent_btn.setMinimumWidth(150)
+        recent_btn.setCursor(Qt.CursorShape.PointingHandCursor)
+        recent_btn.setStyleSheet(
+            """
+            QPushButton {
+                background-color: #FFFFFF;
+                color: #334155;
+                border: 1px solid #CBD5E1;
+                border-radius: 8px;
+                padding: 0px 14px;
+            }
+            QPushButton:hover { 
+                background-color: #F8FAFC; 
+                border-color: #94A3B8;
+            }
+            """
+        )
+        recent_btn.clicked.connect(self._show_recent)
+        btn_row.addWidget(recent_btn)
+
+        inner.addLayout(btn_row)
+        root.addWidget(self._drop, 0, Qt.AlignmentFlag.AlignHCenter)
+
+        # ── Selected File Card (Horizontal) ───────────────────────
+        self._file_card = QFrame()
+        self._file_card.setObjectName("FileCard")
+        self._file_card.setMaximumWidth(780)
+        self._file_card.setStyleSheet(
+            """
+            QFrame#FileCard {
+                background-color: #FFFFFF;
+                border: 1px solid #E2E8F0;
+                border-radius: 12px;
+            }
+            """
+        )
+        shadow_card = QGraphicsDropShadowEffect(self._file_card)
+        shadow_card.setBlurRadius(16)
+        shadow_card.setColor(QColor(15, 23, 42, 10))
+        shadow_card.setOffset(0, 4)
+        self._file_card.setGraphicsEffect(shadow_card)
+        self._file_card.hide()
+
+        fc_lay = QHBoxLayout(self._file_card)
+        fc_lay.setContentsMargins(20, 16, 20, 16)
+        fc_lay.setSpacing(16)
+
+        self._file_icon = QLabel("📄")
+        self._file_icon.setFont(QFont("Segoe UI Emoji", 22))
+        self._file_icon.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        self._file_icon.setStyleSheet("""
+            background: #FEF2F2; 
+            border-radius: 8px; 
+            padding: 8px;
+            border: 1px solid #FEE2E2;
+        """)
+        fc_lay.addWidget(self._file_icon)
+
+        meta = QVBoxLayout()
+        meta.setSpacing(3)
+        self._fname = QLabel("filename.pdf")
+        self._fname.setFont(QFont("Inter", 12, QFont.Weight.Bold))
+        self._fname.setStyleSheet("color: #0F172A; background: transparent;")
+        meta.addWidget(self._fname)
+
+        self._fmeta = QLabel("— · — pages")
+        self._fmeta.setFont(QFont("Inter", 10))
+        self._fmeta.setStyleSheet("color: #64748B; background: transparent;")
+        meta.addWidget(self._fmeta)
+        fc_lay.addLayout(meta, 1)
+
+        self._status_chip = QLabel("READY")
+        self._status_chip.setFont(QFont("Inter", 9, QFont.Weight.Bold))
+        self._status_chip.setStyleSheet(
+            "color: #166534; background: #F0FDF4; border: 1px solid #BBF7D0; border-radius: 6px; padding: 4px 10px;"
+        )
+        fc_lay.addWidget(self._status_chip)
+
+        remove_btn = QToolButton()
+        remove_btn.setText("✕")
+        remove_btn.setFixedSize(30, 30)
+        remove_btn.setToolTip("Remove selected drawing")
+        remove_btn.setCursor(Qt.CursorShape.PointingHandCursor)
+        remove_btn.setStyleSheet(
+            """
+            QToolButton {
+                background: transparent;
+                color: #94A3B8;
+                font-size: 13px;
+                border-radius: 6px;
+                border: none;
+            }
+            QToolButton:hover {
+                background: #FEF2F2;
+                color: #DC2626;
+            }
+            """
+        )
+        remove_btn.clicked.connect(self._clear_file)
+        fc_lay.addWidget(remove_btn)
+
+        root.addWidget(self._file_card, 0, Qt.AlignmentFlag.AlignHCenter)
+
+        # ── Processing & Status Section ───────────────────────────
+        self._proc_container = QFrame()
+        self._proc_container.setObjectName("ProcContainer")
+        self._proc_container.setMaximumWidth(780)
+        self._proc_container.setStyleSheet(
+            """
+            QFrame#ProcContainer {
+                background-color: #FFFFFF;
+                border: 1px solid #E2E8F0;
+                border-radius: 12px;
+            }
+            """
+        )
+        shadow_proc = QGraphicsDropShadowEffect(self._proc_container)
+        shadow_proc.setBlurRadius(16)
+        shadow_proc.setColor(QColor(15, 23, 42, 10))
+        shadow_proc.setOffset(0, 4)
+        self._proc_container.setGraphicsEffect(shadow_proc)
+        self._proc_container.hide()
+
+        proc_lay = QVBoxLayout(self._proc_container)
+        proc_lay.setContentsMargins(24, 20, 24, 20)
+        proc_lay.setSpacing(12)
+
+        proc_top = QHBoxLayout()
+        self._step_title = QLabel("AI Pipeline Active")
+        self._step_title.setFont(QFont("Inter", 12, QFont.Weight.Bold))
+        self._step_title.setStyleSheet("color: #0F172A; background: transparent;")
+        proc_top.addWidget(self._step_title)
+        proc_top.addStretch()
+
+        self._pct_lbl = QLabel("0%")
+        self._pct_lbl.setFont(QFont("Inter", 12, QFont.Weight.Bold))
+        self._pct_lbl.setStyleSheet("color: #0284C7; background: transparent;")
+        proc_top.addWidget(self._pct_lbl)
+        proc_lay.addLayout(proc_top)
+
+        self._prog = QProgressBar()
+        self._prog.setRange(0, 100)
+        self._prog.setValue(0)
+        self._prog.setFixedHeight(8)
+        self._prog.setTextVisible(False)
+        self._prog.setStyleSheet(
+            """
+            QProgressBar {
+                background-color: #F1F5F9;
+                border: none;
+                border-radius: 4px;
+            }
+            QProgressBar::chunk {
+                background-color: #0284C7;
+                border-radius: 4px;
+            }
+            """
+        )
+        proc_lay.addWidget(self._prog)
+
+        self._status_lbl = QLabel("Initializing document loader...")
+        self._status_lbl.setFont(QFont("Inter", 10))
+        self._status_lbl.setStyleSheet("color: #64748B; background: transparent;")
+        proc_lay.addWidget(self._status_lbl)
+
+        root.addWidget(self._proc_container, 0, Qt.AlignmentFlag.AlignHCenter)
+
+        # ── Start / Action Button ─────────────────────────────────
+        self._start_btn = QPushButton(" Start AI Processing Workflow ")
+        self._start_btn.setFixedHeight(46)
+        self._start_btn.setMinimumWidth(280)
+        self._start_btn.setFont(QFont("Inter", 11, QFont.Weight.Bold))
+        self._start_btn.setCursor(Qt.CursorShape.PointingHandCursor)
+        self._start_btn.setEnabled(False)
+        self._start_btn.setStyleSheet(
+            """
+            QPushButton {
+                background-color: #0284C7;
+                color: #FFFFFF;
+                border: none;
+                border-radius: 8px;
+                padding: 0px 24px;
+            }
+            QPushButton:hover { background-color: #0369A1; }
+            QPushButton:disabled {
+                background-color: #E2E8F0;
+                color: #94A3B8;
+            }
+            """
+        )
+        self._start_btn.clicked.connect(self._start)
+        root.addWidget(self._start_btn, 0, Qt.AlignmentFlag.AlignHCenter)
+
+        root.addStretch()
+        scroll.setWidget(container)
+
+        page_lay = QVBoxLayout(self)
+        page_lay.setContentsMargins(0, 0, 0, 0)
+        page_lay.addWidget(scroll)
+>>>>>>> origin/feature/ui-overhaul
 
         s_instr = QLabel("Drag & drop a single PDF here")
         s_instr.setFont(QFont("Segoe UI Variable", 13, QFont.Weight.DemiBold))

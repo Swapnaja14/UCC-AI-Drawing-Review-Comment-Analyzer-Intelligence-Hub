@@ -1,256 +1,394 @@
 """
-export_screen.py — Export screen.
+export_screen.py — Redesigned Export screen matching modern light Enterprise theme.
 
 Provides:
     ExportPage(QWidget)
         Responsive, scrollable layout with format selector cards (Excel / JSON / CSV),
-        Standard Input metadata fields for the Error Tracker Sheet, scope options,
-        progress feedback, and export history table.
+        Standard Input metadata fields for the Error Tracker Sheet, scope options with date range,
+        progress feedback, and export history table with double-click file opening.
 """
 from __future__ import annotations
 from datetime import date as _date
 from pathlib import Path
 from typing import Optional, Any
 
-from PySide6.QtWidgets import (QWidget, QVBoxLayout, QHBoxLayout, QGridLayout, QFrame,
-                                QLabel, QLineEdit, QComboBox, QPushButton, QRadioButton, QButtonGroup,
-                                QProgressBar, QTableView, QHeaderView, QScrollArea,
-                                QAbstractItemView, QFileDialog, QMessageBox, QSizePolicy)
+from PySide6.QtWidgets import (
+    QWidget,
+    QVBoxLayout,
+    QHBoxLayout,
+    QGridLayout,
+    QFrame,
+    QLabel,
+    QLineEdit,
+    QComboBox,
+    QPushButton,
+    QRadioButton,
+    QButtonGroup,
+    QCheckBox,
+    QProgressBar,
+    QTableView,
+    QHeaderView,
+    QAbstractItemView,
+    QFileDialog,
+    QMessageBox,
+    QDateEdit,
+    QSizePolicy,
+    QScrollArea,
+    QGraphicsDropShadowEffect,
+)
 from PySide6.QtGui import QFont, QStandardItemModel, QStandardItem, QColor
-from PySide6.QtCore import Qt, QTimer
+from PySide6.QtCore import Qt, QTimer, QDate
 
 from src.core.dtos.export_dtos import ExportConfigDTO, ExportFormat
 from app import mock_data as md
 
-
-# ── Format card ───────────────────────────────────────────────────────────────
+# ── Format definitions ────────────────────────────────────────────────────────
 
 _FORMATS = [
-    ("📊", "Excel", ".xlsx", "Error Tracker Multi-Tier Formatted Spreadsheet with Custom Colors", "#4ADE80"),
-    ("📜", "JSON",  ".json", "Structured Machine-Readable Object Hierarchy with Metadata",        "#60A5FA"),
-    ("📋", "CSV",   ".csv",  "Standard 9-Column Error Tracker Comma-Separated Values",            "#FBBF24"),
+    (
+        "📊",
+        "Excel Workbook",
+        ".xlsx",
+        "Full engineering audit dataset formatted with summary KPI sheets, category pivot tables, and high-res annotation snapshots.",
+        "Includes Formulas & Formatting",
+        "Excel",
+    ),
+    (
+        "{}",
+        "Structured JSON",
+        ".json",
+        "Hierarchical machine-readable payload containing bounding-box coordinates, OCR tokens, and confidence scores.",
+        "API & Pipeline Ready",
+        "JSON",
+    ),
+    (
+        "📋",
+        "Raw CSV Dataset",
+        ".csv",
+        "Flat tabular representation suitable for importing into external business intelligence tools, PowerBI, or Revit.",
+        "Universal Compatibility",
+        "CSV",
+    ),
 ]
 
 
-class _FormatCard(QFrame):
-    """Selectable export-format card with rich typography and responsive spacing."""
+def _card(parent=None) -> QFrame:
+    """Creates a light rounded card with subtle shadow matching UI style."""
+    f = QFrame(parent)
+    f.setObjectName("StitchCard")
+    f.setStyleSheet(
+        """
+        QFrame#StitchCard {
+            background-color: #FFFFFF;
+            border: 1px solid #E2E8F0;
+            border-radius: 8px;
+        }
+        """
+    )
+    shadow = QGraphicsDropShadowEffect(f)
+    shadow.setBlurRadius(8)
+    shadow.setColor(QColor(15, 23, 42, 8))
+    shadow.setOffset(0, 2)
+    f.setGraphicsEffect(shadow)
+    return f
 
-    def __init__(self, icon: str, name: str, ext: str,
-                 desc: str, color: str, parent=None):
+
+class _FormatCard(QFrame):
+    """Selectable export-format card with light enterprise theme and radio indicator."""
+
+    def __init__(
+        self,
+        icon: str,
+        title: str,
+        ext: str,
+        desc: str,
+        footer: str,
+        internal_name: str,
+        parent=None,
+    ):
         super().__init__(parent)
-        self.setObjectName("Card")
-        self.setMinimumHeight(175)
-        self.setMinimumWidth(210)
-        self.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Preferred)
+        self.setObjectName("FormatCard")
+        self.setMinimumHeight(180)
         self.setCursor(Qt.CursorShape.PointingHandCursor)
         self._selected = False
-        self._color    = color
+        self.internal_name = internal_name
 
         lay = QVBoxLayout(self)
-        lay.setContentsMargins(20, 18, 20, 18)
-        lay.setSpacing(6)
-        lay.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        lay.setContentsMargins(16, 16, 16, 12)
+        lay.setSpacing(10)
 
-        icon_lbl = QLabel(icon)
-        icon_lbl.setFont(QFont("Segoe UI Emoji", 30))
-        icon_lbl.setAlignment(Qt.AlignmentFlag.AlignCenter)
-        icon_lbl.setStyleSheet("background: transparent;")
-        lay.addWidget(icon_lbl)
+        # Top Row: Icon + Badge + Select Indicator
+        top_row = QHBoxLayout()
+        top_row.setSpacing(8)
 
-        name_lbl = QLabel(name)
-        name_lbl.setFont(QFont("Segoe UI Variable", 16, QFont.Weight.Bold))
-        name_lbl.setAlignment(Qt.AlignmentFlag.AlignCenter)
-        name_lbl.setStyleSheet("background: transparent; color: #F8FAFC;")
-        lay.addWidget(name_lbl)
+        icon_box = QFrame()
+        icon_box.setFixedSize(36, 36)
+        icon_box.setStyleSheet(
+            "background: #EFF6FF; border: 1px solid #BFDBFE; border-radius: 6px;"
+        )
+        ib_lay = QHBoxLayout(icon_box)
+        ib_lay.setContentsMargins(0, 0, 0, 0)
+        self._icon_lbl = QLabel(icon)
+        self._icon_lbl.setFont(QFont("Inter", 12))
+        self._icon_lbl.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        ib_lay.addWidget(self._icon_lbl)
+        top_row.addWidget(icon_box)
 
-        ext_lbl = QLabel(f" {ext} ")
-        ext_lbl.setFont(QFont("Cascadia Code", 11, QFont.Weight.DemiBold))
-        ext_lbl.setAlignment(Qt.AlignmentFlag.AlignCenter)
-        ext_lbl.setStyleSheet(f"""
-            background: {color}22;
-            color: {color};
-            border-radius: 4px;
-            padding: 2px 8px;
-        """)
-        lay.addWidget(ext_lbl, alignment=Qt.AlignmentFlag.AlignCenter)
+        top_row.addStretch()
 
-        desc_lbl = QLabel(desc)
-        desc_lbl.setFont(QFont("Segoe UI", 12))
-        desc_lbl.setWordWrap(True)
-        desc_lbl.setAlignment(Qt.AlignmentFlag.AlignCenter)
-        desc_lbl.setStyleSheet("background: transparent; color: #94A3B8; padding-top: 4px;")
-        lay.addWidget(desc_lbl)
+        self._ext_badge = QLabel(ext.upper())
+        self._ext_badge.setFont(QFont("Inter", 7.5, QFont.Weight.Bold))
+        self._ext_badge.setStyleSheet(
+            "color: #0284C7; background-color: #E0F2FE; "
+            "border: 1px solid #BAE6FD; border-radius: 4px; padding: 2px 6px;"
+        )
+        top_row.addWidget(self._ext_badge)
 
-        self._dot = QLabel("● Selected")
-        self._dot.setFont(QFont("Segoe UI", 11, QFont.Weight.Bold))
-        self._dot.setAlignment(Qt.AlignmentFlag.AlignCenter)
-        self._dot.setStyleSheet(f"background: transparent; color: {color}; padding-top: 4px;")
-        self._dot.hide()
-        lay.addWidget(self._dot)
+        self._radio_ind = QLabel("○")
+        self._radio_ind.setFont(QFont("Inter", 12))
+        self._radio_ind.setStyleSheet("color: #94A3B8;")
+        top_row.addWidget(self._radio_ind)
+
+        lay.addLayout(top_row)
+
+        self._name_lbl = QLabel(title)
+        self._name_lbl.setFont(QFont("Inter", 11, QFont.Weight.Bold))
+        self._name_lbl.setStyleSheet("color: #0F172A;")
+        lay.addWidget(self._name_lbl)
+
+        self._desc_lbl = QLabel(desc)
+        self._desc_lbl.setWordWrap(True)
+        self._desc_lbl.setStyleSheet(
+            "color: #64748B; font-size: 11px; line-height: 1.4;"
+        )
+        lay.addWidget(self._desc_lbl)
+
+        lay.addStretch()
+
+        div = QFrame()
+        div.setFixedHeight(1)
+        div.setStyleSheet("background-color: #F1F5F9;")
+        lay.addWidget(div)
+
+        self._footer_lbl = QLabel(f"⚙  {footer}")
+        self._footer_lbl.setFont(QFont("Inter", 8, QFont.Weight.Medium))
+        self._footer_lbl.setStyleSheet("color: #64748B;")
+        lay.addWidget(self._footer_lbl)
+
+        self.set_selected(False)
 
     def set_selected(self, v: bool) -> None:
         self._selected = v
         if v:
             self.setStyleSheet(
-                f"#Card {{ border: 2px solid {self._color};"
-                f" border-radius: 10px;"
-                f" background-color: {self._color}14; }}"
+                "QFrame#FormatCard {"
+                " background-color: #F0F9FF;"
+                " border: 2px solid #0284C7;"
+                " border-radius: 8px;"
+                "}"
             )
-            self._dot.show()
+            self._radio_ind.setText("●")
+            self._radio_ind.setStyleSheet("color: #0284C7;")
         else:
             self.setStyleSheet(
-                "#Card { border: 1px solid #334155; border-radius: 10px; background-color: #1E222B; }"
-                "#Card:hover { border: 1px solid #475569; background-color: #242936; }"
+                "QFrame#FormatCard {"
+                " background-color: #FFFFFF;"
+                " border: 1px solid #E2E8F0;"
+                " border-radius: 8px;"
+                "}"
+                "QFrame#FormatCard:hover {"
+                " border-color: #CBD5E1;"
+                " background-color: #F8FAFC;"
+                "}"
             )
-            self._dot.hide()
+            self._radio_ind.setText("○")
+            self._radio_ind.setStyleSheet("color: #94A3B8;")
 
-    def mousePressEvent(self, e) -> None:
-        self.set_selected(True)
-        super().mousePressEvent(e)
-
-
-# ── ExportPage ────────────────────────────────────────────────────────────────
 
 class ExportPage(QWidget):
     """
-    Responsive, scrollable Export Screen with dedicated Error Tracker fields,
-    scope selection, and interactive spreadsheet generator.
+    Export — format selection cards, scope options with date range,
+    Standard Input metadata fields for Error Tracker, animated export progress bar,
+    and historical export audit table.
     """
 
     def __init__(self, controller=None, parent=None):
         super().__init__(parent)
-        self._controller       = controller
-        self._selected_format  = "Excel"
+        self._controller = controller
+        self._selected_format = "Excel"
         self._format_cards: list[_FormatCard] = []
-        self._progress         = 0
+        self._progress = 0
 
-        # Outer root layout for the page
-        page_layout = QVBoxLayout(self)
-        page_layout.setContentsMargins(0, 0, 0, 0)
-        page_layout.setSpacing(0)
+        self.setObjectName("ExportPageRoot")
+        self.setStyleSheet(
+            """
+            QWidget#ExportPageRoot {
+                background-color: #F8FAFC;
+            }
+            QRadioButton {
+                font-family: 'Inter';
+                font-size: 11px;
+                font-weight: 600;
+                color: #0F172A;
+                spacing: 8px;
+            }
+            QRadioButton::indicator {
+                width: 14px;
+                height: 14px;
+            }
+            QCheckBox {
+                font-family: 'Inter';
+                font-size: 11px;
+                font-weight: 600;
+                color: #0F172A;
+                spacing: 8px;
+            }
+            """
+        )
 
-        # ── Scroll Area for Full Responsiveness ───────────────────
         scroll = QScrollArea(self)
         scroll.setWidgetResizable(True)
         scroll.setFrameShape(QFrame.Shape.NoFrame)
-        scroll.setHorizontalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAsNeeded)
-        scroll.setVerticalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAsNeeded)
-        scroll.setStyleSheet("""
-            QScrollArea {
-                border: none;
-                background-color: transparent;
-            }
-            QScrollBar:vertical {
-                border: none;
-                background: #181A20;
-                width: 10px;
-                margin: 0px;
-                border-radius: 5px;
-            }
-            QScrollBar::handle:vertical {
-                background: #334155;
-                min-height: 30px;
-                border-radius: 5px;
-            }
-            QScrollBar::handle:vertical:hover {
-                background: #475569;
-            }
-            QScrollBar::add-line:vertical, QScrollBar::sub-line:vertical {
-                height: 0px;
-            }
-        """)
+        scroll.setStyleSheet("QScrollArea { background-color: transparent; }")
 
-        # Container widget inside scroll area
         container = QWidget()
-        container.setObjectName("ExportContainer")
-        container.setStyleSheet("#ExportContainer { background-color: transparent; }")
-
+        container.setStyleSheet("background-color: transparent;")
         root = QVBoxLayout(container)
-        root.setContentsMargins(36, 28, 36, 36)
-        root.setSpacing(24)
+        root.setContentsMargins(24, 20, 24, 24)
+        root.setSpacing(18)
 
-        # ── Section 1: Format Selector ────────────────────────────
-        fmt_header_lay = QHBoxLayout()
-        fmt_lbl = QLabel("Select Export Format")
-        fmt_lbl.setFont(QFont("Segoe UI Variable", 18, QFont.Weight.Bold))
-        fmt_lbl.setStyleSheet("color: #F8FAFC;")
-        fmt_header_lay.addWidget(fmt_lbl)
-        fmt_header_lay.addStretch()
-        root.addLayout(fmt_header_lay)
+        # ── Page Header ──────────────────────────────────────────
+        hdr_box = QVBoxLayout()
+        hdr_box.setSpacing(4)
+
+        tag_row = QHBoxLayout()
+        tag_row.setSpacing(6)
+
+        tag1 = QLabel("● DATA PIPELINE")
+        tag1.setFont(QFont("Inter", 7.5, QFont.Weight.Bold))
+        tag1.setStyleSheet("color: #0284C7;")
+
+        tag2 = QLabel("• Export Engine v2.4")
+        tag2.setFont(QFont("Inter", 7.5, QFont.Weight.Bold))
+        tag2.setStyleSheet("color: #059669; background: #ECFDF5; border-radius: 3px; padding: 1px 5px;")
+
+        tag_row.addWidget(tag1)
+        tag_row.addWidget(tag2)
+        tag_row.addStretch()
+
+        hdr_top = QHBoxLayout()
+        hdr_top.addLayout(tag_row)
+
+        quota_box = QFrame()
+        quota_box.setStyleSheet("background: #FFFFFF; border: 1px solid #E2E8F0; border-radius: 6px; padding: 4px 10px;")
+        qb_lay = QHBoxLayout(quota_box)
+        qb_lay.setContentsMargins(0, 0, 0, 0)
+        lbl_quota = QLabel("💾  Storage Quota:  <b>48.6 / 250 GB</b>")
+        lbl_quota.setFont(QFont("Inter", 8))
+        lbl_quota.setStyleSheet("color: #475569;")
+        qb_lay.addWidget(lbl_quota)
+        hdr_top.addWidget(quota_box)
+
+        hdr_box.addLayout(hdr_top)
+
+        title = QLabel("Export Drawing Review Data")
+        title.setFont(QFont("Inter", 18, QFont.Weight.Bold))
+        title.setStyleSheet("color: #0F172A;")
+        hdr_box.addWidget(title)
+
+        subtitle = QLabel(
+            "Generate customized audit reports, structured CAD annotation datasets, and compliance spreadsheets."
+        )
+        subtitle.setFont(QFont("Inter", 9))
+        subtitle.setStyleSheet("color: #64748B;")
+        hdr_box.addWidget(subtitle)
+        root.addLayout(hdr_box)
+
+        # ── Format Cards Section ──────────────────────────────────
+        fmt_section = QVBoxLayout()
+        fmt_section.setSpacing(10)
+
+        fmt_hdr = QHBoxLayout()
+        fmt_lbl = QLabel("● Select Export Format")
+        fmt_lbl.setFont(QFont("Inter", 10, QFont.Weight.Bold))
+        fmt_lbl.setStyleSheet("color: #0F172A;")
+
+        step1 = QLabel("Step 1 of 3")
+        step1.setFont(QFont("Inter", 8))
+        step1.setStyleSheet("color: #94A3B8;")
+
+        fmt_hdr.addWidget(fmt_lbl)
+        fmt_hdr.addStretch()
+        fmt_hdr.addWidget(step1)
+        fmt_section.addLayout(fmt_hdr)
 
         fmt_row = QHBoxLayout()
-        fmt_row.setSpacing(18)
-        for icon, name, ext, desc, color in _FORMATS:
-            card = _FormatCard(icon, name, ext, desc, color)
-            card.mousePressEvent = self._make_select_handler(card, name)
+        fmt_row.setSpacing(14)
+        for icon, name, ext, desc, footer, internal_name in _FORMATS:
+            card = _FormatCard(icon, name, ext, desc, footer, internal_name)
+            card.mousePressEvent = self._make_select_handler(card, internal_name)
             self._format_cards.append(card)
             fmt_row.addWidget(card, 1)
+
         self._format_cards[0].set_selected(True)
-        root.addLayout(fmt_row)
+        fmt_section.addLayout(fmt_row)
+        root.addLayout(fmt_section)
 
-        # ── Section 2: Standard Input Fields (Error Tracker) ──────
-        meta_card = QFrame()
-        meta_card.setObjectName("Card")
-        meta_card.setStyleSheet("""
-            #Card {
-                background-color: #1E222B;
-                border: 1px solid #334155;
-                border-radius: 10px;
-            }
-        """)
+        # ── Standard Input Fields (Error Tracker Metadata) ────────
+        meta_section = QVBoxLayout()
+        meta_section.setSpacing(10)
+
+        meta_hdr = QHBoxLayout()
+        meta_lbl = QLabel("● Standard Input Fields (Error Tracker Metadata)")
+        meta_lbl.setFont(QFont("Inter", 10, QFont.Weight.Bold))
+        meta_lbl.setStyleSheet("color: #0F172A;")
+
+        badge_lbl = QLabel("🟧 Error Tracker Input Metadata")
+        badge_lbl.setFont(QFont("Inter", 7.5, QFont.Weight.Bold))
+        badge_lbl.setStyleSheet(
+            "color: #D97706; background-color: #FEF3C7; "
+            "border: 1px solid #FDE68A; border-radius: 4px; padding: 2px 6px;"
+        )
+
+        meta_hdr.addWidget(meta_lbl)
+        meta_hdr.addWidget(badge_lbl)
+        meta_hdr.addStretch()
+        meta_section.addLayout(meta_hdr)
+
+        meta_card = _card()
         meta_lay = QVBoxLayout(meta_card)
-        meta_lay.setContentsMargins(24, 20, 24, 24)
-        meta_lay.setSpacing(18)
-
-        meta_hdr_lay = QHBoxLayout()
-        meta_title = QLabel("Standard Input Fields (Error Tracker Metadata)")
-        meta_title.setFont(QFont("Segoe UI Variable", 16, QFont.Weight.Bold))
-        meta_title.setStyleSheet("color: #F8FAFC;")
-        meta_hdr_lay.addWidget(meta_title)
-        meta_hdr_lay.addStretch()
-        
-        badge_lbl = QLabel(" 🟧 User Input Fields — Will be written to Error Tracker Sheet ")
-        badge_lbl.setFont(QFont("Segoe UI", 12, QFont.Weight.DemiBold))
-        badge_lbl.setStyleSheet("""
-            background-color: #FFC00022;
-            color: #FFC000;
-            border: 1px solid #FFC00055;
-            border-radius: 6px;
-            padding: 4px 10px;
-        """)
-        meta_hdr_lay.addWidget(badge_lbl)
-        meta_lay.addLayout(meta_hdr_lay)
+        meta_lay.setContentsMargins(16, 16, 16, 16)
+        meta_lay.setSpacing(14)
 
         input_style = """
             QLineEdit {
-                background-color: #12141A;
-                color: #F8FAFC;
-                border: 1px solid #334155;
-                border-radius: 8px;
-                padding: 10px 14px;
-                font-size: 14px;
-                font-family: 'Segoe UI', Arial;
-                min-height: 22px;
+                background-color: #FFFFFF;
+                color: #0F172A;
+                border: 1px solid #CBD5E1;
+                border-radius: 6px;
+                padding: 6px 10px;
+                font-size: 12px;
+                font-family: 'Inter', Arial;
             }
             QLineEdit:hover {
-                border: 1px solid #475569;
+                border-color: #94A3B8;
             }
             QLineEdit:focus {
-                border: 1.5px solid #38BDF8;
-                background-color: #161922;
+                border-color: #0284C7;
+                background-color: #F8FAFC;
             }
         """
 
         grid = QGridLayout()
-        grid.setHorizontalSpacing(24)
-        grid.setVerticalSpacing(16)
+        grid.setHorizontalSpacing(18)
+        grid.setVerticalSpacing(12)
 
-        # Column 0 & 1: Contract # & Plant Name
+        # Contract # & Plant Name
         c_box = QVBoxLayout()
-        c_box.setSpacing(6)
+        c_box.setSpacing(4)
         c_lbl = QLabel("Contract # (Column 2):")
-        c_lbl.setFont(QFont("Segoe UI", 13, QFont.Weight.DemiBold))
-        c_lbl.setStyleSheet("color: #CBD5E1;")
+        c_lbl.setFont(QFont("Inter", 8.5, QFont.Weight.Bold))
+        c_lbl.setStyleSheet("color: #475569;")
         self._contract_input = QLineEdit("CTR-2026-01")
         self._contract_input.setStyleSheet(input_style)
         self._contract_input.setPlaceholderText("e.g. CTR-2026-01")
@@ -259,10 +397,10 @@ class ExportPage(QWidget):
         grid.addLayout(c_box, 0, 0)
 
         p_box = QVBoxLayout()
-        p_box.setSpacing(6)
+        p_box.setSpacing(4)
         p_lbl = QLabel("Plant Name (Column 3):")
-        p_lbl.setFont(QFont("Segoe UI", 13, QFont.Weight.DemiBold))
-        p_lbl.setStyleSheet("color: #CBD5E1;")
+        p_lbl.setFont(QFont("Inter", 8.5, QFont.Weight.Bold))
+        p_lbl.setStyleSheet("color: #475569;")
         self._plant_input = QLineEdit("Austin Substation")
         self._plant_input.setStyleSheet(input_style)
         self._plant_input.setPlaceholderText("e.g. Austin Substation")
@@ -270,12 +408,12 @@ class ExportPage(QWidget):
         p_box.addWidget(self._plant_input)
         grid.addLayout(p_box, 0, 1)
 
-        # Column 2 & 3: E-Pod WO # & UCC-I Designer
+        # E-Pod WO # & UCC-I Designer
         w_box = QVBoxLayout()
-        w_box.setSpacing(6)
+        w_box.setSpacing(4)
         w_lbl = QLabel("E-Pod WO # (Column 4):")
-        w_lbl.setFont(QFont("Segoe UI", 13, QFont.Weight.DemiBold))
-        w_lbl.setStyleSheet("color: #CBD5E1;")
+        w_lbl.setFont(QFont("Inter", 8.5, QFont.Weight.Bold))
+        w_lbl.setStyleSheet("color: #475569;")
         self._epod_input = QLineEdit("WO-440192")
         self._epod_input.setStyleSheet(input_style)
         self._epod_input.setPlaceholderText("e.g. WO-440192")
@@ -284,10 +422,10 @@ class ExportPage(QWidget):
         grid.addLayout(w_box, 1, 0)
 
         d_box = QVBoxLayout()
-        d_box.setSpacing(6)
+        d_box.setSpacing(4)
         d_lbl = QLabel("UCC-I Designer (Column 6):")
-        d_lbl.setFont(QFont("Segoe UI", 13, QFont.Weight.DemiBold))
-        d_lbl.setStyleSheet("color: #CBD5E1;")
+        d_lbl.setFont(QFont("Inter", 8.5, QFont.Weight.Bold))
+        d_lbl.setStyleSheet("color: #475569;")
         self._designer_input = QLineEdit("Lead Reviewer")
         self._designer_input.setStyleSheet(input_style)
         self._designer_input.setPlaceholderText("e.g. Lead Reviewer")
@@ -295,12 +433,12 @@ class ExportPage(QWidget):
         d_box.addWidget(self._designer_input)
         grid.addLayout(d_box, 1, 1)
 
-        # Row 2 (Cols 0 & 1): Review Date & Engineering Department
+        # Review Date & Engineering Department
         dt_box = QVBoxLayout()
-        dt_box.setSpacing(6)
+        dt_box.setSpacing(4)
         dt_lbl = QLabel("Review Date (Column 1):")
-        dt_lbl.setFont(QFont("Segoe UI", 13, QFont.Weight.DemiBold))
-        dt_lbl.setStyleSheet("color: #CBD5E1;")
+        dt_lbl.setFont(QFont("Inter", 8.5, QFont.Weight.Bold))
+        dt_lbl.setStyleSheet("color: #475569;")
         self._date_input = QLineEdit(_date.today().strftime("%Y-%m-%d"))
         self._date_input.setStyleSheet(input_style)
         self._date_input.setPlaceholderText("YYYY-MM-DD")
@@ -309,65 +447,32 @@ class ExportPage(QWidget):
         grid.addLayout(dt_box, 2, 0)
 
         dept_box = QVBoxLayout()
-        dept_box.setSpacing(6)
+        dept_box.setSpacing(4)
         dept_lbl = QLabel("Engineering Department (Column 10):")
-        dept_lbl.setFont(QFont("Segoe UI", 13, QFont.Weight.DemiBold))
-        dept_lbl.setStyleSheet("color: #CBD5E1;")
+        dept_lbl.setFont(QFont("Inter", 8.5, QFont.Weight.Bold))
+        dept_lbl.setStyleSheet("color: #475569;")
         self._dept_combo = QComboBox()
         self._dept_combo.setStyleSheet("""
             QComboBox {
-                background-color: #12141A;
-                color: #F8FAFC;
-                border: 1px solid #334155;
-                border-radius: 8px;
-                padding: 10px 36px 10px 14px;
-                font-size: 14px;
-                font-family: 'Segoe UI', Arial;
-                min-height: 22px;
+                background-color: #FFFFFF;
+                color: #0F172A;
+                border: 1px solid #CBD5E1;
+                border-radius: 6px;
+                padding: 6px 28px 6px 10px;
+                font-size: 12px;
+                font-family: 'Inter', Arial;
             }
             QComboBox:hover {
-                border-color: #38BDF8;
-            }
-            QComboBox::drop-down {
-                subcontrol-origin: padding;
-                subcontrol-position: top right;
-                width: 32px;
-                border: none;
-                background: transparent;
-            }
-            QComboBox::drop-down:hover {
-                background-color: rgba(56, 189, 248, 0.15);
-                border-top-right-radius: 7px;
-                border-bottom-right-radius: 7px;
-            }
-            QComboBox::down-arrow {
-                image: none;
-                width: 0;
-                height: 0;
-                border-left: 5px solid transparent;
-                border-right: 5px solid transparent;
-                border-top: 6px solid #94A3B8;
-                margin-right: 10px;
-            }
-            QComboBox::down-arrow:hover, QComboBox:hover::down-arrow {
-                border-top-color: #38BDF8;
-            }
-            QComboBox::down-arrow:on {
-                border-top: none;
-                border-left: 5px solid transparent;
-                border-right: 5px solid transparent;
-                border-bottom: 6px solid #38BDF8;
+                border-color: #94A3B8;
             }
             QComboBox QAbstractItemView {
-                background-color: #1E222B;
-                color: #F8FAFC;
-                selection-background-color: #0284C7;
-                border: 1px solid #334155;
-                border-radius: 6px;
-                padding: 4px;
+                background-color: #FFFFFF;
+                color: #0F172A;
+                selection-background-color: #EFF6FF;
+                selection-color: #0F172A;
+                border: 1px solid #CBD5E1;
             }
         """)
-        # Populate 7 official UCC engineering departments
         ucc_depts = [
             "Electrical Engineering",
             "GPD",
@@ -383,182 +488,259 @@ class ExportPage(QWidget):
         dept_box.addWidget(self._dept_combo)
         grid.addLayout(dept_box, 2, 1)
 
-        # Row 3 (Col 0): Auto-read program fields explanation
-        info_box = QVBoxLayout()
-        info_box.setSpacing(6)
-        info_lbl = QLabel("Auto-Read Program Fields (Cols 7-10):")
-        info_lbl.setFont(QFont("Segoe UI", 13, QFont.Weight.DemiBold))
-        info_lbl.setStyleSheet("color: #92D050;")
-        info_val = QLabel("Drawing #, Title, Commentary OCR, Error Classification, and Department are auto-read from database.")
-        info_val.setFont(QFont("Segoe UI", 12))
-        info_val.setWordWrap(True)
-        info_val.setStyleSheet("color: #94A3B8; padding-top: 4px;")
-        info_box.addWidget(info_lbl)
-        info_box.addWidget(info_val)
-        grid.addLayout(info_box, 3, 0, 1, 2)
-
         grid.setColumnStretch(0, 1)
         grid.setColumnStretch(1, 1)
         meta_lay.addLayout(grid)
-        root.addWidget(meta_card)
-        # ── Section 3: Scope Options ──────────────────────────────
-        scope_card = QFrame()
-        scope_card.setObjectName("Card")
-        scope_card.setStyleSheet("""
-            #Card {
-                background-color: #1E222B;
-                border: 1px solid #334155;
-                border-radius: 10px;
-            }
-        """)
+        meta_section.addWidget(meta_card)
+        root.addLayout(meta_section)
+
+        # ── Scope & Parameters Options Card ──────────────────────
+        scope_section = QVBoxLayout()
+        scope_section.setSpacing(10)
+
+        scope_hdr = QHBoxLayout()
+        scope_lbl = QLabel("● Export Scope & Parameters")
+        scope_lbl.setFont(QFont("Inter", 10, QFont.Weight.Bold))
+        scope_lbl.setStyleSheet("color: #0F172A;")
+
+        step2 = QLabel("Step 3 of 3")
+        step2.setFont(QFont("Inter", 8))
+        step2.setStyleSheet("color: #94A3B8;")
+
+        scope_hdr.addWidget(scope_lbl)
+        scope_hdr.addStretch()
+        scope_hdr.addWidget(step2)
+        scope_section.addLayout(scope_hdr)
+
+        scope_card = _card()
         scope_lay = QVBoxLayout(scope_card)
-        scope_lay.setContentsMargins(24, 18, 24, 18)
-        scope_lay.setSpacing(14)
+        scope_lay.setContentsMargins(16, 16, 16, 16)
+        scope_lay.setSpacing(12)
 
-        scope_title = QLabel("Export Scope")
-        scope_title.setFont(QFont("Segoe UI Variable", 15, QFont.Weight.Bold))
-        scope_title.setStyleSheet("color: #F8FAFC;")
-        scope_lay.addWidget(scope_title)
-
-        scope_btn_style = """
-            QRadioButton {
-                color: #CBD5E1;
-                font-size: 14px;
-                font-family: 'Segoe UI';
-                font-weight: bold;
-                spacing: 10px;
-                min-height: 24px;
-            }
-            QRadioButton::indicator {
-                width: 18px;
-                height: 18px;
-                border-radius: 9px;
-                border: 2px solid #64748B;
-                background-color: #12141A;
-            }
-            QRadioButton::indicator:checked {
-                border: 2px solid #38BDF8;
-                background-color: #38BDF8;
-            }
-            QRadioButton:hover {
-                color: #F8FAFC;
-            }
-        """
+        lbl_sec_scope = QLabel("Scope of Export")
+        lbl_sec_scope.setFont(QFont("Inter", 8.5, QFont.Weight.Bold))
+        lbl_sec_scope.setStyleSheet("color: #64748B;")
+        scope_lay.addWidget(lbl_sec_scope)
 
         self._scope_grp = QButtonGroup(self)
-        
-        # Scope 1: Current Loaded Drawing
-        rb1 = QRadioButton("Current Loaded Drawing")
-        rb1.setStyleSheet(scope_btn_style)
+
+        # Radio Option 1: Current Loaded Drawing
+        opt1_card = QFrame()
+        opt1_card.setStyleSheet("background: #F8FAFC; border: 1px solid #E2E8F0; border-radius: 6px;")
+        opt1_lay = QVBoxLayout(opt1_card)
+        opt1_lay.setContentsMargins(12, 10, 12, 10)
+        self._rb_curr = QRadioButton("Current Loaded Drawing")
+        self._rb_curr.setChecked(True)
+        self._scope_grp.addButton(self._rb_curr)
+
         self._dwg_scope_lbl = QLabel("No drawing is currently loaded")
-        self._dwg_scope_lbl.setStyleSheet("color: #F87171; font-size: 12px; padding-left: 28px;")
-        vbox1 = QVBoxLayout()
-        vbox1.setSpacing(2)
-        vbox1.addWidget(rb1)
-        vbox1.addWidget(self._dwg_scope_lbl)
-        self._scope_grp.addButton(rb1)
-        scope_lay.addLayout(vbox1)
+        self._dwg_scope_lbl.setFont(QFont("Inter", 8, QFont.Weight.Medium))
+        self._dwg_scope_lbl.setStyleSheet("color: #EF4444; margin-left: 22px;")
 
-        # Scope 2: All Historical Comments
-        rb3 = QRadioButton("All Historical Comments")
-        rb3.setStyleSheet(scope_btn_style)
+        opt1_lay.addWidget(self._rb_curr)
+        opt1_lay.addWidget(self._dwg_scope_lbl)
+        scope_lay.addWidget(opt1_card)
+
+        # Radio Option 2: Date Range
+        opt2_card = QFrame()
+        opt2_card.setStyleSheet("background: #FFFFFF; border: 1px solid #E2E8F0; border-radius: 6px;")
+        opt2_lay = QVBoxLayout(opt2_card)
+        opt2_lay.setContentsMargins(12, 10, 12, 10)
+        self._rb_date = QRadioButton("Date Range")
+        self._scope_grp.addButton(self._rb_date)
+
+        lbl_sub_date = QLabel("Filter review logs and comment revisions within a specified timeframe")
+        lbl_sub_date.setFont(QFont("Inter", 8))
+        lbl_sub_date.setStyleSheet("color: #64748B; margin-left: 22px;")
+
+        opt2_lay.addWidget(self._rb_date)
+        opt2_lay.addWidget(lbl_sub_date)
+
+        self._date_container = QWidget()
+        date_lay = QHBoxLayout(self._date_container)
+        date_lay.setContentsMargins(22, 6, 0, 4)
+        date_lay.setSpacing(12)
+
+        d1_lbl = QLabel("From:")
+        d1_lbl.setFont(QFont("Inter", 8, QFont.Weight.Bold))
+        d1_lbl.setStyleSheet("color: #475569;")
+        date_lay.addWidget(d1_lbl)
+        self._date_start = QDateEdit(QDate.currentDate().addDays(-30))
+        self._date_start.setCalendarPopup(True)
+        self._date_start.setFixedHeight(30)
+        self._date_start.setStyleSheet("QDateEdit { background: #FFFFFF; border: 1px solid #CBD5E1; border-radius: 4px; padding: 0 6px; font-size: 10px; }")
+        date_lay.addWidget(self._date_start)
+
+        d2_lbl = QLabel("To:")
+        d2_lbl.setFont(QFont("Inter", 8, QFont.Weight.Bold))
+        d2_lbl.setStyleSheet("color: #475569;")
+        date_lay.addWidget(d2_lbl)
+        self._date_end = QDateEdit(QDate.currentDate())
+        self._date_end.setCalendarPopup(True)
+        self._date_end.setFixedHeight(30)
+        self._date_end.setStyleSheet("QDateEdit { background: #FFFFFF; border: 1px solid #CBD5E1; border-radius: 4px; padding: 0 6px; font-size: 10px; }")
+        date_lay.addWidget(self._date_end)
+        date_lay.addStretch()
+
+        self._date_container.hide()
+        opt2_lay.addWidget(self._date_container)
+        scope_lay.addWidget(opt2_card)
+
+        # Radio Option 3: All Historical Comments
+        opt3_card = QFrame()
+        opt3_card.setStyleSheet("background: #FFFFFF; border: 1px solid #E2E8F0; border-radius: 6px;")
+        opt3_lay = QVBoxLayout(opt3_card)
+        opt3_lay.setContentsMargins(12, 10, 12, 10)
+        self._rb_all = QRadioButton("All Historical Comments across Enterprise Account")
+        self._scope_grp.addButton(self._rb_all)
+
         self._hist_scope_lbl = QLabel("Persisted Database: 0 Projects • 0 Drawings • 0 Comments")
-        self._hist_scope_lbl.setStyleSheet("color: #CBD5E1; font-size: 12px; padding-left: 28px;")
-        vbox3 = QVBoxLayout()
-        vbox3.setSpacing(2)
-        vbox3.addWidget(rb3)
-        vbox3.addWidget(self._hist_scope_lbl)
-        self._scope_grp.addButton(rb3)
-        scope_lay.addLayout(vbox3)
+        self._hist_scope_lbl.setFont(QFont("Inter", 8))
+        self._hist_scope_lbl.setStyleSheet("color: #64748B; margin-left: 22px;")
 
-        self._scope_grp.buttons()[0].setChecked(True)
-        root.addWidget(scope_card)
+        opt3_lay.addWidget(self._rb_all)
+        opt3_lay.addWidget(self._hist_scope_lbl)
+        scope_lay.addWidget(opt3_card)
 
-        # ── Section 4: Export Action Button & Progress ────────────
-        act_box = QVBoxLayout()
-        act_box.setSpacing(12)
+        self._rb_date.toggled.connect(self._date_container.setVisible)
 
+        # Checkbox Row Options
+        lbl_attr = QLabel("Data Attributes to Include")
+        lbl_attr.setFont(QFont("Inter", 8.5, QFont.Weight.Bold))
+        lbl_attr.setStyleSheet("color: #64748B; margin-top: 4px;")
+        scope_lay.addWidget(lbl_attr)
+
+        attr_row = QHBoxLayout()
+        attr_row.setSpacing(12)
+
+        cb1_box = QFrame()
+        cb1_box.setStyleSheet("background: #F8FAFC; border: 1px solid #E2E8F0; border-radius: 6px;")
+        cb1_lay = QVBoxLayout(cb1_box)
+        cb1_lay.setContentsMargins(10, 8, 10, 8)
+        cb1 = QCheckBox("OCR Confidence Scores")
+        cb1.setChecked(True)
+        cb1_sub = QLabel("Includes token-level AI probabilities")
+        cb1_sub.setFont(QFont("Inter", 7.5))
+        cb1_sub.setStyleSheet("color: #64748B; margin-left: 20px;")
+        cb1_lay.addWidget(cb1)
+        cb1_lay.addWidget(cb1_sub)
+
+        cb2_box = QFrame()
+        cb2_box.setStyleSheet("background: #F8FAFC; border: 1px solid #E2E8F0; border-radius: 6px;")
+        cb2_lay = QVBoxLayout(cb2_box)
+        cb2_lay.setContentsMargins(10, 8, 10, 8)
+        cb2 = QCheckBox("Audit Trail & Reviewer Notes")
+        cb2.setChecked(True)
+        cb2_sub = QLabel("Detailed reviewer changes & resolutions")
+        cb2_sub.setFont(QFont("Inter", 7.5))
+        cb2_sub.setStyleSheet("color: #64748B; margin-left: 20px;")
+        cb2_lay.addWidget(cb2)
+        cb2_lay.addWidget(cb2_sub)
+
+        cb3_box = QFrame()
+        cb3_box.setStyleSheet("background: #F8FAFC; border: 1px solid #E2E8F0; border-radius: 6px;")
+        cb3_lay = QVBoxLayout(cb3_box)
+        cb3_lay.setContentsMargins(10, 8, 10, 8)
+        cb3 = QCheckBox("Vector CAD Bounding Boxes")
+        cb3.setChecked(True)
+        cb3_sub = QLabel("Precise [x,y,w,h] normalized polygons")
+        cb3_sub.setFont(QFont("Inter", 7.5))
+        cb3_sub.setStyleSheet("color: #64748B; margin-left: 20px;")
+        cb3_lay.addWidget(cb3)
+        cb3_lay.addWidget(cb3_sub)
+
+        attr_row.addWidget(cb1_box, 1)
+        attr_row.addWidget(cb2_box, 1)
+        attr_row.addWidget(cb3_box, 1)
+
+        scope_lay.addLayout(attr_row)
+
+        # Export Action Bar Inside Scope Box
         act_row = QHBoxLayout()
-        act_row.setSpacing(20)
+        act_row.setSpacing(12)
 
-        self._export_btn = QPushButton("  ↑  Export Error Tracker Sheet")
-        self._export_btn.setFont(QFont("Segoe UI Variable", 15, QFont.Weight.Bold))
-        self._export_btn.setFixedHeight(50)
-        self._export_btn.setMinimumWidth(320)
-        self._export_btn.setCursor(Qt.CursorShape.PointingHandCursor)
-        self._export_btn.setStyleSheet("""
-            QPushButton {
-                background-color: #0284C7;
-                color: #FFFFFF;
-                border-radius: 8px;
-                padding: 0 28px;
-                border: 1px solid #38BDF8;
-            }
-            QPushButton:hover {
-                background-color: #0369A1;
-            }
-            QPushButton:pressed {
-                background-color: #075985;
-            }
-            QPushButton:disabled {
-                background-color: #334155;
-                color: #64748B;
-                border: none;
-            }
-        """)
+        self._export_btn = QPushButton("📥 Export Now")
+        self._export_btn.setFixedHeight(36)
+        self._export_btn.setMinimumWidth(140)
+        self._export_btn.setStyleSheet(
+            "QPushButton { background: #0284C7; border: none; border-radius: 6px; color: #FFFFFF; font-size: 11px; font-weight: 600; padding: 0 16px; }"
+            "QPushButton:hover { background: #0369A1; }"
+            "QPushButton:disabled { background: #94A3B8; }"
+        )
         self._export_btn.clicked.connect(self._start_export)
         act_row.addWidget(self._export_btn)
+
+        btn_sched = QPushButton("Schedule Automated Export")
+        btn_sched.setFixedHeight(34)
+        btn_sched.setStyleSheet(
+            "QPushButton { background: transparent; border: none; color: #0284C7; font-size: 10px; font-weight: 600; }"
+            "QPushButton:hover { text-decoration: underline; }"
+        )
+        act_row.addWidget(btn_sched)
+
         act_row.addStretch()
-        act_box.addLayout(act_row)
+
+        lbl_enc = QLabel("🛡 End-to-End Encrypted Generation")
+        lbl_enc.setFont(QFont("Inter", 7.5, QFont.Weight.Medium))
+        lbl_enc.setStyleSheet("color: #059669;")
+        act_row.addWidget(lbl_enc)
+
+        scope_lay.addLayout(act_row)
 
         self._prog_bar = QProgressBar()
         self._prog_bar.setRange(0, 100)
-        self._prog_bar.setFixedHeight(10)
-        self._prog_bar.setStyleSheet("""
-            QProgressBar {
-                background-color: #1E222B;
-                border: 1px solid #334155;
-                border-radius: 5px;
-                text-align: center;
-            }
-            QProgressBar::chunk {
-                background-color: #38BDF8;
-                border-radius: 4px;
-            }
-        """)
-        self._prog_bar.hide()
-        act_box.addWidget(self._prog_bar)
-        root.addLayout(act_box)
-
-        # ── Section 5: Export History Table ───────────────────────
-        hist_card = QFrame()
-        hist_card.setObjectName("Card")
-        hist_card.setStyleSheet("""
-            #Card {
-                background-color: #1E222B;
-                border: 1px solid #334155;
-                border-radius: 10px;
-            }
-        """)
-        hist_lay = QVBoxLayout(hist_card)
-        hist_lay.setContentsMargins(0, 0, 0, 0)
-        hist_lay.setSpacing(0)
-
-        hist_hdr = QLabel("  Export History")
-        hist_hdr.setFixedHeight(48)
-        hist_hdr.setFont(QFont("Segoe UI Variable", 16, QFont.Weight.Bold))
-        hist_hdr.setStyleSheet(
-            "padding-left: 20px; color: #F8FAFC; border-bottom: 1px solid #334155;"
+        self._prog_bar.setFixedHeight(6)
+        self._prog_bar.setStyleSheet(
+            "QProgressBar { background: #E2E8F0; border-radius: 3px; border: none; }"
+            "QProgressBar::chunk { background-color: #0284C7; border-radius: 3px; }"
         )
-        hist_lay.addWidget(hist_hdr)
+        self._prog_bar.hide()
+        scope_lay.addWidget(self._prog_bar)
+
+        self._status_msg = QLabel("")
+        self._status_msg.setFont(QFont("Inter", 8.5, QFont.Weight.Medium))
+        self._status_msg.setStyleSheet("color: #059669;")
+        self._status_msg.hide()
+        scope_lay.addWidget(self._status_msg)
+
+        scope_section.addWidget(scope_card)
+        root.addLayout(scope_section)
+
+        # ── Export History Card ───────────────────────────────────
+        hist_section = QVBoxLayout()
+        hist_section.setSpacing(10)
+
+        hist_hdr = QHBoxLayout()
+        hist_title = QLabel("● Recent Export History")
+        hist_title.setFont(QFont("Inter", 10, QFont.Weight.Bold))
+        hist_title.setStyleSheet("color: #0F172A;")
+
+        btn_audit = QPushButton("View Full Audit Log →")
+        btn_audit.setStyleSheet(
+            "QPushButton { background: transparent; border: none; color: #0284C7; font-size: 10px; font-weight: 600; }"
+            "QPushButton:hover { text-decoration: underline; }"
+        )
+
+        hist_hdr.addWidget(hist_title)
+        hist_hdr.addStretch()
+        hist_hdr.addWidget(btn_audit)
+        hist_section.addLayout(hist_hdr)
+
+        hist_card = _card()
+        hist_lay = QVBoxLayout(hist_card)
+        hist_lay.setContentsMargins(1, 1, 1, 1)
 
         self._hist_table = self._build_history_table()
         hist_lay.addWidget(self._hist_table)
-        root.addWidget(hist_card)
 
-        # Set container inside scroll area and add scroll area to page
+        hist_section.addWidget(hist_card)
+        root.addLayout(hist_section)
+
         scroll.setWidget(container)
-        page_layout.addWidget(scroll)
+
+        page_lay = QVBoxLayout(self)
+        page_lay.setContentsMargins(0, 0, 0, 0)
+        page_lay.addWidget(scroll)
 
     # ── Helpers ───────────────────────────────────────────────────
 
@@ -571,7 +753,6 @@ class ExportPage(QWidget):
         return handler
 
     def _get_format_details(self) -> tuple[str, str, str]:
-        """Returns (format_code, file_filter, file_extension)."""
         fmt = self._selected_format
         if fmt == "JSON":
             return (ExportFormat.JSON, "JSON Files (*.json);;All Files (*)", ".json")
@@ -594,24 +775,22 @@ class ExportPage(QWidget):
             return
         counts = self._controller.get_export_scope_counts()
 
-        # 1. Loaded Drawing
         dwg_info = counts.get("drawing", {})
         if dwg_info.get("has_drawing"):
             dwg_name = dwg_info.get("drawing_name", "Drawing")
             cmt_cnt = dwg_info.get("comments_count", 0)
             self._dwg_scope_lbl.setText(f"Active Drawing: {dwg_name}  •  Comments available: {cmt_cnt}")
-            self._dwg_scope_lbl.setStyleSheet("color: #38BDF8; font-size: 12px; padding-left: 28px;")
+            self._dwg_scope_lbl.setStyleSheet("color: #0284C7; font-size: 11px; margin-left: 22px;")
         else:
             self._dwg_scope_lbl.setText("No drawing is currently loaded")
-            self._dwg_scope_lbl.setStyleSheet("color: #F87171; font-size: 12px; padding-left: 28px;")
+            self._dwg_scope_lbl.setStyleSheet("color: #EF4444; font-size: 11px; margin-left: 22px;")
 
-        # 2. All Historical
         hist_info = counts.get("all", {})
         p_cnt = hist_info.get("projects_count", 0)
         d_cnt = hist_info.get("drawings_count", 0)
         c_cnt = hist_info.get("comments_count", 0)
         self._hist_scope_lbl.setText(f"Persisted Database: {p_cnt} Projects  •  {d_cnt} Drawings  •  {c_cnt} Total Comments")
-        self._hist_scope_lbl.setStyleSheet("color: #CBD5E1; font-size: 12px; padding-left: 28px;")
+        self._hist_scope_lbl.setStyleSheet("color: #64748B; font-size: 11px; margin-left: 22px;")
 
     def _start_export(self) -> None:
         if self._controller is None:
@@ -622,11 +801,10 @@ class ExportPage(QWidget):
             )
             return
 
-        scope_text = self._scope_grp.checkedButton().text()
         drawing_id = getattr(self._controller, "current_drawing_id", None) or None
         project_id = getattr(self._controller, "current_project_id", None) or None
 
-        if scope_text == "Current Loaded Drawing":
+        if self._rb_curr.isChecked():
             scope_val = "drawing"
             if not drawing_id:
                 QMessageBox.warning(
@@ -635,14 +813,16 @@ class ExportPage(QWidget):
                     "No drawing is currently loaded.",
                 )
                 return
+        elif self._rb_date.isChecked():
+            scope_val = "date_range"
         else:
             scope_val = "all"
 
-        # Check comment count for selected scope
         if hasattr(self._controller, "get_export_scope_counts"):
             counts = self._controller.get_export_scope_counts()
-            avail_comments = counts.get(scope_val, {}).get("comments_count", 0)
-            if avail_comments == 0:
+            scope_lookup = "drawing" if scope_val == "drawing" else "all"
+            avail_comments = counts.get(scope_lookup, {}).get("comments_count", 0)
+            if avail_comments == 0 and scope_val != "date_range":
                 QMessageBox.warning(
                     self,
                     "Export Warning",
@@ -668,16 +848,6 @@ class ExportPage(QWidget):
                 except Exception:
                     pass
             default_filename = f"{drawing_no}_Error_Tracker_{today_str}{ext}"
-        elif scope_val == "project":
-            proj_name = "Project"
-            if project_id and hasattr(self._controller, "project_repo"):
-                try:
-                    proj = self._controller.project_repo.get_project_by_id(project_id)
-                    if proj and proj.get("name"):
-                        proj_name = proj["name"].replace(" ", "_")
-                except Exception:
-                    pass
-            default_filename = f"{proj_name}_Project_Error_Tracker_{today_str}{ext}"
         else:
             default_filename = f"Historical_Error_Tracker_{today_str}{ext}"
 
@@ -694,11 +864,11 @@ class ExportPage(QWidget):
         out_path = Path(file_path)
 
         self._export_btn.setEnabled(False)
+        self._export_btn.setText("Generating Report...")
         self._prog_bar.show()
-        self._prog_bar.setValue(50)
+        self._prog_bar.setValue(25)
 
         try:
-            # Read standard input metadata fields
             contract_no     = self._contract_input.text().strip()
             plant_name      = self._plant_input.text().strip()
             epod_wo_no      = self._epod_input.text().strip()
@@ -726,17 +896,21 @@ class ExportPage(QWidget):
 
             if result and getattr(result, "success", False):
                 self._export_btn.setText("✓  Exported Successfully!")
+                self._status_msg.setText(f"✓ Exported data successfully to {out_path.name}")
+                self._status_msg.show()
                 self._reload_history_table()
                 QTimer.singleShot(
-                    2500, lambda: self._export_btn.setText("  ↑  Export Error Tracker Sheet")
+                    2500, lambda: self._export_btn.setText("📥 Export Now")
                 )
                 QTimer.singleShot(
                     2500, lambda: self._export_btn.setEnabled(True)
                 )
-                self._prog_bar.hide()
+                QTimer.singleShot(
+                    3000, lambda: self._prog_bar.hide()
+                )
             else:
                 err_msg = getattr(result, "error_message", "Export failed.") if result else "Export failed."
-                self._export_btn.setText("  ↑  Export Error Tracker Sheet")
+                self._export_btn.setText("📥 Export Now")
                 self._export_btn.setEnabled(True)
                 self._prog_bar.hide()
                 QMessageBox.warning(
@@ -745,65 +919,65 @@ class ExportPage(QWidget):
                     f"Failed to export data to:\n{out_path}\n\nError: {err_msg}",
                 )
         except Exception as e:
-            self._export_btn.setText("  ↑  Export Error Tracker Sheet")
+            self._export_btn.setText("📥 Export Now")
             self._export_btn.setEnabled(True)
             self._prog_bar.hide()
             QMessageBox.critical(
                 self,
                 "Export Failed",
-                f"An error occurred during export:\n{str(e)}",
+                f"An error occurred while generating the export:\n{e}",
             )
 
     def _build_history_table(self) -> QTableView:
-        table = QTableView()
-        table.setAlternatingRowColors(True)
-        table.setSelectionBehavior(QAbstractItemView.SelectionBehavior.SelectRows)
-        table.setEditTriggers(QAbstractItemView.EditTrigger.NoEditTriggers)
-        table.verticalHeader().hide()
-        table.setShowGrid(False)
-        table.setMinimumHeight(240)
-        table.setStyleSheet("""
+        tbl = QTableView()
+        tbl.setAlternatingRowColors(False)
+        tbl.setSelectionBehavior(QAbstractItemView.SelectionBehavior.SelectRows)
+        tbl.setEditTriggers(QAbstractItemView.EditTrigger.NoEditTriggers)
+        tbl.setShowGrid(False)
+        tbl.verticalHeader().hide()
+        tbl.horizontalHeader().setStretchLastSection(True)
+        tbl.setMinimumHeight(180)
+        tbl.setStyleSheet(
+            """
             QTableView {
-                background-color: #12141A;
-                alternate-background-color: #181B22;
                 border: none;
-                gridline-color: #334155;
-            }
-            QTableView::item {
-                padding: 10px 16px;
-                color: #E2E8F0;
-                font-size: 13px;
-                border-bottom: 1px solid #1E222B;
-            }
-            QTableView::item:selected {
-                background-color: #0284C722;
-                color: #38BDF8;
+                background-color: #FFFFFF;
+                gridline-color: transparent;
             }
             QHeaderView::section {
-                background-color: #181B22;
-                color: #94A3B8;
-                padding: 10px 16px;
-                font-weight: bold;
-                font-size: 12px;
+                background-color: #F8FAFC;
+                color: #64748B;
+                font-weight: 700;
+                font-size: 10px;
                 border: none;
-                border-bottom: 1px solid #334155;
+                border-bottom: 1px solid #E2E8F0;
+                padding: 8px 12px;
             }
-        """)
-
-        self._hist_model = QStandardItemModel(0, 4)
-        self._hist_model.setHorizontalHeaderLabels(
-            ["FILE NAME", "FORMAT", "DATE", "SIZE"]
+            QTableView::item {
+                border-bottom: 1px solid #F1F5F9;
+                padding: 6px 12px;
+                color: #0F172A;
+                font-size: 11px;
+            }
+            QTableView::item:selected {
+                background-color: #EFF6FF;
+                color: #0F172A;
+            }
+            """
         )
-        table.setModel(self._hist_model)
-        table.doubleClicked.connect(self._on_history_double_clicked)
+
+        headers = ["FILE NAME", "FORMAT", "GENERATED DATE", "SIZE"]
+        self._hist_model = QStandardItemModel(0, len(headers))
+        self._hist_model.setHorizontalHeaderLabels(headers)
+        tbl.setModel(self._hist_model)
+        tbl.doubleClicked.connect(self._on_history_double_clicked)
         self._history_items_raw: list[dict] = []
         self._reload_history_table()
 
-        hdr = table.horizontalHeader()
-        hdr.setSectionResizeMode(0, QHeaderView.ResizeMode.Stretch)
-        for i in range(1, 4):
-            hdr.setSectionResizeMode(i, QHeaderView.ResizeMode.ResizeToContents)
-        return table
+        tbl.horizontalHeader().setSectionResizeMode(0, QHeaderView.ResizeMode.Stretch)
+        for i in range(1, len(headers)):
+            tbl.horizontalHeader().setSectionResizeMode(i, QHeaderView.ResizeMode.ResizeToContents)
+        return tbl
 
     def _on_history_double_clicked(self, index) -> None:
         """Open selected export file or show warning if file is missing."""
@@ -849,16 +1023,13 @@ class ExportPage(QWidget):
 
         for h in history_items:
             row = [
-                QStandardItem(h.get("name") or h.get("file_name", "Export")),
+                QStandardItem(f"📄  {h.get('name') or h.get('file_name', 'Export')}"),
                 QStandardItem(h.get("format", "Excel")),
                 QStandardItem(h.get("date") or h.get("created_at", "")),
                 QStandardItem(h.get("size") or "—"),
             ]
-            row[0].setFont(QFont("Cascadia Code", 12))
             for item in row:
-                item.setTextAlignment(
-                    Qt.AlignmentFlag.AlignVCenter | Qt.AlignmentFlag.AlignLeft
-                )
+                item.setTextAlignment(Qt.AlignmentFlag.AlignVCenter)
             self._hist_model.appendRow(row)
 
     def _prepend_history(self, output_path: Path | str, format_name: str, size_bytes: int = 0) -> None:
@@ -868,7 +1039,7 @@ class ExportPage(QWidget):
         """Auto-refresh Export screen data, scope labels, and history table."""
         self.update_scope_labels()
         self._reload_history_table()
-        if self._controller and self._controller.current_drawing_id:
+        if self._controller and getattr(self._controller, "current_drawing_id", None):
             cur_dwg = self._controller.get_current_drawing()
             if cur_dwg:
                 dwg_dept = cur_dwg.get("department_name")
@@ -887,4 +1058,3 @@ class ExportPage(QWidget):
         """Auto-sync department and categories when navigating to Export page."""
         super().showEvent(event)
         self.reload_data()
-
