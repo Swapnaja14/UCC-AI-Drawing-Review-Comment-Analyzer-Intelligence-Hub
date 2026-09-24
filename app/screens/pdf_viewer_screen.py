@@ -9,44 +9,26 @@ Provides:
 from __future__ import annotations
 from pathlib import Path
 from typing import Any, List, Optional
-<<<<<<< HEAD
-from PySide6.QtWidgets import (QWidget, QVBoxLayout, QHBoxLayout,
-                                QGraphicsView, QGraphicsScene,
-                                QListWidget, QListWidgetItem,
-                                QSizePolicy, QComboBox, QLabel, QFrame)
-from PySide6.QtCore import Qt, QRectF, QSize, QThread, Signal
-from PySide6.QtGui import QPainter, QPixmap, QIcon, QFont
-=======
 from PySide6.QtWidgets import (
-    QWidget,
-    QVBoxLayout,
-    QHBoxLayout,
-    QGraphicsView,
-    QGraphicsScene,
-    QListWidget,
-    QListWidgetItem,
-    QSizePolicy,
-    QFrame,
-    QLabel,
-    QPushButton,
-    QLineEdit,
-    QGraphicsDropShadowEffect,
-    QScrollArea,
-    QProgressBar,
+    QWidget, QVBoxLayout, QHBoxLayout,
+    QGraphicsView, QGraphicsScene,
+    QListWidget, QListWidgetItem,
+    QSizePolicy, QComboBox, QLabel, QFrame,
+    QPushButton, QLineEdit, QGraphicsDropShadowEffect,
+    QScrollArea, QProgressBar
 )
-from PySide6.QtCore import Qt, QRectF, QSize, Signal
+from PySide6.QtCore import Qt, QRectF, QSize, QThread, Signal
 from PySide6.QtGui import QPainter, QPixmap, QIcon, QFont, QColor
->>>>>>> origin/feature/ui-overhaul
 
 from app.components.pdf_canvas import (
     make_page_pixmap,
     draw_bounding_boxes,
     draw_annotation_regions,
 )
+from app.components.pdf_toolbar import PdfToolbar
 from src.core.dtos.pdf_dtos import PDFDocumentDTO
 
 
-<<<<<<< HEAD
 class AnnotationWorker(QThread):
     """Background worker for non-blocking annotation detection."""
     finished_signal = Signal(object)
@@ -67,7 +49,8 @@ class AnnotationWorker(QThread):
             self.finished_signal.emit(result)
         except Exception as e:
             self.error_signal.emit(str(e))
-=======
+
+
 def _card(parent=None) -> QFrame:
     """Creates a light rounded card with a soft shadow and subtle border matching modern dashboard style."""
     f = QFrame(parent)
@@ -87,24 +70,17 @@ def _card(parent=None) -> QFrame:
     shadow.setOffset(0, 2)
     f.setGraphicsEffect(shadow)
     return f
->>>>>>> origin/feature/ui-overhaul
 
 
 class PdfViewerPage(QWidget):
     """
-<<<<<<< HEAD
     PDF Viewer screen displaying real PDF drawing pages rendered via PyMuPDF backend,
     with multi-drawing selector dropdown and drawing list sidebar.
-=======
-    PDF Viewer screen displaying real PDF drawing pages rendered via PyMuPDF backend
-    with enterprise drawing context header and AI metadata sidebar matching modern Stitch UI layout.
->>>>>>> origin/feature/ui-overhaul
     """
 
     def __init__(self, controller=None, parent=None):
         super().__init__(parent)
         self._controller = controller
-<<<<<<< HEAD
         self._doc_dto: PDFDocumentDTO | None = None
         self._annotation_result = None  # Store annotation detection result
         self._show_annotations = False  # Toggle for annotation visualization
@@ -113,13 +89,6 @@ class PdfViewerPage(QWidget):
         self._current_page = 1
         self._total_pages  = 1
         self._is_updating_dwg_list = False
-=======
-        self._doc_dto: Optional[PDFDocumentDTO] = None
-        self._annotation_result = None
-        self._show_annotations = False
-        self._zoom = 1.0
-        self._current_page = 1
-        self._total_pages = 48
 
         self.setObjectName("PdfViewerRoot")
         self.setStyleSheet(
@@ -132,13 +101,18 @@ class PdfViewerPage(QWidget):
             }
             """
         )
->>>>>>> origin/feature/ui-overhaul
 
         root = QVBoxLayout(self)
         root.setContentsMargins(16, 12, 16, 12)
         root.setSpacing(10)
 
-<<<<<<< HEAD
+        self._toolbar = PdfToolbar()
+        self._toolbar.prev_page_requested.connect(self._prev_page)
+        self._toolbar.next_page_requested.connect(self._next_page)
+        self._toolbar.page_changed.connect(self._goto_page)
+        self._toolbar.show_annotations_toggled.connect(self._toggle_annotations)
+        self._toolbar.toggle_sidebar_requested.connect(self.toggle_sidebar)
+
         # ── Drawing Selector Top Header ───────────────────────────
         dwg_header = QFrame()
         dwg_header.setFixedHeight(42)
@@ -186,25 +160,11 @@ class PdfViewerPage(QWidget):
         dh_lay.addStretch()
         root.addWidget(dwg_header)
 
-        # ── Toolbar ───────────────────────────────────────────────
-        self._toolbar = PdfToolbar(total_pages=self._total_pages)
-        self._toolbar.zoom_in_requested.connect(self._do_zoom_in)
-        self._toolbar.zoom_out_requested.connect(self._do_zoom_out)
-        self._toolbar.fit_width_requested.connect(self._fit_width)
-        self._toolbar.rotate_requested.connect(self._rotate)
-        self._toolbar.prev_page_requested.connect(self._prev_page)
-        self._toolbar.next_page_requested.connect(self._next_page)
-        self._toolbar.page_changed.connect(self._goto_page)
-        self._toolbar.show_annotations_toggled.connect(self._toggle_annotations)
-        self._toolbar.toggle_sidebar_requested.connect(self.toggle_sidebar)
-        root.addWidget(self._toolbar)
-=======
-        # ── 1. Top Integrated Control Header (Title, Nav & Tools) ────────────
+        # ── Toolbar / Control Header ───────────────────────────
         top_bar = _card()
         tb_lay = QHBoxLayout(top_bar)
         tb_lay.setContentsMargins(16, 10, 16, 10)
         tb_lay.setSpacing(12)
->>>>>>> origin/feature/ui-overhaul
 
         # Title & Revision tag
         title_box = QHBoxLayout()
@@ -392,7 +352,6 @@ class PdfViewerPage(QWidget):
         viewer_row = QHBoxLayout()
         viewer_row.setSpacing(12)
 
-<<<<<<< HEAD
         # Left Sidebar: Drawing List Panel
         self._dwg_sidebar = QFrame()
         self._dwg_sidebar.setFixedWidth(230)
@@ -435,8 +394,6 @@ class PdfViewerPage(QWidget):
         self._sidebar_manually_toggled = False
         self._dwg_sidebar.hide()
 
-        # Canvas
-=======
         # Drawing Canvas Box
         canvas_card = _card()
         canvas_lay = QVBoxLayout(canvas_card)
@@ -483,9 +440,6 @@ class PdfViewerPage(QWidget):
         tb_inner.addWidget(leg_ocr)
 
         canvas_lay.addWidget(telem_bar)
-
-        # Interactive Scene Canvas View (Blueprint CAD pattern backdrop)
->>>>>>> origin/feature/ui-overhaul
         self._scene = QGraphicsScene()
         self._view = QGraphicsView(self._scene)
         self._view.setRenderHints(
@@ -686,8 +640,15 @@ class PdfViewerPage(QWidget):
         self._doc_dto = doc_dto
         self._total_pages = doc_dto.total_pages
         self._current_page = 1
-<<<<<<< HEAD
-        
+        if hasattr(self, '_lbl_dwg_no'):
+            self._lbl_dwg_no.setText(doc_dto.title or "S-204")
+        if hasattr(self, '_lbl_dwg_title'):
+            self._lbl_dwg_title.setText(doc_dto.file_name)
+        if hasattr(self, '_lbl_total_pages'):
+            self._lbl_total_pages.setText(f"/ {self._total_pages}")
+        if hasattr(self, '_lbl_page_num'):
+            self._lbl_page_num.setText("1")
+
         # Check if controller already has cached annotation results from workflow
         if self._controller and getattr(self._controller, 'last_annotation_result', None):
             last_res = self._controller.last_annotation_result
@@ -699,24 +660,9 @@ class PdfViewerPage(QWidget):
             self._annotation_result = None
         
         # Update toolbar page count
-        self._toolbar.set_total_pages(self._total_pages)
-        self._toolbar.set_current_page(1)
-=======
-
-        self._lbl_dwg_no.setText(doc_dto.title or "S-204")
-        self._lbl_dwg_title.setText(doc_dto.file_name)
-        self._lbl_total_pages.setText(f"/ {self._total_pages}")
-        self._lbl_page_num.setText("1")
-
-        if self._controller and hasattr(self._controller, "annotation_service"):
-            try:
-                self._annotation_result = self._controller.annotation_service.detect_all_pages(
-                    doc_dto.file_path, method="hybrid", filter_template_regions=False
-                )
-            except Exception as e:
-                print(f"⚠ Could not run annotation detection: {e}")
-                self._annotation_result = None
->>>>>>> origin/feature/ui-overhaul
+        if hasattr(self, '_toolbar'):
+            self._toolbar.set_total_pages(self._total_pages)
+            self._toolbar.set_current_page(1)
 
         fields = [
             ("FILE NAME", doc_dto.file_name, True),
@@ -727,8 +673,6 @@ class PdfViewerPage(QWidget):
             ("AUTHOR", doc_dto.author or "Thornton Tomasetti Engineers", False),
             ("FILE DIGEST", f"{doc_dto.file_hash_sha256[:12]}...", True),
         ]
-<<<<<<< HEAD
-        
         # Add annotation count if available, or comments found in DB
         if self._annotation_result:
             fields.append(("Detected Regions", f"{self._annotation_result.total_regions} annotation boxes"))
@@ -745,10 +689,6 @@ class PdfViewerPage(QWidget):
                 fields.append(("Review Comments", f"{len(db_comments)} comments saved in database"))
             else:
                 fields.append(("Detected Regions", "Click 🔍 to inspect raw markup"))
-        
-        self._meta_panel.update_fields(fields)
-=======
->>>>>>> origin/feature/ui-overhaul
 
         if self._annotation_result:
             fields.append(("DETECTED REGIONS", f"{self._annotation_result.total_regions} markup boxes", False))
@@ -761,7 +701,8 @@ class PdfViewerPage(QWidget):
     def set_sidebar_visible(self, visible: bool) -> None:
         """Set drawing list sidebar visibility and sync toolbar button state."""
         self._dwg_sidebar.setVisible(visible)
-        self._toolbar.set_sidebar_button_checked(visible)
+        if hasattr(self, '_toolbar'):
+            self._toolbar.set_sidebar_button_checked(visible)
 
     def toggle_sidebar(self) -> None:
         """Toggle drawing list sidebar visibility."""
@@ -859,6 +800,117 @@ class PdfViewerPage(QWidget):
             dwg_id = item.data(Qt.ItemDataRole.UserRole)
             if dwg_id and self._controller:
                 self._controller.switch_current_drawing(dwg_id)
+
+    def _get_page_comments(self, page_num: int) -> list:
+        if not self._controller or not self._controller.current_drawing_id:
+            return []
+        all_comments = (
+            self._controller.get_comments_for_drawing(
+                self._controller.current_drawing_id
+            )
+            or []
+        )
+        page_comments = []
+        for c in all_comments:
+            c_page = c.get("page", 1) if isinstance(c, dict) else getattr(c, "page", 1)
+            if c_page == page_num:
+                page_comments.append(c)
+        return page_comments
+
+    def _load_page(self, page_num: int) -> None:
+        self._scene.clear()
+        
+        # Get page comments (for comment bounding boxes - yellow/green)
+        page_comments = self._get_page_comments(page_num)
+        
+        if self._doc_dto and self._controller:
+            try:
+                # Render real page using PyMuPDF backend adapter
+                rendered_dto = self._controller.pdf_service.get_page_render(
+                    self._doc_dto.file_path, page_num, dpi=150
+                )
+                pm = QPixmap()
+                pm.loadFromData(rendered_dto.image_bytes)
+                
+                # ONLY draw comment bounding boxes if annotations toggle is OFF
+                if not self._show_annotations:
+                    draw_bounding_boxes(pm, page_comments)
+                
+                # Draw REAL annotation regions if toggle is ON
+                if self._show_annotations and self._annotation_result:
+                    page_idx = page_num - 1
+                    if 0 <= page_idx < len(self._doc_dto.pages):
+                        page_meta = self._doc_dto.pages[page_idx]
+                        page_width_pt = page_meta.width_pt
+                        page_height_pt = page_meta.height_pt
+                        
+                        page_regions = []
+                        for page_result in self._annotation_result.page_results:
+                            if page_result.page_number == page_idx:
+                                page_regions = page_result.regions
+                                break
+                        
+                        if page_regions:
+                            draw_annotation_regions(pm, page_regions, page_width_pt, page_height_pt)
+                
+            except Exception as e:
+                print(f"Error loading page: {e}")
+                pm = make_page_pixmap(comments=page_comments)
+        else:
+            pm = make_page_pixmap(comments=page_comments)
+
+        self._pm_item = self._scene.addPixmap(pm)
+        self._scene.setSceneRect(QRectF(pm.rect()))
+        self._apply_zoom()
+
+    def _apply_zoom(self) -> None:
+        self._view.resetTransform()
+        self._view.scale(self._zoom, self._zoom)
+        if hasattr(self, '_lbl_zoom'):
+            self._lbl_zoom.setText(f"{int(self._zoom * 100)}%")
+        if hasattr(self, '_toolbar'):
+            self._toolbar.set_zoom_label(int(self._zoom * 100))
+
+    def _do_zoom_in(self) -> None:
+        self._zoom = min(4.0, self._zoom + 0.2)
+        self._apply_zoom()
+
+    def _do_zoom_out(self) -> None:
+        self._zoom = max(0.2, self._zoom - 0.2)
+        self._apply_zoom()
+
+    def _fit_width(self) -> None:
+        if self._pm_item:
+            w  = self._pm_item.pixmap().width()
+            vw = self._view.viewport().width()
+            self._zoom = vw / w * 0.95 if w > 0 else 1.0
+            self._apply_zoom()
+
+    def _rotate(self) -> None:
+        self._view.rotate(90)
+
+    def _prev_page(self) -> None:
+        self._current_page = max(1, self._current_page - 1)
+        self._sync_page()
+
+    def _next_page(self) -> None:
+        self._current_page = min(self._total_pages, self._current_page + 1)
+        self._sync_page()
+
+    def _goto_page(self, page: int) -> None:
+        self._current_page = page
+        self._load_page(self._current_page)
+        if hasattr(self, '_thumb_strip') and self._thumb_strip.count() >= self._current_page:
+            self._thumb_strip.setCurrentRow(self._current_page - 1)
+
+    def _sync_page(self) -> None:
+        if hasattr(self, '_lbl_page_num'):
+            self._lbl_page_num.setText(str(self._current_page))
+        if hasattr(self, '_toolbar'):
+            self._toolbar.set_current_page(self._current_page)
+        if hasattr(self, '_thumb_strip') and self._thumb_strip.count() >= self._current_page:
+            self._thumb_strip.setCurrentRow(self._current_page - 1)
+        self._load_page(self._current_page)
 
     def reload_comments(self) -> None:
         """Reload page and thumbnails when comments are loaded/updated."""

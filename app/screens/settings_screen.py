@@ -3,14 +3,9 @@ settings_screen.py — Settings screen.
 
 Provides:
     SettingsPage(QWidget)
-<<<<<<< HEAD
-        Multi-tab settings panel: Appearance / Application / AI & Processing / About.
+        Multi-tab settings panel: Appearance / Application / AI & Processing / Categories / About.
         Uses a left-side tab list and a stacked content area on the right.
         Directly integrated with the centralized Configuration Management system.
-=======
-        Three-tab settings panel: Appearance / Application / About.
-        Uses a left-side tab list card and stacked container on the right.
->>>>>>> origin/feature/ui-overhaul
 """
 from __future__ import annotations
 
@@ -92,12 +87,8 @@ class _SegmentedControl(QWidget):
 
 class SettingsPage(QWidget):
     """
-<<<<<<< HEAD
-    Settings — tabbed interface for Appearance, Application, AI & Processing, and About.
+    Settings — tabbed interface for Appearance, Application, AI & Processing, Categories, and About.
     Fully connected to Centralized Configuration Management (AppConfig).
-=======
-    Settings — tabbed interface for Appearance, Application, and About matching modern UI design.
->>>>>>> origin/feature/ui-overhaul
     """
 
     def __init__(self, theme_manager=None, controller=None, parent=None):
@@ -187,15 +178,6 @@ class SettingsPage(QWidget):
         tab_list = QListWidget()
         tab_list.setObjectName("NavList")
         tab_list.setFixedWidth(220)
-<<<<<<< HEAD
-        tab_list.setStyleSheet(
-            "#NavList { background: #26272B; border-right:1px solid #3A3C42; }"
-            "#NavList::item { height:44px; padding-left:20px; border-radius:6px;"
-            " margin:4px 8px; color:#A6A9B1; font-size:13px; }"
-            "#NavList::item:selected { background:#3E9BFF2A;"
-            " color:#3E9BFF; font-weight:600; }"
-        )
-=======
         tab_list.setStyleSheet("""
             #NavList {
                 background: transparent;
@@ -221,7 +203,6 @@ class SettingsPage(QWidget):
                 font-weight: 600;
             }
         """)
->>>>>>> origin/feature/ui-overhaul
 
         icons = ["🎨", "⚙", "🤖", "🏷", "ℹ"]
         for tab, icon in zip(_TABS, icons):
@@ -309,15 +290,12 @@ class SettingsPage(QWidget):
         font_slider.setTickInterval(1)
         font_slider.setTickPosition(QSlider.TickPosition.TicksBelow)
         font_slider.setFixedWidth(200)
-<<<<<<< HEAD
         font_slider.valueChanged.connect(self._on_font_scale_changed)
-=======
 
         small_lbl = QLabel("Small")
         small_lbl.setStyleSheet("color: #64748B; font-size: 12px;")
         large_lbl = QLabel("Large")
         large_lbl.setStyleSheet("color: #64748B; font-size: 12px;")
->>>>>>> origin/feature/ui-overhaul
 
         font_row = QHBoxLayout()
         font_row.setSpacing(12)
@@ -340,13 +318,6 @@ class SettingsPage(QWidget):
         self._persist()
 
     def _build_application(self) -> QWidget:
-<<<<<<< HEAD
-        page = QWidget()
-        lay  = QVBoxLayout(page)
-        lay.setContentsMargins(40, 32, 40, 32)
-        lay.setSpacing(28)
-        lay.addWidget(self._section_title("Application & Storage"))
-=======
         page = QFrame()
         page.setStyleSheet("""
             QFrame {
@@ -358,8 +329,7 @@ class SettingsPage(QWidget):
         lay = QVBoxLayout(page)
         lay.setContentsMargins(32, 32, 32, 32)
         lay.setSpacing(24)
-        lay.addWidget(self._section_title("Application"))
->>>>>>> origin/feature/ui-overhaul
+        lay.addWidget(self._section_title("Application & Storage"))
 
         form = QFormLayout()
         form.setSpacing(20)
@@ -369,12 +339,8 @@ class SettingsPage(QWidget):
 
         # Default folder
         folder_row = QHBoxLayout()
-<<<<<<< HEAD
-        self._folder_edit = QLineEdit(self._config.ui.default_projects_dir)
-=======
         folder_row.setSpacing(8)
-        self._folder_edit = QLineEdit("D:\\UCC\\Projects")
->>>>>>> origin/feature/ui-overhaul
+        self._folder_edit = QLineEdit(self._config.ui.default_projects_dir)
         self._folder_edit.setReadOnly(True)
         self._folder_edit.setFixedHeight(36)
         folder_row.addWidget(self._folder_edit, 1)

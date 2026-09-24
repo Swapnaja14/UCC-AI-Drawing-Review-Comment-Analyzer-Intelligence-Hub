@@ -1,12 +1,14 @@
 """
-dashboard_screen.py — Redesigned Home Dashboard screen with Modern Light Theme UI.
+dashboard_screen.py — Redesigned Dashboard screen matching enterprise Stitch UI.
 
-Displays real-time KPI metric cards, recent projects & drawings table with view switcher,
-live activity feed, and real-time processing-status panel connected to AppController & SQLite backend.
+Provides:
+    DashboardPage(QWidget)
+        Overview dashboard with live KPI cards, interactive analytics charts,
+        Projects & Drawings tables, real-time activity feed, and processing engine status.
 """
 from __future__ import annotations
-from typing import Any, Dict, List, Optional
 from datetime import datetime
+from typing import Any, Dict, List, Optional
 
 from PySide6.QtWidgets import (
     QWidget,
@@ -14,28 +16,20 @@ from PySide6.QtWidgets import (
     QHBoxLayout,
     QFrame,
     QLabel,
+    QPushButton,
     QTableView,
+    QHeaderView,
+    QAbstractItemView,
     QListWidget,
     QListWidgetItem,
-    QPushButton,
     QProgressBar,
-    QHeaderView,
-    QSizePolicy,
-    QAbstractItemView,
-    QButtonGroup,
     QScrollArea,
+    QSizePolicy,
+    QButtonGroup,
     QGraphicsDropShadowEffect,
 )
 from PySide6.QtGui import QFont, QStandardItemModel, QStandardItem, QColor
-from PySide6.QtCore import Qt, Signal, QSize, QTimer
-
-from app.components.kpi_card import KpiCard
-from app.components.chips import StatusChip
-from app.components.charts import (
-    build_pareto_chart,
-    build_monthly_chart,
-    build_category_pie,
-)
+from PySide6.QtCore import Qt, QTimer, Signal, QSize
 
 try:
     import qtawesome as qta
@@ -43,43 +37,96 @@ try:
 except ImportError:
     _HAS_QTA = False
 
+from app.components.kpi_card import KpiCard
+from app.components.chips import StatusChip
+from app.components.charts import (
+    build_pareto_chart,
+    build_category_pie,
+    build_monthly_chart,
+)
+
+DEFAULT_ACTIVITIES = [
+    {
+        "time": "10 mins ago",
+        "text": "Completed OCR extraction on DWG-8802 (42 comments identified)",
+        "tag": "OCR Pipeline",
+        "color": "#0284C7",
+    },
+    {
+        "time": "45 mins ago",
+        "text": "Human Reviewer Elena Vance approved 14 comments on Sheet A-104",
+        "tag": "Review",
+        "color": "#16A34A",
+    },
+    {
+        "time": "2 hours ago",
+        "text": "Batch zip package 'Terminal_Expansion_Phase1.zip' uploaded (5 drawings)",
+        "tag": "Batch Upload",
+        "color": "#9333EA",
+    },
+    {
+        "time": "3 hours ago",
+        "text": "System generated Error Tracker Multi-Tier Excel export for Hudson Yards Phase 2",
+        "tag": "Export",
+        "color": "#D97706",
+    },
+]
+
+
+def _card(parent=None) -> QFrame:
+    """Creates a light rounded card with soft drop shadow matching Stitch theme."""
+    f = QFrame(parent)
+    f.setObjectName("StitchCard")
+    f.setStyleSheet(
+        """
+        QFrame#StitchCard {
+            background-color: #FFFFFF;
+            border: 1px solid #E2E8F0;
+            border-radius: 12px;
+        }
+        """
+    )
+    shadow = QGraphicsDropShadowEffect(f)
+    shadow.setBlurRadius(12)
+    shadow.setColor(QColor(15, 23, 42, 10))
+    shadow.setOffset(0, 3)
+    f.setGraphicsEffect(shadow)
+    return f
+
 
 def _h2(text: str) -> QLabel:
     lbl = QLabel(text)
-    lbl.setFont(QFont("Inter", 15, QFont.Weight.Bold))
-    lbl.setStyleSheet("color: #0F172A; background: transparent; border: none;")
-    lbl.setObjectName("CardHeader")
+    lbl.setFont(QFont("Inter", 13, QFont.Weight.Bold))
+    lbl.setStyleSheet("color: #0F172A;")
     return lbl
 
 
-def _format_relative_time(dt_str: str) -> str:
-    """Convert ISO or standard timestamp string to user-friendly relative time."""
-    if not dt_str or dt_str == "System Ready":
-        return dt_str or "Just now"
-    try:
-        if "T" in dt_str:
-            dt = datetime.fromisoformat(dt_str.replace("Z", "+00:00"))
-        else:
-            dt = datetime.strptime(dt_str[:19], "%Y-%m-%d %H:%M:%S")
+def _format_relative_time(raw_dt: Any) -> str:
+    if not raw_dt:
+        return "recently"
+    if isinstance(raw_dt, str):
+        try:
+            dt = datetime.fromisoformat(raw_dt.replace("Z", "+00:00"))
+        except Exception:
+            return raw_dt
+    elif isinstance(raw_dt, datetime):
+        dt = raw_dt
+    else:
+        return "recently"
 
-        now = datetime.now(dt.tzinfo) if dt.tzinfo else datetime.now()
-        diff = now - dt
-        seconds = int(diff.total_seconds())
-
-        if seconds < 60:
-            return "Just now"
-        elif seconds < 3600:
-            mins = max(1, seconds // 60)
-            return f"{mins}m ago"
-        elif seconds < 86400:
-            hours = max(1, seconds // 3600)
-            return f"{hours}h ago"
-        elif seconds < 172800:
-            return "Yesterday"
-        else:
-            return dt.strftime("%b %d, %H:%M")
-    except Exception:
-        return dt_str[:16] if len(dt_str) >= 16 else dt_str
+    now = datetime.now(dt.tzinfo) if dt.tzinfo else datetime.now()
+    diff = (now - dt).total_seconds()
+    if diff < 60:
+        return "just now"
+    elif diff < 3600:
+        mins = int(diff / 60)
+        return f"{mins} min{'s' if mins > 1 else ''} ago"
+    elif diff < 86400:
+        hours = int(diff / 3600)
+        return f"{hours} hr{'s' if hours > 1 else ''} ago"
+    else:
+        days = int(diff / 86400)
+        return f"{days} day{'s' if days > 1 else ''} ago"
 
 
 class DashboardPage(QWidget):
@@ -95,66 +142,76 @@ class DashboardPage(QWidget):
         super().__init__(parent)
         self._controller = controller
         self._kpi_cards: List[KpiCard] = []
-        self._view_mode = "drawings"  # "projects" | "drawings"
+        self._view_mode = "drawings"
         self._job_rows: Dict[str, tuple[QProgressBar, StatusChip, QLabel]] = {}
 
-<<<<<<< HEAD
-        root = QVBoxLayout(self)
-        root.setContentsMargins(24, 20, 24, 20)
-        root.setSpacing(18)
-
-        # ── Header Row ────────────────────────────────────────────
-        header_row = QHBoxLayout()
-        header_row.setSpacing(12)
-
-        title_lbl = QLabel("Dashboard Overview")
-        title_lbl.setFont(QFont("Segoe UI Variable", 20, QFont.Weight.Bold))
-        title_lbl.setStyleSheet("color: #F2F3F5;")
-        header_row.addWidget(title_lbl)
-
-        # Live sync indicator
-        sync_badge = QLabel("● Live Sync")
-        sync_badge.setFont(QFont("Segoe UI", 11, QFont.Weight.DemiBold))
-        sync_badge.setStyleSheet(
-            "color: #4ADE80; background-color: rgba(74, 222, 128, 0.12); "
-            "border: 1px solid rgba(74, 222, 128, 0.3); border-radius: 12px; "
-            "padding: 2px 10px;"
+        self.setObjectName("DashboardRoot")
+        self.setStyleSheet(
+            """
+            QWidget#DashboardRoot {
+                background-color: #F8FAFC;
+            }
+            """
         )
-        header_row.addWidget(sync_badge)
-        header_row.addStretch()
-
-        self._last_refresh_lbl = QLabel("Updated just now")
-        self._last_refresh_lbl.setStyleSheet("color: #6E7280; font-size: 12px;")
-        header_row.addWidget(self._last_refresh_lbl)
-
-        self._refresh_btn = QPushButton(" Refresh")
-        self._refresh_btn.setObjectName("GhostBtn")
-        self._refresh_btn.setFixedHeight(30)
-        if _HAS_QTA:
-            self._refresh_btn.setIcon(qta.icon("fa5s.sync-alt", color="#A6A9B1"))
-        self._refresh_btn.clicked.connect(self.reload_data)
 
         scroll = QScrollArea(self)
         scroll.setWidgetResizable(True)
         scroll.setFrameShape(QFrame.Shape.NoFrame)
+        scroll.setStyleSheet("QScrollArea { background-color: transparent; }")
 
         container = QWidget()
-        container.setStyleSheet("background-color: #F8FAFC;")
+        container.setStyleSheet("background-color: transparent;")
         root = QVBoxLayout(container)
-        root.setContentsMargins(32, 28, 32, 36)
-        root.setSpacing(24)
+        root.setContentsMargins(32, 24, 32, 36)
+        root.setSpacing(22)
 
         # ── Dashboard Title ───────────────────────────────────────
         hdr_box = QVBoxLayout()
-        hdr_box.setSpacing(6)
+        hdr_box.setSpacing(4)
+
+        title_row = QHBoxLayout()
+        title_row.setSpacing(12)
+
         title = QLabel("Engineering Drawing Review Dashboard")
-        title.setFont(QFont("Inter", 22, QFont.Weight.Bold))
-        title.setObjectName("PageTitle")
-        hdr_box.addWidget(title)
+        title.setFont(QFont("Inter", 20, QFont.Weight.Bold))
+        title.setStyleSheet("color: #0F172A;")
+        title_row.addWidget(title)
+
+        sync_badge = QLabel("● Live Sync")
+        sync_badge.setFont(QFont("Inter", 8, QFont.Weight.Bold))
+        sync_badge.setStyleSheet(
+            "color: #059669; background-color: #ECFDF5; "
+            "border: 1px solid #A7F3D0; border-radius: 12px; "
+            "padding: 2px 10px;"
+        )
+        title_row.addWidget(sync_badge)
+        title_row.addStretch()
+
+        self._last_refresh_lbl = QLabel("Updated just now")
+        self._last_refresh_lbl.setStyleSheet("color: #64748B; font-size: 11px;")
+        title_row.addWidget(self._last_refresh_lbl)
+
+        self._refresh_btn = QPushButton(" Refresh")
+        self._refresh_btn.setFixedHeight(30)
+        self._refresh_btn.setStyleSheet(
+            "QPushButton { background: #FFFFFF; border: 1px solid #CBD5E1; border-radius: 6px; color: #334155; font-size: 11px; font-weight: 600; padding: 0 12px; }"
+            "QPushButton:hover { background: #F8FAFC; border-color: #94A3B8; }"
+        )
+        if _HAS_QTA:
+            try:
+                self._refresh_btn.setIcon(qta.icon("fa5s.sync-alt", color="#475569"))
+            except Exception:
+                pass
+        self._refresh_btn.clicked.connect(self.reload_data)
+        title_row.addWidget(self._refresh_btn)
+
+        hdr_box.addLayout(title_row)
 
         subtitle = QLabel("AI-driven drawing review comment analysis, OCR extraction status, and verification metrics.")
-        subtitle.setObjectName("PageSubtitle")
+        subtitle.setFont(QFont("Inter", 9.5))
+        subtitle.setStyleSheet("color: #64748B;")
         hdr_box.addWidget(subtitle)
+
         root.addLayout(hdr_box)
 
         # ── KPI Cards Row ─────────────────────────────────────────
@@ -167,7 +224,6 @@ class DashboardPage(QWidget):
         charts_row = QHBoxLayout()
         charts_row.setSpacing(16)
 
-        # Chart 1: Pareto Bar
         c1 = _card()
         c1_lay = QVBoxLayout(c1)
         c1_lay.setContentsMargins(18, 18, 18, 18)
@@ -177,7 +233,6 @@ class DashboardPage(QWidget):
         c1_lay.addWidget(build_pareto_chart(cat_data), 1)
         charts_row.addWidget(c1, 4)
 
-        # Chart 2: Donut Distribution
         c2 = _card()
         c2_lay = QVBoxLayout(c2)
         c2_lay.setContentsMargins(18, 18, 18, 18)
@@ -186,7 +241,6 @@ class DashboardPage(QWidget):
         c2_lay.addWidget(build_category_pie(cat_data), 1)
         charts_row.addWidget(c2, 3)
 
-        # Chart 3: Monthly Trend
         c3 = _card()
         c3_lay = QVBoxLayout(c3)
         c3_lay.setContentsMargins(18, 18, 18, 18)
@@ -201,7 +255,6 @@ class DashboardPage(QWidget):
         split = QHBoxLayout()
         split.setSpacing(16)
 
-        # Left panel: Projects & Drawings table (stretch 2)
         table_card = _card()
         table_card.setSizePolicy(
             QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Expanding
@@ -215,7 +268,6 @@ class DashboardPage(QWidget):
         table_hdr.addWidget(self._table_title)
         table_hdr.addStretch()
 
-        # View mode toggle buttons
         self._btn_group = QButtonGroup(self)
         self._drawings_btn = QPushButton("Recent Drawings")
         self._drawings_btn.setCheckable(True)
@@ -245,15 +297,39 @@ class DashboardPage(QWidget):
         self._data_table.verticalHeader().hide()
         self._data_table.setShowGrid(False)
         self._data_table.doubleClicked.connect(self._on_table_double_clicked)
+        self._data_table.setStyleSheet(
+            """
+            QTableView {
+                background-color: #FFFFFF;
+                border: none;
+                gridline-color: #F1F5F9;
+                selection-background-color: #F0F9FF;
+                selection-color: #0F172A;
+                font-family: 'Inter';
+                font-size: 11px;
+            }
+            QTableView::item {
+                padding: 8px 10px;
+                border-bottom: 1px solid #F1F5F9;
+            }
+            QHeaderView::section {
+                background-color: #F8FAFC;
+                color: #64748B;
+                padding: 8px 10px;
+                font-weight: 700;
+                font-size: 10px;
+                border: none;
+                border-bottom: 2px solid #E2E8F0;
+            }
+            """
+        )
 
         table_lay.addWidget(self._data_table)
         split.addWidget(table_card, 6)
 
-        # Right Column: Activity Feed & Processing Status
         right_col = QVBoxLayout()
         right_col.setSpacing(16)
 
-        # Card 1: Activity feed
         act_card = _card()
         act_lay = QVBoxLayout(act_card)
         act_lay.setContentsMargins(18, 16, 18, 16)
@@ -277,7 +353,6 @@ class DashboardPage(QWidget):
         act_lay.addWidget(self._act_list, 1)
         right_col.addWidget(act_card, 1)
 
-        # Card 2: Processing Status & Engines
         proc_card = _card()
         proc_lay = QVBoxLayout(proc_card)
         proc_lay.setContentsMargins(18, 16, 18, 16)
@@ -303,16 +378,13 @@ class DashboardPage(QWidget):
         page_lay.setContentsMargins(0, 0, 0, 0)
         page_lay.addWidget(scroll)
 
-        # ── Populate initial data ──────────────────────────────────
         self.reload_data()
 
-        # ── Wire Real-time Signals ─────────────────────────────────
         if self._controller:
             self._controller.workflow_step_signal.connect(self._on_workflow_step)
             self._controller.workflow_completed_signal.connect(self._on_workflow_completed)
             self._controller.document_loaded_signal.connect(lambda _: self.reload_data())
 
-        # ── Auto-Refresh Timer (every 8 seconds) ───────────────────
         self._auto_timer = QTimer(self)
         self._auto_timer.setInterval(8000)
         self._auto_timer.timeout.connect(self.reload_data)
@@ -487,7 +559,8 @@ class DashboardPage(QWidget):
                 QStandardItem(uploaded),
                 QStandardItem(status),
             ]
-            row[0].setFont(QFont("Cascadia Code", 12))
+            row[0].setFont(QFont("Cascadia Code", 10, QFont.Weight.Bold))
+            row[0].setForeground(QColor("#0284C7"))
             row[0].setData(d, Qt.ItemDataRole.UserRole)
             for item in row:
                 item.setTextAlignment(Qt.AlignmentFlag.AlignVCenter | Qt.AlignmentFlag.AlignLeft)
@@ -522,16 +595,17 @@ class DashboardPage(QWidget):
         activities = self._controller.get_recent_activity(limit=10) if self._controller else []
 
         if not activities:
-            item = QListWidgetItem("  No recent activity recorded")
-            item.setSizeHint(QSize(0, 36))
-            self._act_list.addItem(item)
+            for act in DEFAULT_ACTIVITIES:
+                item = QListWidgetItem(f"  {act['text']}   •   {act['time']}")
+                item.setSizeHint(QSize(0, 36))
+                self._act_list.addItem(item)
             return
 
         for act in activities:
             text = act.get("text", "")
             time_rel = _format_relative_time(act.get("time", ""))
             icon_name = act.get("icon", "fa5s.history")
-            color_hex = act.get("color", "#3E9BFF")
+            color_hex = act.get("color", "#0284C7")
 
             display_str = f"  {text}   •   {time_rel}"
             item = QListWidgetItem(display_str)
@@ -558,17 +632,18 @@ class DashboardPage(QWidget):
             row.setSpacing(10)
 
             name_lbl = QLabel(name)
-            name_lbl.setFixedWidth(190)
-            name_lbl.setStyleSheet("color: #C0C3CC; font-size: 13px; font-weight: 500;")
+            name_lbl.setFixedWidth(180)
+            name_lbl.setFont(QFont("Inter", 9))
+            name_lbl.setStyleSheet("color: #475569;")
             row.addWidget(name_lbl)
 
             bar = QProgressBar()
             bar.setValue(100)
             bar.setFixedHeight(6)
-            bar.setTextVisible(False)  # Prevents overlapping text and font warnings
+            bar.setTextVisible(False)
             bar.setStyleSheet(
-                "QProgressBar { background: #32353E; border-radius: 3px; border: none; }"
-                "QProgressBar::chunk { background: #4ADE80; border-radius: 3px; }"
+                "QProgressBar { background: #E2E8F0; border-radius: 3px; border: none; }"
+                "QProgressBar::chunk { background: #059669; border-radius: 3px; }"
             )
             row.addWidget(bar, 1)
 
@@ -585,25 +660,24 @@ class DashboardPage(QWidget):
         progress = getattr(step_dto, "progress", 0)
 
         self._status_summary_lbl.setText(f"Processing: {step_name} ({progress}%)")
-        self._status_summary_lbl.setStyleSheet("color: #3E9BFF; font-size: 12px; font-weight: bold;")
+        self._status_summary_lbl.setStyleSheet("color: #0284C7; font-size: 12px; font-weight: bold;")
 
-        # Update specific engine rows according to active step
         if "Ingest" in step_name or "Color" in step_name:
-            self._update_job_row("cloud_detector", progress, "Running", "#3E9BFF")
+            self._update_job_row("cloud_detector", progress, "Running", "#0284C7")
         elif "OCR" in step_name or "Text" in step_name:
-            self._update_job_row("ocr_pipeline", progress, "Running", "#3E9BFF")
+            self._update_job_row("ocr_pipeline", progress, "Running", "#0284C7")
         elif "Classif" in step_name:
-            self._update_job_row("ai_classifier", progress, "Running", "#3E9BFF")
+            self._update_job_row("ai_classifier", progress, "Running", "#0284C7")
         else:
-            self._update_job_row("drawing_hub", progress, "Running", "#3E9BFF")
+            self._update_job_row("drawing_hub", progress, "Running", "#0284C7")
 
     def _on_workflow_completed(self, result_dto: Any) -> None:
         """Real-time slot triggered when workflow pipeline execution finishes."""
         self._status_summary_lbl.setText("Pipeline Complete • 100%")
-        self._status_summary_lbl.setStyleSheet("color: #4ADE80; font-size: 12px; font-weight: bold;")
+        self._status_summary_lbl.setStyleSheet("color: #059669; font-size: 12px; font-weight: bold;")
 
         for key in self._job_rows:
-            self._update_job_row(key, 100, "Done", "#4ADE80")
+            self._update_job_row(key, 100, "Done", "#059669")
 
         self.reload_data()
 
@@ -612,7 +686,7 @@ class DashboardPage(QWidget):
             bar, chip, _ = self._job_rows[key]
             bar.setValue(progress)
             bar.setStyleSheet(
-                "QProgressBar { background: #32353E; border-radius: 3px; border: none; }"
+                "QProgressBar { background: #E2E8F0; border-radius: 3px; border: none; }"
                 f"QProgressBar::chunk {{ background: {color}; border-radius: 3px; }}"
             )
             chip.set_status(status)
@@ -629,140 +703,3 @@ class DashboardPage(QWidget):
     def reload_comments(self) -> None:
         """Alias for controller / main window refresh triggers."""
         self.reload_data()
-
-=======
-            for it in row_items:
-                it.setTextAlignment(Qt.AlignmentFlag.AlignVCenter)
-            model.appendRow(row_items)
-
-        self._proj_table.setModel(model)
-        self._proj_table.horizontalHeader().setSectionResizeMode(QHeaderView.ResizeMode.ResizeToContents)
-        self._proj_table.horizontalHeader().setSectionResizeMode(0, QHeaderView.ResizeMode.Stretch)
-
-    def _populate_drawings_table(self) -> None:
-        model = QStandardItemModel(0, 5)
-        model.setHorizontalHeaderLabels(
-            ["Drawing No", "File Name", "Pages", "Comments", "Status"]
-        )
-
-        drawings = [
-            ("5-3552-12", "5-3552-12_COMBINE.pdf", "7", "71", "Processed"),
-            ("UCC-E-101", "UCC-E-101_PID_Unit4.pdf", "3", "28", "Processed"),
-            ("RU7-P-201", "Refinery_Unit7_Piping.pdf", "5", "42", "Reviewing"),
-            ("LNG-T-501", "LNG_Terminal_Vessel.pdf", "4", "35", "Queued"),
-        ]
-
-        for dwg, fn, pgs, cmts, st in drawings:
-            row_items = [
-                QStandardItem(dwg),
-                QStandardItem(fn),
-                QStandardItem(pgs),
-                QStandardItem(cmts),
-                QStandardItem(st),
-            ]
-            for it in row_items:
-                it.setTextAlignment(Qt.AlignmentFlag.AlignVCenter)
-            model.appendRow(row_items)
-
-        self._dwg_table.setModel(model)
-        self._dwg_table.horizontalHeader().setSectionResizeMode(QHeaderView.ResizeMode.ResizeToContents)
-        self._dwg_table.horizontalHeader().setSectionResizeMode(1, QHeaderView.ResizeMode.Stretch)
-
-    def _build_activity_list(self) -> QListWidget:
-        lst = QListWidget()
-        lst.setSpacing(8)
-        lst.setObjectName("ActivityList")
-        lst.setStyleSheet("""
-            QListWidget#ActivityList {
-                background: transparent;
-                border: none;
-                outline: none;
-            }
-            QListWidget#ActivityList::item {
-                background: transparent;
-                border: none;
-            }
-        """)
-        
-        for act in DEFAULT_ACTIVITIES:
-            item = QListWidgetItem()
-            item.setSizeHint(QSize(280, 68))
-            card = QFrame()
-            card.setStyleSheet("""
-                QFrame {
-                    background-color: #F8FAFC;
-                    border: 1px solid #E2E8F0;
-                    border-radius: 8px;
-                }
-            """)
-            lay = QVBoxLayout(card)
-            lay.setContentsMargins(10, 8, 10, 8)
-            lay.setSpacing(4)
-
-            top = QHBoxLayout()
-            tag = QLabel(act.get("tag", "System"))
-            tag.setFont(QFont("Inter", 9, QFont.Weight.Bold))
-            tag.setStyleSheet(
-                "color: #0284C7; background: #E0F2FE; border-radius: 4px; padding: 2px 6px; border: none;"
-            )
-            top.addWidget(tag)
-            top.addStretch()
-
-            t_lbl = QLabel(act["time"])
-            t_lbl.setFont(QFont("Inter", 10))
-            t_lbl.setStyleSheet("color: #94A3B8; background: transparent; border: none;")
-            top.addWidget(t_lbl)
-            lay.addLayout(top)
-
-            desc = QLabel(act["text"])
-            desc.setFont(QFont("Inter", 11))
-            desc.setWordWrap(True)
-            desc.setStyleSheet("color: #334155; background: transparent; border: none;")
-            lay.addWidget(desc)
-
-            lst.addItem(item)
-            lst.setItemWidget(item, card)
-
-        return lst
-
-    def _build_job_row(self, job: Dict[str, Any]) -> QVBoxLayout:
-        lay = QVBoxLayout()
-        lay.setSpacing(6)
-
-        hdr = QHBoxLayout()
-        name = QLabel(job["name"])
-        name.setFont(QFont("Inter", 12, QFont.Weight.Medium))
-        name.setStyleSheet("color: #1E293B; background: transparent; border: none;")
-        hdr.addWidget(name)
-        hdr.addStretch()
-
-        stat = QLabel("● Active")
-        stat.setFont(QFont("Inter", 11, QFont.Weight.Bold))
-        stat.setStyleSheet("color: #16A34A; background: transparent; border: none;")
-        hdr.addWidget(stat)
-        lay.addLayout(hdr)
-
-        bar = QProgressBar()
-        bar.setRange(0, 100)
-        bar.setValue(job["progress"])
-        bar.setFixedHeight(6)
-        bar.setTextVisible(False)
-        bar.setStyleSheet("""
-            QProgressBar {
-                background: #E2E8F0;
-                border: none;
-                border-radius: 3px;
-            }
-            QProgressBar::chunk {
-                background: #16A34A;
-                border-radius: 3px;
-            }
-        """)
-        lay.addWidget(bar)
-        lay.addSpacing(4)
-        return lay
-
-    def refresh_data(self) -> None:
-        self._build_kpi_cards()
-        self._populate_projects_table()
->>>>>>> origin/feature/ui-overhaul

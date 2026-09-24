@@ -85,13 +85,9 @@ class HumanReviewPage(QWidget):
             db_comments = self._controller.get_comments_for_drawing(
                 self._controller.current_drawing_id
             )
-<<<<<<< HEAD
             self._all_comments: List[Any] = db_comments if db_comments else []
         elif self._controller:
             self._all_comments = []
-=======
-            self._comments: List[Any] = db_comments if db_comments else list(md.COMMENTS)
->>>>>>> origin/feature/ui-overhaul
         else:
             self._all_comments = list(md.COMMENTS)
 
@@ -133,13 +129,9 @@ class HumanReviewPage(QWidget):
         self._view.setSizePolicy(
             QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Expanding
         )
-<<<<<<< HEAD
         self._view.zoom_changed.connect(self._on_canvas_zoom_changed)
-        canvas_lay.addWidget(self._view, 1)
-
-=======
         self._view.setStyleSheet("QGraphicsView { background-color: #F8FAFC; border: none; }")
->>>>>>> origin/feature/ui-overhaul
+        canvas_lay.addWidget(self._view, 1)
         self._load_canvas()
         splitter.addWidget(canvas_container)
 
@@ -481,8 +473,7 @@ class HumanReviewPage(QWidget):
         panel.setStyleSheet("#ReviewPanel { background: #FFFFFF; border: none; }")
         lay = QVBoxLayout(panel)
         lay.setContentsMargins(20, 20, 20, 20)
-<<<<<<< HEAD
-        lay.setSpacing(12)
+        lay.setSpacing(16)
 
         # Quick Search Bar Row
         search_row = QHBoxLayout()
@@ -518,9 +509,6 @@ class HumanReviewPage(QWidget):
         search_row.addWidget(search_btn)
 
         lay.addLayout(search_row)
-=======
-        lay.setSpacing(16)
->>>>>>> origin/feature/ui-overhaul
 
         # Queue Header & Overall Progress Status
         q_label = QLabel("QUEUE VERIFICATION")
@@ -543,18 +531,18 @@ class HumanReviewPage(QWidget):
 
         sub_prog_row = QHBoxLayout()
         self._prog_lbl = QLabel("Comment 1 of 0")
-<<<<<<< HEAD
-        self._prog_lbl.setFont(QFont("Segoe UI Variable", 14, QFont.Weight.DemiBold))
-        prog_hdr.addWidget(self._prog_lbl)
-        prog_hdr.addStretch()
+        self._prog_lbl.setFont(QFont("Inter", 10, QFont.Weight.Medium))
+        self._prog_lbl.setStyleSheet("color: #475569;")
+        sub_prog_row.addWidget(self._prog_lbl)
+        sub_prog_row.addStretch()
 
         filter_lbl = QLabel("View:")
-        filter_lbl.setObjectName("SubCaption")
-        prog_hdr.addWidget(filter_lbl)
+        filter_lbl.setStyleSheet("color: #64748B; font-size: 11px;")
+        sub_prog_row.addWidget(filter_lbl)
 
         self._filter_cb = QComboBox()
-        self._filter_cb.setFixedHeight(30)
-        self._filter_cb.setMinimumWidth(155)
+        self._filter_cb.setFixedHeight(28)
+        self._filter_cb.setMinimumWidth(140)
         self._filter_cb.addItems([
             "Needs Attention",
             "All Comments",
@@ -564,20 +552,13 @@ class HumanReviewPage(QWidget):
             "Flagged",
         ])
         self._filter_cb.currentTextChanged.connect(self._on_filter_changed)
-        prog_hdr.addWidget(self._filter_cb)
-        lay.addLayout(prog_hdr)
-=======
-        self._prog_lbl.setFont(QFont("Inter", 10, QFont.Weight.Medium))
-        self._prog_lbl.setStyleSheet("color: #475569;")
-        sub_prog_row.addWidget(self._prog_lbl)
-        sub_prog_row.addStretch()
+        sub_prog_row.addWidget(self._filter_cb)
 
         self._remaining_lbl = QLabel("0 Remaining")
         self._remaining_lbl.setFont(QFont("Inter", 10))
         self._remaining_lbl.setStyleSheet("color: #94A3B8;")
         sub_prog_row.addWidget(self._remaining_lbl)
         lay.addLayout(sub_prog_row)
->>>>>>> origin/feature/ui-overhaul
 
         self._prog_bar = QProgressBar()
         self._prog_bar.setRange(0, max(len(self._comments), 1))
@@ -629,18 +610,17 @@ class HumanReviewPage(QWidget):
         conf_cat_frame = QFrame()
         conf_cat_frame.setStyleSheet("background-color: #F8FAFC; border: 1px solid #E2E8F0; border-radius: 6px; padding: 12px;")
         conf_cat_lay = QVBoxLayout(conf_cat_frame)
-        conf_cat_lay.setContentsMargins(0, 0, 0, 0)
+        conf_cat_lay.setContentsMargins(10, 10, 10, 10)
         conf_cat_lay.setSpacing(8)
 
         metrics_hdr_row = QHBoxLayout()
-        conf_hdr = QLabel("ACCURACY CONFIDENCE")
+        conf_hdr = QLabel("CATEGORY CLASSIFICATION")
         conf_hdr.setFont(QFont("Inter", 8, QFont.Weight.Bold))
         conf_hdr.setStyleSheet("color: #64748B; letter-spacing: 0.5px;")
         metrics_hdr_row.addWidget(conf_hdr)
-
         metrics_hdr_row.addStretch()
+        conf_cat_lay.addLayout(metrics_hdr_row)
 
-<<<<<<< HEAD
         cat_row = QHBoxLayout()
         cat_row.setSpacing(6)
         self._cat_combo = QComboBox()
@@ -669,70 +649,7 @@ class HumanReviewPage(QWidget):
         """)
         self._quick_add_cat_btn.clicked.connect(self._on_quick_add_category)
         cat_row.addWidget(self._quick_add_cat_btn)
-        edit_lay.addLayout(cat_row)
-=======
-        cat_lbl = QLabel("DISCIPLINE CLASSIFICATION")
-        cat_lbl.setFont(QFont("Inter", 8, QFont.Weight.Bold))
-        cat_lbl.setStyleSheet("color: #64748B; letter-spacing: 0.5px;")
-        metrics_hdr_row.addWidget(cat_lbl)
-        conf_cat_lay.addLayout(metrics_hdr_row)
-
-        metrics_val_row = QHBoxLayout()
-        metrics_val_row.setSpacing(16)
-
-        # AI Accuracy Block
-        conf_block = QVBoxLayout()
-        conf_block.setSpacing(4)
-        self._conf_lbl = QLabel("—")
-        self._conf_lbl.setFont(QFont("Inter", 12, QFont.Weight.Bold))
-        self._conf_lbl.setStyleSheet("color: #0F172A;")
-        conf_block.addWidget(self._conf_lbl)
-
-        self._conf_bar = QProgressBar()
-        self._conf_bar.setRange(0, 100)
-        self._conf_bar.setValue(90)
-        self._conf_bar.setFixedHeight(4)
-        self._conf_bar.setTextVisible(False)
-        self._conf_bar.setStyleSheet(
-            "QProgressBar { background: #E2E8F0; border-radius: 2px; }"
-            "QProgressBar::chunk { background: #0284C7; border-radius: 2px; }"
-        )
-        conf_block.addWidget(self._conf_bar)
-
-        self._match_tag = QLabel("High Precision Match")
-        self._match_tag.setFont(QFont("Inter", 8, QFont.Weight.Medium))
-        self._match_tag.setStyleSheet("color: #64748B;")
-        conf_block.addWidget(self._match_tag)
-        metrics_val_row.addLayout(conf_block, 1)
-
-        # Discipline Classification Selector
-        cat_block = QVBoxLayout()
-        cat_block.setSpacing(4)
-        
-        cat_select_row = QHBoxLayout()
-        cat_select_row.setSpacing(6)
-        self._cat_combo = QComboBox()
-        self._cat_combo.addItems(md.CATEGORIES)
-        self._cat_combo.setFixedHeight(28)
-        self._cat_combo.setStyleSheet(
-            "QComboBox { background: #FFFFFF; border: 1px solid #CBD5E1; border-radius: 4px; padding: 2px 6px; font-size: 11px; color: #1E293B; }"
-            "QComboBox::drop-down { border: none; }"
-        )
-        self._cat_combo.currentTextChanged.connect(self._on_category_changed)
-        cat_select_row.addWidget(self._cat_combo, 1)
->>>>>>> origin/feature/ui-overhaul
-
-        self._cat_badge = CategoryBadge("")
-        cat_select_row.addWidget(self._cat_badge)
-        cat_block.addLayout(cat_select_row)
-
-        self._rule_lbl = QLabel("Anchor Embedment Mandate")
-        self._rule_lbl.setFont(QFont("Inter", 8))
-        self._rule_lbl.setStyleSheet("color: #64748B;")
-        cat_block.addWidget(self._rule_lbl)
-
-        metrics_val_row.addLayout(cat_block, 1)
-        conf_cat_lay.addLayout(metrics_val_row)
+        conf_cat_lay.addLayout(cat_row)
         edit_lay.addWidget(conf_cat_frame)
 
         # Extracted Text Section
@@ -777,7 +694,6 @@ class HumanReviewPage(QWidget):
 
         lay.addWidget(self._edit_card)
 
-<<<<<<< HEAD
         # Status indicator
         status_row = QHBoxLayout()
         status_row.addWidget(QLabel("Current Status:"))
@@ -795,10 +711,7 @@ class HumanReviewPage(QWidget):
         status_row.addStretch()
         lay.addLayout(status_row)
 
-        # Audit history collapsible panel
-=======
         # Audit Log Collapsible Box
->>>>>>> origin/feature/ui-overhaul
         self._audit_card = QFrame()
         self._audit_card.setObjectName("Card")
         self._audit_card.setStyleSheet(
@@ -1153,25 +1066,24 @@ class HumanReviewPage(QWidget):
 
     def _load_comment(self) -> None:
         if not self._comments:
-<<<<<<< HEAD
             self._prog_lbl.setText("No comments in this view")
             self._prog_bar.setValue(0)
             self._comment_id_lbl.setText("")
             self._ocr_edit.setPlainText("")
-            self._conf_lbl.setText("Confidence: —")
-            self._cat_badge.set_category("")
+            if hasattr(self, "_conf_lbl"):
+                self._conf_lbl.setText("Confidence: —")
+            if hasattr(self, "_cat_badge"):
+                self._cat_badge.set_category("")
             if hasattr(self, "_auto_approved_badge"):
                 self._auto_approved_badge.hide()
+            if hasattr(self, "_item_counter_lbl"):
+                self._item_counter_lbl.setText("Comment 0 / 0")
             self._prev_btn.setEnabled(False)
             self._next_btn.setEnabled(False)
             self._approve_btn.setEnabled(False)
             self._reject_btn.setEnabled(False)
             self._flag_btn.setEnabled(False)
             self._edit_btn.setEnabled(False)
-=======
-            self._prog_lbl.setText("No comments available")
-            self._item_counter_lbl.setText("Comment 0 / 0")
->>>>>>> origin/feature/ui-overhaul
             return
 
         self._approve_btn.setEnabled(True)
@@ -1184,17 +1096,16 @@ class HumanReviewPage(QWidget):
         c     = self._comments[self._idx]
         cid   = _get(c, "id", "")
 
-<<<<<<< HEAD
         notice = " (Auto-Approved Drawing)" if getattr(self, "_is_all_auto_approved_notice", False) else ""
         self._prog_lbl.setText(f"Comment {self._idx + 1} of {total}{notice}")
-=======
-        self._prog_lbl.setText(f"Comment {self._idx + 1} of {total} items")
-        self._item_counter_lbl.setText(f"Comment {self._idx + 1} / {total}")
-        self._remaining_lbl.setText(f"{total - (self._idx + 1)} Remaining")
+        if hasattr(self, "_item_counter_lbl"):
+            self._item_counter_lbl.setText(f"Comment {self._idx + 1} / {total}")
+        if hasattr(self, "_remaining_lbl"):
+            self._remaining_lbl.setText(f"{total - (self._idx + 1)} Remaining")
         
         perc = int(((self._idx + 1) / max(1, total)) * 100)
-        self._completion_badge.setText(f"{perc}% Completed")
->>>>>>> origin/feature/ui-overhaul
+        if hasattr(self, "_completion_badge"):
+            self._completion_badge.setText(f"{perc}% Completed")
         self._prog_bar.setValue(self._idx + 1)
 
         drawing_ref = _get(c, "drawing_no", _get(c, "drawing_id", ""))
@@ -1213,11 +1124,15 @@ class HumanReviewPage(QWidget):
                 dept_name = cur_dwg.get("department_name")
 
         self._refresh_cat_combo_items(dept_name, category)
-        self._cat_badge.set_category(category)
+        if hasattr(self, "_cat_badge"):
+            self._cat_badge.set_category(category)
 
         confidence = _get(c, "confidence", 0.0)
-<<<<<<< HEAD
-        self._conf_lbl.setText(f"Confidence: {int(confidence * 100)}%")
+        conf_val = confidence if confidence > 1.0 else confidence * 100
+        if hasattr(self, "_conf_lbl"):
+            self._conf_lbl.setText(f"{conf_val:.1f}%")
+        if hasattr(self, "_conf_bar"):
+            self._conf_bar.setValue(int(conf_val))
         cur_status = self._statuses.get(cid, _get(c, "status", "Pending"))
         self._status_chip.set_status(cur_status)
 
@@ -1226,13 +1141,6 @@ class HumanReviewPage(QWidget):
             self._auto_approved_badge.show()
         elif hasattr(self, "_auto_approved_badge"):
             self._auto_approved_badge.hide()
-=======
-        conf_val = confidence if confidence > 1.0 else confidence * 100
-        self._conf_lbl.setText(f"{conf_val:.1f}%")
-        if hasattr(self, "_conf_bar"):
-            self._conf_bar.setValue(int(conf_val))
-        self._status_chip.set_status(self._statuses.get(cid, _get(c, "status", "Pending")))
->>>>>>> origin/feature/ui-overhaul
 
         self._prev_btn.setEnabled(self._idx > 0)
         self._next_btn.setEnabled(self._idx < total - 1)

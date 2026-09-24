@@ -44,7 +44,6 @@ def _get(c: Union[Dict[str, Any], Any], field: str, default: Any = "") -> Any:
     return getattr(c, field, default)
 
 
-<<<<<<< HEAD
 class ZoomableGraphicsView(QGraphicsView):
     """
     Enhanced QGraphicsView supporting:
@@ -281,9 +280,7 @@ class CommentHighlightPage(QWidget):
         panel_lay.addWidget(self._list, 1)
 
         self._apply_filter("All")
-        workspace_lay.addWidget(panel)
-
-        root.addLayout(workspace_lay, 1)
+        root.addWidget(panel, 1)
         self._load_canvas()
 
     def _make_filter_handler(self, tag: str):
