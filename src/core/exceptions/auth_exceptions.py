@@ -18,3 +18,15 @@ class UserNotFoundError(AuthError):
 class UnauthorizedError(AuthError):
     """Raised when user attempts an unauthorized operation."""
     pass
+
+class UserAlreadyExistsError(AuthError):
+    """Raised when registration targets a username or email that is already taken."""
+    pass
+
+class WeakPasswordError(AuthError):
+    """Raised when a registration password does not meet the minimum strength policy."""
+    pass
+
+class DepartmentNotFoundError(AuthError):
+    """Raised when a referenced engineering department does not exist."""
+    pass

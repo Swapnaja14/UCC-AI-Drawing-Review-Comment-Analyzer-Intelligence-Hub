@@ -15,8 +15,16 @@ class UserDTO:
     username: str
     email: str
     role: str
+    display_name: Optional[str] = None
+    department_id: Optional[str] = None
+    department_name: Optional[str] = None
     is_authenticated: bool = True
     last_login: Optional[datetime] = None
+
+    @property
+    def id(self) -> str:
+        """Alias for user_id (used across controller call sites)."""
+        return self.user_id
 
 
 @dataclass(frozen=True)

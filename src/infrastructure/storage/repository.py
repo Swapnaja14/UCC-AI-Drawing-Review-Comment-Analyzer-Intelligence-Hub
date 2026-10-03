@@ -136,6 +136,13 @@ class DatabaseEngine:
         """Ensure newly added columns exist in existing SQLite databases and indexes are present."""
         try:
             with self.engine.begin() as conn:
+                # Check columns in users table
+                usr_result = conn.execute(text("PRAGMA table_info(users);"))
+                usr_columns = [row[1] for row in usr_result.fetchall()]
+                if usr_columns and "department_id" not in usr_columns:
+                    logger.info("Migrating database: adding 'department_id' column to 'users' table")
+                    conn.execute(text("ALTER TABLE users ADD COLUMN department_id VARCHAR(50);"))
+
                 # Check columns in comments table
                 result = conn.execute(text("PRAGMA table_info(comments);"))
                 columns = [row[1] for row in result.fetchall()]
@@ -173,6 +180,7 @@ class DatabaseEngine:
                 conn.execute(text("CREATE INDEX IF NOT EXISTS idx_processing_runs_drawing_id ON processing_runs(drawing_id);"))
                 conn.execute(text("CREATE INDEX IF NOT EXISTS idx_processing_runs_proj_id ON processing_runs(project_id);"))
                 conn.execute(text("CREATE INDEX IF NOT EXISTS idx_export_history_created_at ON export_history(created_at);"))
+                conn.execute(text("CREATE INDEX IF NOT EXISTS idx_users_dept_id ON users(department_id);"))
         except Exception as exc:
             logger.warning(f"Database migration check failed: {exc}")
 
@@ -866,6 +874,7 @@ class UserRepository:
         display_name: Optional[str] = None,
         email: Optional[str] = None,
         role: str = "Reviewer",
+        department_id: Optional[str] = None,
     ) -> Dict[str, Any]:
         """Return an existing user by username, or create them."""
         with self._db.get_session() as session:
@@ -883,6 +892,7 @@ class UserRepository:
                 display_name=display_name or username,
                 email=email,
                 role=role,
+                department_id=department_id,
             )
             session.add(user)
             session.commit()
@@ -1698,6 +1708,8 @@ def _user_to_dict(u: UserModel) -> Dict[str, Any]:
         "email":        u.email,
         "role":         u.role,
         "is_active":    u.is_active,
+        "department_id": u.department_id,
+        "department_name": u.department_name,
     }
 
 

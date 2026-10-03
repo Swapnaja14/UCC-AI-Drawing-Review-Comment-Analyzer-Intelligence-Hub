@@ -17,6 +17,8 @@ from PySide6.QtGui import QFont, QFontDatabase
 from app.theme import ThemeManager
 from app.screens.splash_screen import SplashScreen
 from app.main_window import MainWindow
+from app.screens.login_screen import LoginWindow
+from app.controllers.app_controller import AppController
 
 
 def main():
@@ -44,12 +46,32 @@ def main():
     splash.show()
     app.processEvents()
 
-    # ── Main window (created but shown after splash) ───────────────
-    window = MainWindow(theme_manager=theme)
+    # ── Backend Controller ─────────────────────────────────────────
+    controller = AppController()
+
+    login = LoginWindow(controller=controller)
+    main_window_holder = {'window': None}
+
+    def _open_main_window(_session=None):
+        login.hide()
+        main_window_holder['window'] = MainWindow(theme_manager=theme, controller=controller)
+        main_window_holder['window'].logout_requested.connect(_on_logout)
+        main_window_holder['window'].show()
+
+    def _on_logout():
+        controller.sign_out()
+        if main_window_holder['window']:
+            main_window_holder['window'].close()
+            main_window_holder['window'].deleteLater()
+            main_window_holder['window'] = None
+        login.reset()
+        login.show()
+
+    login.authenticated.connect(_open_main_window)
 
     def _launch():
         splash.close()
-        window.show()
+        login.show()
 
     QTimer.singleShot(2200, _launch)    # 2.2 s splash
 

@@ -407,6 +407,17 @@ class AppController(QObject):
         """The currently authenticated user, or None if not signed in."""
         return self._current_session.user if self._current_session else None
 
+    @property
+    def current_department_id(self) -> Optional[str]:
+        return self.current_user.department_id if self.current_user else None
+
+    @property
+    def current_department_name(self) -> Optional[str]:
+        return self.current_user.department_name if self.current_user else None
+
+    def is_department_scoped(self) -> bool:
+        return self.current_department_id is not None
+
     # ── Workflow Pipeline API ──────────────────────────────────────
 
     def validate_file(self, file_path: str | Path) -> FileValidationResultDTO:
@@ -536,7 +547,7 @@ class AppController(QObject):
     ) -> List[Dict[str, Any]]:
         """Return all drawings from DB, optionally filtered by project or department."""
         if hasattr(self, "drawing_repo"):
-            return self.drawing_repo.get_all_drawings(project_id=project_id, department_id=department_id)
+            return self.drawing_repo.get_all_drawings(project_id=project_id, department_id=department_id or self.current_department_id)
         return []
 
     def get_batch_drawings(self) -> List[Dict[str, Any]]:
@@ -583,6 +594,23 @@ class AppController(QObject):
 
 
     # ── Authentication API ─────────────────────────────────────────
+
+    def register_user(self, username: str, display_name: str, email: str, password: str, department_id: Optional[str] = None) -> bool:
+        """Register a new user and automatically sign them in."""
+        try:
+            self.auth_service.register_user(
+                username=username,
+                display_name=display_name,
+                email=email,
+                password=password,
+                department_id=department_id,
+            )
+            return self.sign_in(username, password)
+        except Exception as e:
+            err_msg = str(e)
+            logger.warning(f"Registration failed: {err_msg}")
+            self.auth_error_signal.emit(err_msg)
+            return False
 
     def sign_in(self, username_or_email: str, password: str) -> bool:
         """Authenticate a user. Returns True on success, False on failure."""
@@ -1174,7 +1202,7 @@ class AppController(QObject):
         return self.analytics_service.get_global_kpis(
             project_id=project_id,
             drawing_id=drawing_id,
-            department_name=department_name,
+            department_name=department_name or self.current_department_name,
             category_name=category_name,
             date_from=date_from,
             date_to=date_to,
@@ -1194,7 +1222,7 @@ class AppController(QObject):
         return self.analytics_service.get_category_distribution(
             project_id=project_id,
             drawing_id=drawing_id,
-            department_name=department_name,
+            department_name=department_name or self.current_department_name,
             category_name=category_name,
             date_from=date_from,
             date_to=date_to,
@@ -1216,7 +1244,7 @@ class AppController(QObject):
         return self.analytics_service.get_pareto_analysis(
             project_id=project_id,
             drawing_id=drawing_id,
-            department_name=department_name,
+            department_name=department_name or self.current_department_name,
             category_name=category_name,
             date_from=date_from,
             date_to=date_to,
@@ -1237,7 +1265,7 @@ class AppController(QObject):
         return self.analytics_service.get_status_trend(
             project_id=project_id,
             drawing_id=drawing_id,
-            department_name=department_name,
+            department_name=department_name or self.current_department_name,
             category_name=category_name,
             date_from=date_from,
             date_to=date_to,

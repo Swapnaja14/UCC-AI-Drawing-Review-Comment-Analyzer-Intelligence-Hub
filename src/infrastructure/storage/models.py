@@ -42,6 +42,7 @@ class UserModel(Base):
     email        = Column(String(254), nullable=True, unique=True)
     role         = Column(String(50),  nullable=False, default="Reviewer")
     # e.g. "Reviewer", "Lead Engineer", "Admin"
+    department_id = Column(String(50), ForeignKey('engineering_departments.id', ondelete='SET NULL'), nullable=True)
     is_active    = Column(Boolean,     nullable=False, default=True)
     created_at   = Column(DateTime,    nullable=False, default=datetime.utcnow)
 
@@ -56,9 +57,17 @@ class UserModel(Base):
         back_populates="user",
         foreign_keys="CommentModel.user_id",
     )
+    department_rel = relationship('EngineeringDepartmentModel', foreign_keys=[department_id])
+
+    @property
+    def department_name(self) -> str:
+        if self.department_rel and self.department_rel.name:
+            return self.department_rel.name
+        return 'Unassigned'
 
     __table_args__ = (
         Index("ix_users_username", "username"),
+        Index('ix_users_department_id', 'department_id'),
     )
 
 

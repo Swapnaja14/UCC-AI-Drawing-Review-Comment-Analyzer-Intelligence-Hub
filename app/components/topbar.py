@@ -17,6 +17,7 @@ class TopBar(QWidget):
     search_changed = Signal(str)
     theme_toggled  = Signal()
     notification_clicked = Signal()
+    logout_requested = Signal()
 
     def __init__(self, parent=None):
         super().__init__(parent)
@@ -37,7 +38,7 @@ class TopBar(QWidget):
         # ── Search field ─────────────────────────────────────────
         self._search = QLineEdit()
         self._search.setPlaceholderText("  🔍  Search projects, drawings, comments…")
-        self._search.setFixedWidth(320)
+        self._search.setFixedWidth(300)
         self._search.setFixedHeight(36)
         self._search.textChanged.connect(self.search_changed)
         lay.addWidget(self._search)
@@ -65,24 +66,64 @@ class TopBar(QWidget):
         self._theme_btn.clicked.connect(self._on_theme_click)
         lay.addWidget(self._theme_btn)
 
+        # ── User Name / Dept Label ──────────────────────────────
+        self._user_info_lbl = QLabel("")
+        self._user_info_lbl.setFont(QFont("Segoe UI Variable", 12, QFont.Weight.Medium))
+        self._user_info_lbl.setStyleSheet("color: #E2E8F0; margin-left: 4px;")
+        lay.addWidget(self._user_info_lbl)
+
         # ── User avatar ──────────────────────────────────────────
-        avatar = QToolButton()
-        avatar.setFixedSize(36, 36)
-        avatar.setStyleSheet(
+        self._avatar = QToolButton()
+        self._avatar.setFixedSize(36, 36)
+        self._avatar.setStyleSheet(
             "QToolButton { background:#3E9BFF; border-radius:18px;"
             "color:#fff; font-weight:700; font-size:13px; }"
         )
-        avatar.setText("AM")
-        menu = QMenu(avatar)
-        menu.addAction(QAction("Profile", self))
-        menu.addAction(QAction("Sign Out", self))
-        avatar.setMenu(menu)
-        avatar.setPopupMode(QToolButton.ToolButtonPopupMode.InstantPopup)
-        lay.addWidget(avatar)
+        self._avatar.setText("US")
+        
+        self._menu = QMenu(self._avatar)
+        self._logout_action = QAction("🚪 Sign Out", self)
+        self._logout_action.triggered.connect(self.logout_requested)
+        self._menu.addAction(self._logout_action)
+        self._avatar.setMenu(self._menu)
+        self._avatar.setPopupMode(QToolButton.ToolButtonPopupMode.InstantPopup)
+        lay.addWidget(self._avatar)
+
+        # ── Explicit Logout Button ───────────────────────────────
+        self._logout_btn = QPushButton("🚪 Sign Out")
+        self._logout_btn.setCursor(Qt.CursorShape.PointingHandCursor)
+        self._logout_btn.setFixedHeight(32)
+        self._logout_btn.setStyleSheet(
+            "QPushButton { background:#DC2626; color:#FFFFFF; border:none; border-radius:6px;"
+            " padding:0 12px; font-weight:600; font-size:12px; }"
+            "QPushButton:hover { background:#EF4444; }"
+        )
+        self._logout_btn.clicked.connect(self.logout_requested)
+        lay.addWidget(self._logout_btn)
 
     def set_breadcrumb(self, text: str):
         self._breadcrumb.setText(text)
 
+    def set_user_info(self, name: str, department: str = ""):
+        self.set_user(name, department)
+
+    def set_user(self, name: str, department: str = ""):
+        parts = name.strip().split()
+        if len(parts) >= 2:
+            initials = f"{parts[0][0]}{parts[1][0]}".upper()
+        elif parts:
+            initials = parts[0][:2].upper()
+        else:
+            initials = "US"
+        self._avatar.setText(initials)
+        
+        display_str = name
+        if department and department != "Unassigned":
+            display_str += f" ({department})"
+        self._user_info_lbl.setText(display_str)
+        self._avatar.setToolTip(f"{name}\nDepartment: {department or 'Unassigned'}")
+
     def _on_theme_click(self, checked: bool):
         self._theme_btn.setText("🌙  Dark" if checked else "☀  Light")
         self.theme_toggled.emit()
+

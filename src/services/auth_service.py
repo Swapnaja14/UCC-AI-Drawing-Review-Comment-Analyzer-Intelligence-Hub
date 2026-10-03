@@ -13,12 +13,21 @@ import uuid
 
 from sqlalchemy import func
 from src.infrastructure.storage.repository import DatabaseEngine
-from src.infrastructure.storage.models import UserModel
+from src.infrastructure.storage.models import UserModel, EngineeringDepartmentModel
 from src.core.dtos.auth_dtos import UserDTO, SessionTokenDTO
-from src.core.exceptions.auth_exceptions import InvalidCredentialsError, UserNotFoundError
+from src.core.exceptions.auth_exceptions import (
+    InvalidCredentialsError,
+    UserNotFoundError,
+    UserAlreadyExistsError,
+    WeakPasswordError,
+    DepartmentNotFoundError,
+)
 from src.infrastructure.logging.logger import get_logger
 
 logger = get_logger("AuthService")
+
+# Minimum password policy for self-service registration.
+_MIN_PASSWORD_LENGTH = 8
 
 
 class AuthService:
@@ -50,13 +59,19 @@ class AuthService:
         with self.db_engine.get_session() as session:
             try:
                 if session.query(UserModel).count() == 0:
+                    # Resolve department ids by name (departments are seeded on DB init).
+                    dept_rows = session.query(EngineeringDepartmentModel).all()
+                    dept_by_name = {d.name: d.id for d in dept_rows}
+
+                    # (username, display, email, plain_pwd, role, department_name)
+                    # A None department means the account is unscoped (sees all departments).
                     demo_accounts = [
-                        ("admin", "Admin User", "admin@ucc.com", "Password123!", "Lead Engineer"),
-                        ("soham", "Soham Patil", "soham@ucc.com", "Password123!", "Backend Lead"),
-                        ("reviewer", "Review Engineer", "reviewer@ucc.com", "Password123!", "Reviewer"),
+                        ("admin", "Admin User", "admin@ucc.com", "Password123!", "Lead Engineer", None),
+                        ("soham", "Soham Patil", "soham@ucc.com", "Password123!", "Backend Lead", "Piping Engineering"),
+                        ("reviewer", "Review Engineer", "reviewer@ucc.com", "Password123!", "Reviewer", "Electrical Engineering"),
                     ]
 
-                    for uname, display, email, plain_pwd, role in demo_accounts:
+                    for uname, display, email, plain_pwd, role, dept_name in demo_accounts:
                         pwd_hash, salt_hex = self._hash_password(plain_pwd)
                         user_record = UserModel(
                             id=f"USR-{uuid.uuid4().hex[:8].upper()}",
@@ -66,6 +81,7 @@ class AuthService:
                             password_hash=pwd_hash,
                             salt=salt_hex,
                             role=role,
+                            department_id=dept_by_name.get(dept_name) if dept_name else None,
                             is_active=True,
                             created_at=datetime.now(timezone.utc),
                         )
@@ -76,6 +92,90 @@ class AuthService:
             except Exception as e:
                 session.rollback()
                 logger.error(f"Failed to seed demo users: {e}")
+
+    def register_user(
+        self,
+        username: str,
+        display_name: str,
+        email: str,
+        password: str,
+        department_id: Optional[str] = None,
+        role: str = "Reviewer",
+    ) -> UserDTO:
+        """
+        Register a new department-scoped user account.
+
+        Raises:
+            UserAlreadyExistsError: username or email already registered.
+            WeakPasswordError: password does not meet the minimum policy.
+            DepartmentNotFoundError: department_id does not reference a real department.
+        """
+        username = (username or "").strip()
+        display_name = (display_name or "").strip()
+        email = (email or "").strip().lower()
+
+        if not username or not email or not password:
+            raise WeakPasswordError("Username, email, and password are all required.")
+
+        if len(password) < _MIN_PASSWORD_LENGTH:
+            raise WeakPasswordError(
+                f"Password must be at least {_MIN_PASSWORD_LENGTH} characters long."
+            )
+
+        with self.db_engine.get_session() as session:
+            uname_clean = username.lower()
+            existing = session.query(UserModel).filter(
+                (func.lower(UserModel.username) == uname_clean) |
+                (func.lower(UserModel.email) == email)
+            ).first()
+            if existing:
+                raise UserAlreadyExistsError(
+                    "An account with that username or email already exists."
+                )
+
+            resolved_dept_id = None
+            dept_name = None
+            if department_id:
+                dept_row = session.get(EngineeringDepartmentModel, department_id)
+                if not dept_row:
+                    # Fall back to matching by name in case an id/name was passed.
+                    dept_row = session.query(EngineeringDepartmentModel).filter(
+                        EngineeringDepartmentModel.name == department_id
+                    ).first()
+                if not dept_row:
+                    raise DepartmentNotFoundError("Selected engineering department is not valid.")
+                resolved_dept_id = dept_row.id
+                dept_name = dept_row.name
+
+            pwd_hash, salt_hex = self._hash_password(password)
+            user_record = UserModel(
+                id=f"USR-{uuid.uuid4().hex[:8].upper()}",
+                username=username,
+                display_name=display_name or username,
+                email=email,
+                password_hash=pwd_hash,
+                salt=salt_hex,
+                role=role,
+                department_id=resolved_dept_id,
+                is_active=True,
+                created_at=datetime.now(timezone.utc),
+            )
+            session.add(user_record)
+            session.commit()
+            logger.info(
+                f"Registered new user '{username}' (dept='{dept_name or 'Unassigned'}', role='{role}')."
+            )
+
+            return UserDTO(
+                user_id=user_record.id,
+                username=user_record.username,
+                email=user_record.email,
+                role=user_record.role,
+                display_name=user_record.display_name,
+                department_id=user_record.department_id,
+                department_name=dept_name or "Unassigned",
+                is_authenticated=False,
+            )
 
     def authenticate_user(self, username_or_email: str, password: str) -> SessionTokenDTO:
         """
@@ -115,6 +215,12 @@ class AuthService:
                 username=user_record.username,
                 email=user_record.email,
                 role=user_record.role,
+                display_name=user_record.display_name,
+                department_id=user_record.department_id,
+                department_name=(
+                    user_record.department_rel.name
+                    if user_record.department_rel else "Unassigned"
+                ),
                 is_authenticated=True,
                 last_login=user_record.last_login,
             )

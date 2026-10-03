@@ -21,7 +21,7 @@ from __future__ import annotations
 from pathlib import Path
 from PySide6.QtWidgets import (QMainWindow, QWidget, QHBoxLayout, QVBoxLayout,
                                 QStackedWidget)
-from PySide6.QtCore import Qt
+from PySide6.QtCore import Qt, Signal
 
 from app.components.sidebar         import SidebarNav
 from app.components.topbar          import TopBar
@@ -54,7 +54,9 @@ _PAGE_TITLES = [
 
 
 class MainWindow(QMainWindow):
-    def __init__(self, theme_manager=None):
+    logout_requested = Signal()
+
+    def __init__(self, theme_manager=None, controller=None):
         super().__init__()
         self._theme = theme_manager
         self.setWindowTitle("UCC AI Drawing Review Comment Analyzer")
@@ -63,7 +65,7 @@ class MainWindow(QMainWindow):
         self.showMaximized()
 
         # ── Backend Controller Initialization ─────────────────────
-        self.controller = AppController(self)
+        self.controller = controller if controller is not None else AppController(self)
 
         # ── Central widget ────────────────────────────────────────
         central = QWidget()
@@ -88,6 +90,8 @@ class MainWindow(QMainWindow):
         # Top bar
         self._topbar = TopBar()
         self._topbar.theme_toggled.connect(self._on_theme_toggle)
+        if hasattr(self._topbar, 'logout_requested'):
+            self._topbar.logout_requested.connect(self._on_logout)
         v_layout.addWidget(self._topbar)
 
         # Stacked pages
@@ -136,6 +140,21 @@ class MainWindow(QMainWindow):
         # ── Status bar ────────────────────────────────────────────
         self._status_bar = AppStatusBar(version="v1.0.0 — Backend Connected")
         self.setStatusBar(self._status_bar)
+        
+        self.apply_user_context()
+
+    def apply_user_context(self):
+        if self.controller and self.controller.current_user:
+            user = self.controller.current_user
+            name = user.display_name or user.username
+            dept = user.department_name or "Unassigned"
+            if hasattr(self._status_bar, 'set_message'):
+                self._status_bar.set_message(f"Logged in as {name} ({dept})")
+            if hasattr(self._topbar, 'set_user_info'):
+                self._topbar.set_user_info(name, dept)
+
+    def _on_logout(self):
+        self.logout_requested.emit()
 
     def _navigate(self, idx: int):
         self._stack.setCurrentIndex(idx)
