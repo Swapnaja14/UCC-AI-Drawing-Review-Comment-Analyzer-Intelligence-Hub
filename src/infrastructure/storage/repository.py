@@ -290,16 +290,15 @@ class DrawingRepository:
             )
             return _drawing_to_dict(drawing)
 
-    def get_recent_drawings(self, limit: int = 10) -> List[Dict[str, Any]]:
+    def get_recent_drawings(
+        self, limit: int = 10, department_id: Optional[str] = None
+    ) -> List[Dict[str, Any]]:
         """Return the most recently uploaded drawings enriched with comment counts."""
         with self._db.get_session() as session:
-            rows = (
-                session.query(DrawingModel)
-                .options(selectinload(DrawingModel.comments))
-                .order_by(DrawingModel.uploaded_at.desc())
-                .limit(limit)
-                .all()
-            )
+            query = session.query(DrawingModel).options(selectinload(DrawingModel.comments))
+            if department_id:
+                query = query.filter(DrawingModel.department_id == department_id)
+            rows = query.order_by(DrawingModel.uploaded_at.desc()).limit(limit).all()
             result = []
             for d in rows:
                 d_dict = _drawing_to_dict(d)
@@ -329,6 +328,7 @@ class DrawingRepository:
         self,
         project_id: Optional[str] = None,
         department_id: Optional[str] = None,
+        include_unassigned: bool = True,
     ) -> List[Dict[str, Any]]:
         """Return all drawings, optionally filtered by project or department, enriched with comment counts."""
         with self._db.get_session() as session:
@@ -336,10 +336,13 @@ class DrawingRepository:
             if project_id:
                 query = query.filter(DrawingModel.project_id == project_id)
             if department_id:
-                query = query.filter(
-                    (DrawingModel.department_id == department_id) |
-                    (DrawingModel.department_id.is_(None))
-                )
+                if include_unassigned:
+                    query = query.filter(
+                        (DrawingModel.department_id == department_id) |
+                        (DrawingModel.department_id.is_(None))
+                    )
+                else:
+                    query = query.filter(DrawingModel.department_id == department_id)
             rows = query.order_by(DrawingModel.uploaded_at.desc()).all()
             result = []
             for d in rows:
@@ -1024,19 +1027,25 @@ class CommentRepository:
             )
             return [_comment_to_dict(c) for c in rows]
 
-    def get_all_comments(self) -> List[Dict[str, Any]]:
+    def get_all_comments(
+        self, department_id: Optional[str] = None
+    ) -> List[Dict[str, Any]]:
         with self._db.get_session() as session:
-            rows = (
-                session.query(CommentModel)
-                .options(selectinload(CommentModel.drawing))
-                .order_by(CommentModel.drawing_id, CommentModel.page_number, CommentModel.bbox_y0)
-                .all()
-            )
+            query = session.query(CommentModel).options(selectinload(CommentModel.drawing))
+            if department_id:
+                query = query.join(DrawingModel, CommentModel.drawing_id == DrawingModel.id).filter(
+                    DrawingModel.department_id == department_id
+                )
+            rows = query.order_by(
+                CommentModel.drawing_id, CommentModel.page_number, CommentModel.bbox_y0
+            ).all()
             return [_comment_to_dict(c) for c in rows]
 
-    def get_all_historical_comments(self) -> List[Dict[str, Any]]:
+    def get_all_historical_comments(
+        self, department_id: Optional[str] = None
+    ) -> List[Dict[str, Any]]:
         """Return all persisted comments across all projects and drawings in the database."""
-        return self.get_all_comments()
+        return self.get_all_comments(department_id=department_id)
 
     def get_comment_by_id(self, comment_id: str) -> Optional[Dict[str, Any]]:
         with self._db.get_session() as session:
