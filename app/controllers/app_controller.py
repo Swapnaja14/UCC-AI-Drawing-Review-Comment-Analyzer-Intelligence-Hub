@@ -757,9 +757,11 @@ class AppController(QObject):
         return None
 
     def get_recent_drawings(self, limit: int = 10) -> List[Dict[str, Any]]:
-        """Return recent drawings with comment counts and departments."""
+        """Return recent drawings with comment counts and departments (department-scoped)."""
         if hasattr(self, 'drawing_repo'):
-            return self.drawing_repo.get_recent_drawings(limit=limit)
+            return self.drawing_repo.get_recent_drawings(
+                limit=limit, department_id=self.current_department_id
+            )
         return []
 
     def get_recent_activity(self, limit: int = 10) -> List[Dict[str, Any]]:
@@ -805,7 +807,9 @@ class AppController(QObject):
             })
 
         # 2. Recent drawings uploaded / processed
-        recent_dwgs = self.drawing_repo.get_recent_drawings(limit=limit) if hasattr(self, 'drawing_repo') else []
+        recent_dwgs = self.drawing_repo.get_recent_drawings(
+            limit=limit, department_id=self.current_department_id
+        ) if hasattr(self, 'drawing_repo') else []
         for d in recent_dwgs:
             fname = d.get("file_name", "Drawing")
             cmts = d.get("comments_count", 0)
@@ -1108,8 +1112,10 @@ class AppController(QObject):
 
         # 3. All Historical Comments
         all_projects = self.project_repo.get_all_projects()
-        all_drawings = self.drawing_repo.get_all_drawings()
-        all_comments = self.comment_repo.get_all_historical_comments()
+        all_drawings = self.get_all_drawings()
+        all_comments = self.comment_repo.get_all_historical_comments(
+            department_id=self.current_department_id
+        )
         valid_all_comments = [c for c in all_comments if c.get("status") != "Rejected"]
         result["all"] = {
             "projects_count": len(all_projects),
@@ -1178,8 +1184,13 @@ class AppController(QObject):
         project_id: Optional[str] = None,
         department_id: Optional[str] = None,
     ) -> List[Dict[str, Any]]:
-        """Return all drawing records from database, optionally filtered by project or department."""
-        return self.drawing_repo.get_all_drawings(project_id=project_id, department_id=department_id)
+        """Return drawings, always enforcing the active user's department scope."""
+        scope_dept = self.current_department_id if self.is_department_scoped() else department_id
+        return self.drawing_repo.get_all_drawings(
+            project_id=project_id,
+            department_id=scope_dept,
+            include_unassigned=not self.is_department_scoped(),
+        )
 
     def get_all_departments(self) -> List[Dict[str, Any]]:
         """Return all engineering department records from database."""
