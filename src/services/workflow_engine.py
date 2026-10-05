@@ -5,7 +5,7 @@ Processing Workflow Engine orchestrating end-to-end processing steps as a Finite
 
 import os
 from pathlib import Path
-from typing import Callable, Optional, List
+from typing import Callable, Optional, List, Any, Dict
 from concurrent.futures import ThreadPoolExecutor, as_completed
 import time
 import io
@@ -58,6 +58,7 @@ class ProcessingWorkflowEngine:
         classification_service: Optional[ClassificationService] = None,
         audit_repo: Optional[AuditLogRepository] = None,
         processing_run_repo: Optional[ProcessingRunRepository] = None,
+        config: Optional[Any] = None,
     ) -> None:
         self.file_service = file_service
         self.pdf_service = pdf_service
@@ -68,7 +69,524 @@ class ProcessingWorkflowEngine:
         self.classification_service = classification_service or ClassificationService()
         self.audit_repo = audit_repo
         self.processing_run_repo = processing_run_repo
+        self.config = config
         self._current_state = WorkflowState.IDLE
+
+    def _resolve_ocr_config(self) -> tuple[int, int, float]:
+        """
+        Resolves (tesseract_psm, fallback_psm, confidence_threshold) from
+        self.config or global AppConfig.
+        Defaults: primary_psm=6, fallback_psm=11, confidence_threshold=0.50.
+        """
+        active_cfg = self.config
+        if active_cfg is None:
+            try:
+                from src.config import get_config
+                active_cfg = get_config()
+            except Exception:
+                active_cfg = None
+
+        primary_psm = 6
+        fallback_psm = 11
+        conf_threshold = 0.50
+
+        if active_cfg:
+            ocr_cfg = getattr(active_cfg, "ocr", None)
+            if ocr_cfg is None and isinstance(active_cfg, dict):
+                ocr_cfg = active_cfg.get("ocr")
+            if ocr_cfg:
+                if isinstance(ocr_cfg, dict):
+                    primary_psm = int(ocr_cfg.get("tesseract_psm", 6))
+                    fallback_psm = int(ocr_cfg.get("fallback_psm", 11))
+                    conf_threshold = float(ocr_cfg.get("confidence_threshold", 0.50))
+                else:
+                    primary_psm = int(getattr(ocr_cfg, "tesseract_psm", 6))
+                    fallback_psm = int(getattr(ocr_cfg, "fallback_psm", 11))
+                    conf_threshold = float(getattr(ocr_cfg, "confidence_threshold", 0.50))
+
+        return primary_psm, fallback_psm, conf_threshold
+
+    def _resolve_advanced_ocr_config(self) -> dict:
+        """
+        Resolves full OCR configuration parameters including dynamic PSM,
+        micro-upscaling settings, and parallel region OCR worker parameters.
+        """
+        primary_psm, fallback_psm, conf_threshold = self._resolve_ocr_config()
+
+        active_cfg = self.config
+        if active_cfg is None:
+            try:
+                from src.config import get_config
+                active_cfg = get_config()
+            except Exception:
+                active_cfg = None
+
+        enable_micro_upscale = True
+        min_upscale_dim = 35
+        target_upscale_dim = 80
+        parallel_region_ocr = True
+        max_region_workers = 4
+
+        if active_cfg:
+            ocr_cfg = getattr(active_cfg, "ocr", None)
+            if ocr_cfg is None and isinstance(active_cfg, dict):
+                ocr_cfg = active_cfg.get("ocr")
+            if ocr_cfg:
+                if isinstance(ocr_cfg, dict):
+                    enable_micro_upscale = bool(ocr_cfg.get("enable_micro_upscaling", True))
+                    min_upscale_dim = int(ocr_cfg.get("micro_upscaling_min_px", 35))
+                    target_upscale_dim = int(ocr_cfg.get("micro_upscaling_target_px", 80))
+                    parallel_region_ocr = bool(ocr_cfg.get("parallel_region_ocr", True))
+                    max_region_workers = int(ocr_cfg.get("max_region_workers", 4))
+                else:
+                    enable_micro_upscale = bool(getattr(ocr_cfg, "enable_micro_upscaling", True))
+                    min_upscale_dim = int(getattr(ocr_cfg, "micro_upscaling_min_px", 35))
+                    target_upscale_dim = int(getattr(ocr_cfg, "micro_upscaling_target_px", 80))
+                    parallel_region_ocr = bool(getattr(ocr_cfg, "parallel_region_ocr", True))
+                    max_region_workers = int(getattr(ocr_cfg, "max_region_workers", 4))
+
+        return {
+            "primary_psm": primary_psm,
+            "fallback_psm": fallback_psm,
+            "conf_threshold": conf_threshold,
+            "enable_micro_upscale": enable_micro_upscale,
+            "min_upscale_dim": min_upscale_dim,
+            "target_upscale_dim": target_upscale_dim,
+            "parallel_region_ocr": parallel_region_ocr,
+            "max_region_workers": max_region_workers,
+        }
+
+    @classmethod
+    def _micro_upscale_crop(
+        cls,
+        img: Image.Image,
+        min_dim: int = 35,
+        target_dim: int = 80,
+    ) -> Image.Image:
+        """
+        Applies high-fidelity micro-upscaling (Lanczos resampling) to small engineering
+        notes, dimension labels, revision deltas, or superscript callouts (< 35px)
+        to boost Tesseract OCR character recognition accuracy.
+        """
+        if img.height <= 0 or img.width <= 0:
+            return img
+
+        min_side = min(img.width, img.height)
+        if min_side < min_dim or img.height < min_dim:
+            scale = max(2.0, min(float(target_dim) / max(1, min_side), 4.0))
+
+            new_w = max(1, int(round(img.width * scale)))
+            new_h = max(1, int(round(img.height * scale)))
+
+            resample_filter = getattr(getattr(Image, "Resampling", Image), "LANCZOS", Image.BICUBIC)
+            upscaled = img.resize((new_w, new_h), resample=resample_filter)
+            return upscaled
+        return img
+
+    @classmethod
+    def _run_tesseract_psm(cls, img: Image.Image, psm: int) -> tuple[str, float]:
+        """
+        Executes Tesseract OCR on a PIL Image with the specified PSM mode.
+        Returns:
+            tuple[str, float]: (extracted_text, average_word_confidence_0_to_1)
+        """
+        config_str = f"--psm {psm}"
+        try:
+            ocr_data = pytesseract.image_to_data(
+                img,
+                config=config_str,
+                output_type=pytesseract.Output.DICT,
+            )
+            raw_confs = ocr_data.get("conf", [])
+            raw_words = ocr_data.get("text", [])
+
+            # Filter non-empty words and valid confidences (Tesseract returns -1 for non-text blocks)
+            valid_word_confs = [
+                float(c)
+                for c, t in zip(raw_confs, raw_words)
+                if t.strip() and float(c) >= 0
+            ]
+            valid_words = [t.strip() for t in raw_words if t.strip()]
+
+            if valid_words and any(any(ch.isalnum() for ch in w) for w in valid_words):
+                text = " ".join(valid_words).strip()
+                avg_conf = (
+                    round(sum(valid_word_confs) / (len(valid_word_confs) * 100.0), 4)
+                    if valid_word_confs
+                    else 0.85
+                )
+                return text, avg_conf
+        except Exception as data_err:
+            logger.debug(f"Tesseract image_to_data failed with PSM {psm}: {data_err}")
+
+        # Fallback to image_to_string if image_to_data fails or returns no tokens
+        try:
+            ocr_full = pytesseract.image_to_string(img, config=config_str).strip()
+            alnum_words = [w for w in ocr_full.split() if any(c.isalnum() for c in w)]
+            if alnum_words:
+                return ocr_full, 0.85
+        except Exception as str_err:
+            logger.debug(f"Tesseract image_to_string failed with PSM {psm}: {str_err}")
+
+        return "", 0.0
+
+    @classmethod
+    def _ocr_crop_with_fallback(
+        cls,
+        img: Image.Image,
+        primary_psm: int = 6,
+        fallback_psm: int = 11,
+        conf_threshold: float = 0.50,
+        engine_name: str = "tesseract",
+        enable_rotation: bool = True,
+        enable_micro_upscale: bool = True,
+        min_upscale_dim: int = 35,
+        target_upscale_dim: int = 80,
+    ) -> tuple[str, float, str]:
+        """
+        Executes OCR on an image crop using primary_psm. If primary_psm yields
+        no text or low confidence (< conf_threshold), automatically falls back
+        to fallback_psm (e.g. PSM 11 for sparse text in revision clouds).
+
+        If 0° OCR yields no text or suboptimal confidence (< 0.90), automatically
+        tests 90° vertical rotations (90° CCW, 270° CW, 180° inverted) to detect
+        rotated callouts, vertical margin notes, and vertical stamp annotations.
+
+        Applies micro-upscaling for small engineering notes (< 35px) to boost
+        Tesseract OCR accuracy.
+
+        Returns:
+            tuple[str, float, str]: (extracted_text, confidence, engine_name)
+        """
+        # Apply micro-upscaling for small engineering notes (< 35px)
+        if enable_micro_upscale:
+            img = cls._micro_upscale_crop(img, min_dim=min_upscale_dim, target_dim=target_upscale_dim)
+
+        # 1. Standard 0° unrotated pass
+        text_primary, conf_primary = cls._run_tesseract_psm(img, psm=primary_psm)
+
+        has_primary_text = bool(text_primary.strip()) and any(
+            any(ch.isalnum() for ch in w) for w in text_primary.split()
+        )
+
+        best_text = text_primary
+        best_conf = conf_primary
+        best_eng = engine_name
+
+        # Attempt fallback PSM at 0° if primary was empty/poor and fallback_psm differs
+        if fallback_psm != primary_psm and (not has_primary_text or conf_primary < conf_threshold):
+            text_fallback, conf_fallback = cls._run_tesseract_psm(img, psm=fallback_psm)
+            has_fallback_text = bool(text_fallback.strip()) and any(
+                any(ch.isalnum() for ch in w) for w in text_fallback.split()
+            )
+
+            if not has_primary_text and has_fallback_text:
+                best_text = text_fallback
+                best_conf = conf_fallback
+                best_eng = f"{engine_name}_psm{fallback_psm}"
+            elif has_primary_text and has_fallback_text:
+                words_fallback = len([w for w in text_fallback.split() if any(c.isalnum() for c in w)])
+                words_primary = len([w for w in text_primary.split() if any(c.isalnum() for c in w)])
+
+                if conf_fallback > conf_primary or (conf_fallback >= conf_primary and words_fallback > words_primary):
+                    best_text = text_fallback
+                    best_conf = conf_fallback
+                    best_eng = f"{engine_name}_psm{fallback_psm}"
+
+        has_best_text = bool(best_text.strip()) and any(
+            any(ch.isalnum() for ch in w) for w in best_text.split()
+        )
+        words_best_count = len([w for w in best_text.split() if any(c.isalnum() for c in w)])
+        is_good_conf_0deg = has_best_text and (words_best_count > 0) and (best_conf >= max(0.80, conf_threshold))
+
+        # Acceptable 0° OCR (has valid words and confidence >= max(0.80, conf_threshold)) -> Fast Path return
+        if is_good_conf_0deg:
+            return best_text, best_conf, best_eng
+
+        # 2. Rotated Text Pass for 90° Vertical Annotations & Callouts
+        if enable_rotation:
+            for angle in (90, 270, 180):
+                try:
+                    rot_img = img.rotate(angle, expand=True)
+                    if enable_micro_upscale:
+                        rot_img = cls._micro_upscale_crop(rot_img, min_dim=min_upscale_dim, target_dim=target_upscale_dim)
+                    rot_text_pri, rot_conf_pri = cls._run_tesseract_psm(rot_img, psm=primary_psm)
+                    has_rot_pri = bool(rot_text_pri.strip()) and any(
+                        any(ch.isalnum() for ch in w) for w in rot_text_pri.split()
+                    )
+
+                    rot_cand_text = rot_text_pri
+                    rot_cand_conf = rot_conf_pri
+                    rot_cand_eng = f"{engine_name}_rot{angle}"
+
+                    if (not has_rot_pri or rot_conf_pri < conf_threshold) and fallback_psm != primary_psm:
+                        rot_text_fb, rot_conf_fb = cls._run_tesseract_psm(rot_img, psm=fallback_psm)
+                        has_rot_fb = bool(rot_text_fb.strip()) and any(
+                            any(ch.isalnum() for ch in w) for w in rot_text_fb.split()
+                        )
+                        if not has_rot_pri and has_rot_fb:
+                            rot_cand_text = rot_text_fb
+                            rot_cand_conf = rot_conf_fb
+                            rot_cand_eng = f"{engine_name}_rot{angle}_psm{fallback_psm}"
+                        elif has_rot_pri and has_rot_fb and rot_conf_fb > rot_conf_pri:
+                            rot_cand_text = rot_text_fb
+                            rot_cand_conf = rot_conf_fb
+                            rot_cand_eng = f"{engine_name}_rot{angle}_psm{fallback_psm}"
+
+                    has_rot_cand = bool(rot_cand_text.strip()) and any(
+                        any(ch.isalnum() for ch in w) for w in rot_cand_text.split()
+                    )
+                    if not has_rot_cand:
+                        continue
+
+                    words_rot = len([w for w in rot_cand_text.split() if any(c.isalnum() for c in w)])
+                    words_best = len([w for w in best_text.split() if any(c.isalnum() for c in w)])
+
+                    if not has_best_text and has_rot_cand:
+                        best_text = rot_cand_text
+                        best_conf = rot_cand_conf
+                        best_eng = rot_cand_eng
+                        has_best_text = True
+                        logger.debug(f"Rotated text detection ({angle}°) rescued unreadable crop: '{best_text}' ({best_conf:.2f})")
+                        if rot_cand_conf >= 0.85:
+                            break
+                    elif has_best_text and has_rot_cand:
+                        # Prefer rotated if higher confidence, more valid words, or rescuing non-word noise
+                        if rot_cand_conf > best_conf + 0.10 or (rot_cand_conf >= best_conf and words_rot > words_best) or (words_rot > 0 and words_best == 0 and rot_cand_conf >= 0.40):
+                            best_text = rot_cand_text
+                            best_conf = rot_cand_conf
+                            best_eng = rot_cand_eng
+                            logger.debug(f"Rotated text detection ({angle}°) improved crop text: '{best_text}' ({best_conf:.2f})")
+                            if rot_cand_conf >= 0.85:
+                                break
+                except Exception as rot_err:
+                    logger.debug(f"Rotated OCR pass ({angle}°) failed: {rot_err}")
+
+        return best_text, best_conf, best_eng
+
+    def _process_single_region_ocr(
+        self,
+        p_obj: fitz.Page,
+        reg: Any,
+        p_idx: int,
+        page_envs: Any,
+        primary_psm: int = 6,
+        fallback_psm: int = 11,
+        psm_conf_threshold: float = 0.50,
+        enable_rotation: bool = True,
+        enable_micro_upscale: bool = True,
+        min_upscale_dim: int = 35,
+        target_upscale_dim: int = 80,
+    ) -> Optional[dict]:
+        """
+        Extracts, OCRs, filters, and cleans comment text for a single detected region.
+        Returns extracted comment dictionary or None if filtered out.
+        """
+        pad = 4.0
+        crop_rect = fitz.Rect(
+            max(0.0, reg.x0 - pad),
+            max(0.0, reg.y0 - pad),
+            min(p_obj.rect.width, reg.x1 + pad),
+            min(p_obj.rect.height, reg.y1 + pad),
+        )
+
+        # Convert visual crop_rect to unrotated clip for PyMuPDF text & annot APIs
+        if p_obj.rotation != 0:
+            crop_unrot = crop_rect * p_obj.derotation_matrix
+            unrot_clip = fitz.Rect(
+                min(crop_unrot.x0, crop_unrot.x1),
+                min(crop_unrot.y0, crop_unrot.y1),
+                max(crop_unrot.x0, crop_unrot.x1),
+                max(crop_unrot.y0, crop_unrot.y1),
+            )
+        else:
+            unrot_clip = crop_rect
+
+        # Strictly filter out Title Blocks and Review Status Stamps
+        if AnnotationDetectionServiceEnhanced._is_title_block_or_status_stamp(p_obj, crop_rect, envelopes=page_envs):
+            return None
+
+        raw_ocr_text = ""
+        ocr_conf = 0.95
+        ocr_engine = "native"
+
+        # 1. Check for native annotation content (FreeText callouts, Stamps, Notes)
+        try:
+            for annot in p_obj.annots():
+                if annot.rect.intersects(unrot_clip):
+                    c_text = (annot.info.get("content") or "").strip()
+                    if len(c_text) >= 3 and not (len(c_text) <= 2 and c_text.upper() in ["A", "B", "C", "D", "E", "F", "G", "H", "1", "2", "3", "4", "5", "6", "7", "8"]):
+                        raw_ocr_text = c_text
+                        ocr_conf = 0.99
+                        ocr_engine = "native_annot"
+                        break
+        except Exception:
+            raw_ocr_text = ""
+
+        # 2. Check for targeted colored spans (Red, Blue, or Green reviewer markup text)
+        if not raw_ocr_text:
+            try:
+                colored_spans_text = []
+                annot_text_dict = p_obj.get_text("dict", clip=unrot_clip)
+                for b in annot_text_dict.get("blocks", []):
+                    if b.get("type") == 0:
+                        for l in b.get("lines", []):
+                            for s in l.get("spans", []):
+                                txt = s.get("text", "").strip()
+                                if not txt:
+                                    continue
+                                color = s.get("color", 0)
+                                sr = (color >> 16) & 0xFF
+                                sg = (color >> 8) & 0xFF
+                                sb = color & 0xFF
+
+                                is_red = AnnotationDetectionServiceEnhanced._is_red_rgb(sr, sg, sb)
+                                is_blue = AnnotationDetectionServiceEnhanced._is_blue_rgb(sr, sg, sb)
+                                is_green = AnnotationDetectionServiceEnhanced._is_green_rgb(sr, sg, sb)
+
+                                if is_red or is_blue or is_green:
+                                    colored_spans_text.append(txt)
+
+                if colored_spans_text:
+                    raw_ocr_text = " ".join(colored_spans_text)
+                    ocr_conf = 0.98
+                    ocr_engine = "pymupdf_native"
+            except Exception:
+                raw_ocr_text = ""
+
+        # 3. Check for enclosed digital text inside revision clouds and redline markups
+        if not raw_ocr_text:
+            try:
+                enclosed_digital_text = p_obj.get_text("text", clip=unrot_clip).strip()
+                if enclosed_digital_text:
+                    clean_candidate = " ".join(enclosed_digital_text.split())
+                    cand_words = [w for w in clean_candidate.split() if any(c.isalnum() for c in w)]
+                    if len(cand_words) > 0 and not (len(clean_candidate) <= 2 and clean_candidate.upper() in [
+                        "A", "B", "C", "D", "E", "F", "G", "H", "1", "2", "3", "4", "5", "6", "7", "8", ".", "-"
+                    ]):
+                        raw_ocr_text = clean_candidate
+                        ocr_conf = 0.95
+                        ocr_engine = "pymupdf_digital"
+            except Exception:
+                raw_ocr_text = ""
+
+        # 4. Fall back to high-resolution OCR (for scanned drawings, clouds & handwriting)
+        if not raw_ocr_text and crop_rect.width > 2 and crop_rect.height > 2:
+            try:
+                zoom = 200.0 / 72.0
+                mat = fitz.Matrix(zoom, zoom)
+                pix = p_obj.get_pixmap(matrix=mat, clip=crop_rect)
+                if pix.width > 0 and pix.height > 0:
+                    img_bytes = pix.tobytes("png")
+                    pil_img = Image.open(io.BytesIO(img_bytes)).convert("RGB")
+                    np_img = np.array(pil_img)
+
+                    # Fast variance/contrast check: skip Tesseract if image lacks text contrast
+                    gray_arr = np.mean(np_img, axis=2)
+                    if float(np.std(gray_arr)) >= 6.0:
+                        crop_text, crop_conf, crop_eng = self._ocr_crop_with_fallback(
+                            pil_img,
+                            primary_psm=primary_psm,
+                            fallback_psm=fallback_psm,
+                            conf_threshold=psm_conf_threshold,
+                            engine_name="tesseract",
+                            enable_rotation=enable_rotation,
+                            enable_micro_upscale=enable_micro_upscale,
+                            min_upscale_dim=min_upscale_dim,
+                            target_upscale_dim=target_upscale_dim,
+                        )
+                        if crop_text:
+                            raw_ocr_text = crop_text
+                            ocr_conf = crop_conf
+                            ocr_engine = crop_eng
+
+                        # If still no text or low confidence, try color-isolated OCR if colored pixels exist
+                        if not raw_ocr_text or ocr_conf < psm_conf_threshold:
+                            nr = np_img[:, :, 0].astype(int)
+                            ng = np_img[:, :, 1].astype(int)
+                            nb = np_img[:, :, 2].astype(int)
+
+                            mask_red = (nr >= 120) & ((nr - np.maximum(ng, nb)) >= 24)
+                            mask_blue = (nb >= 110) & ((nb - np.maximum(nr, ng)) >= 24)
+                            mask_green = (ng >= 100) & ((ng - np.maximum(nr, nb)) >= 24)
+                            colored_mask = mask_red | mask_blue | mask_green
+
+                            if np.count_nonzero(colored_mask) >= 15:
+                                ocr_input_arr = np.full((np_img.shape[0], np_img.shape[1]), 255, dtype=np.uint8)
+                                ocr_input_arr[colored_mask] = 0
+                                ocr_input_pil = Image.fromarray(ocr_input_arr)
+
+                                iso_text, iso_conf, iso_eng = self._ocr_crop_with_fallback(
+                                    ocr_input_pil,
+                                    primary_psm=primary_psm,
+                                    fallback_psm=fallback_psm,
+                                    conf_threshold=psm_conf_threshold,
+                                    engine_name="tesseract_color_isolated",
+                                    enable_rotation=enable_rotation,
+                                    enable_micro_upscale=enable_micro_upscale,
+                                    min_upscale_dim=min_upscale_dim,
+                                    target_upscale_dim=target_upscale_dim,
+                                )
+                                if iso_text and (not raw_ocr_text or iso_conf > ocr_conf):
+                                    raw_ocr_text = iso_text
+                                    ocr_conf = iso_conf
+                                    ocr_engine = iso_eng
+            except Exception as ocr_err:
+                logger.debug(f"OCR failed for region {reg}: {ocr_err}")
+                raw_ocr_text = ""
+
+        # Filter out single/small letter fragments, noise, and title block boilerplate
+        clean_text_check = raw_ocr_text.strip().upper()
+        words = [w for w in clean_text_check.split() if any(c.isalnum() for c in w)]
+        det_conf = round(float(getattr(reg, "confidence", 0.90)), 4)
+        if len(words) == 0:
+            if det_conf >= 0.70:
+                failed_placeholder = "OCR Failed (Needs Manual Transcription)"
+                return {
+                    "page_number": p_idx + 1,
+                    "raw_text": failed_placeholder,
+                    "cleaned_text": failed_placeholder,
+                    "bbox": (reg.x0, reg.y0, reg.x1, reg.y1),
+                    "detection_confidence": det_conf,
+                    "ocr_confidence": 0.0,
+                    "classification_confidence": 0.0,
+                    "confidence": 0.0,
+                    "ocr_engine": "OCR Failed",
+                    "category_name": "Uncategorized",
+                    "label": reg.label,
+                    "status": "Flagged",
+                    "is_ocr_failed": True,
+                }
+            return None
+
+        if any(phrase in clean_text_check for phrase in AnnotationDetectionServiceEnhanced.TITLE_BLOCK_PHRASES):
+            return None
+        if re.match(r"^(BY\s+[A-Z0-9_]+|DATE\s+[0-9\/\-]+|EXP[\.\:\s]+[0-9\/\-]+)$", clean_text_check):
+            return None
+        tb_label_hits = sum(1 for label in AnnotationDetectionServiceEnhanced.TITLE_BLOCK_FIELD_LABELS if re.search(r"\b" + re.escape(label) + r"\b", clean_text_check))
+        if tb_label_hits >= 2:
+            return None
+        if len(clean_text_check) <= 2 and clean_text_check in [
+            "A", "B", "C", "D", "E", "F", "G", "H", "1", "2", "3", "4", "5", "6", "7", "8", ".", "-"
+        ]:
+            return None
+
+        cleaned_dto = self.text_cleaning_service.clean_text(raw_ocr_text)
+        final_text = cleaned_dto.cleaned_text or raw_ocr_text
+
+        return {
+            "page_number": p_idx + 1,
+            "raw_text": raw_ocr_text,
+            "cleaned_text": final_text,
+            "bbox": (reg.x0, reg.y0, reg.x1, reg.y1),
+            "detection_confidence": det_conf,
+            "ocr_confidence": ocr_conf,
+            "classification_confidence": 0.0,
+            "confidence": ocr_conf,
+            "ocr_engine": ocr_engine,
+            "label": reg.label,
+            "is_ocr_failed": False,
+        }
 
     @property
     def current_state(self) -> WorkflowState:
@@ -164,6 +682,17 @@ class ProcessingWorkflowEngine:
             # ── Step 4: OCR & Text Extraction on Detected Regions ─
             notify("OCR Engine", WorkflowState.OCR_PROCESSING, 70, f"Extracting whole comment text from detected markup regions.")
             
+            # Resolve OCR configuration parameters from AppConfig (Dynamic PSM, Micro-Upscaling, Parallel OCR)
+            ocr_settings = self._resolve_advanced_ocr_config()
+            primary_psm = ocr_settings["primary_psm"]
+            fallback_psm = ocr_settings["fallback_psm"]
+            psm_conf_threshold = ocr_settings["conf_threshold"]
+            enable_micro_upscale = ocr_settings["enable_micro_upscale"]
+            min_upscale_dim = ocr_settings["min_upscale_dim"]
+            target_upscale_dim = ocr_settings["target_upscale_dim"]
+            parallel_region_ocr = ocr_settings["parallel_region_ocr"]
+            max_region_workers = ocr_settings["max_region_workers"]
+
             extracted_comments_data = []
             if annotation_result and annotation_result.page_results:
                 try:
@@ -177,6 +706,7 @@ class ProcessingWorkflowEngine:
                         # Cache title block and review status stamp envelopes ONCE per page
                         page_envs = AnnotationDetectionServiceEnhanced._get_title_block_and_stamp_envelopes(p_obj)
                         
+                        candidate_regions = []
                         for reg in page_res.regions:
                             # Prioritize reviewer comments and colored markups (red, blue, green)
                             is_comment_markup = (
@@ -186,159 +716,64 @@ class ProcessingWorkflowEngine:
                                 "yellow" in reg.label.lower() or
                                 reg.label in ("native_annotation", "native_text_block", "native_freetext", "native_ink", "native_redline")
                             )
-                            if not is_comment_markup:
-                                continue
-                                
-                            pad = 4.0
-                            crop_rect = fitz.Rect(
-                                max(0.0, reg.x0 - pad),
-                                max(0.0, reg.y0 - pad),
-                                min(p_obj.rect.width, reg.x1 + pad),
-                                min(p_obj.rect.height, reg.y1 + pad)
-                            )
-                            
-                            # Convert visual crop_rect to unrotated clip for PyMuPDF text & annot APIs
-                            if p_obj.rotation != 0:
-                                crop_unrot = crop_rect * p_obj.derotation_matrix
-                                unrot_clip = fitz.Rect(
-                                    min(crop_unrot.x0, crop_unrot.x1),
-                                    min(crop_unrot.y0, crop_unrot.y1),
-                                    max(crop_unrot.x0, crop_unrot.x1),
-                                    max(crop_unrot.y0, crop_unrot.y1)
+                            if is_comment_markup:
+                                candidate_regions.append(reg)
+
+                        if not candidate_regions:
+                            continue
+
+                        if parallel_region_ocr and len(candidate_regions) > 1:
+                            # Multi-Comment Page: Parallel Region OCR execution across worker pool
+                            def _worker_task(item):
+                                reg_idx, reg = item
+                                try:
+                                    with fitz.open(path) as local_doc:
+                                        local_page = local_doc[p_idx]
+                                        res = self._process_single_region_ocr(
+                                            local_page,
+                                            reg,
+                                            p_idx,
+                                            page_envs,
+                                            primary_psm=primary_psm,
+                                            fallback_psm=fallback_psm,
+                                            psm_conf_threshold=psm_conf_threshold,
+                                            enable_rotation=True,
+                                            enable_micro_upscale=enable_micro_upscale,
+                                            min_upscale_dim=min_upscale_dim,
+                                            target_upscale_dim=target_upscale_dim,
+                                        )
+                                        return reg_idx, res
+                                except Exception as reg_exc:
+                                    logger.debug(f"Parallel OCR worker failed for region {reg}: {reg_exc}")
+                                    return reg_idx, None
+
+                            num_workers = min(max_region_workers, len(candidate_regions))
+                            with ThreadPoolExecutor(max_workers=num_workers) as pool:
+                                worker_results = list(pool.map(_worker_task, enumerate(candidate_regions)))
+
+                            # Maintain original region sequence
+                            for reg_idx, res_item in sorted(worker_results, key=lambda x: x[0]):
+                                if res_item is not None:
+                                    extracted_comments_data.append(res_item)
+                        else:
+                            # Sequential execution for single-comment or non-parallel mode
+                            for reg in candidate_regions:
+                                res_item = self._process_single_region_ocr(
+                                    p_obj,
+                                    reg,
+                                    p_idx,
+                                    page_envs,
+                                    primary_psm=primary_psm,
+                                    fallback_psm=fallback_psm,
+                                    psm_conf_threshold=psm_conf_threshold,
+                                    enable_rotation=True,
+                                    enable_micro_upscale=enable_micro_upscale,
+                                    min_upscale_dim=min_upscale_dim,
+                                    target_upscale_dim=target_upscale_dim,
                                 )
-                            else:
-                                unrot_clip = crop_rect
+                                if res_item is not None:
+                                    extracted_comments_data.append(res_item)
 
-                            # Strictly filter out Title Blocks and Review Status Stamps
-                            if AnnotationDetectionServiceEnhanced._is_title_block_or_status_stamp(p_obj, crop_rect, envelopes=page_envs):
-                                continue
-                                
-                            raw_ocr_text = ""
-                            
-                            # 1. Check for native annotation content (FreeText callouts, Stamps, Notes)
-                            try:
-                                for annot in p_obj.annots():
-                                    if annot.rect.intersects(unrot_clip):
-                                        c_text = (annot.info.get('content') or '').strip()
-                                        if len(c_text) >= 3 and not (len(c_text) <= 2 and c_text.upper() in ['A','B','C','D','E','F','G','H','1','2','3','4','5','6','7','8']):
-                                            raw_ocr_text = c_text
-                                            break
-                            except Exception:
-                                raw_ocr_text = ""
-
-                            # 2. Check for targeted colored spans (Red, Blue, or Green reviewer markup text)
-                            if not raw_ocr_text:
-                                try:
-                                    colored_spans_text = []
-                                    annot_text_dict = p_obj.get_text("dict", clip=unrot_clip)
-                                    for b in annot_text_dict.get("blocks", []):
-                                        if b.get("type") == 0:
-                                            for l in b.get("lines", []):
-                                                for s in l.get("spans", []):
-                                                    txt = s.get("text", "").strip()
-                                                    if not txt:
-                                                        continue
-                                                    color = s.get("color", 0)
-                                                    sr = (color >> 16) & 0xFF
-                                                    sg = (color >> 8) & 0xFF
-                                                    sb = color & 0xFF
-                                                    
-                                                    is_red = AnnotationDetectionServiceEnhanced._is_red_rgb(sr, sg, sb)
-                                                    is_blue = AnnotationDetectionServiceEnhanced._is_blue_rgb(sr, sg, sb)
-                                                    is_green = AnnotationDetectionServiceEnhanced._is_green_rgb(sr, sg, sb)
-                                                    
-                                                    if is_red or is_blue or is_green:
-                                                        colored_spans_text.append(txt)
-                                    
-                                    if colored_spans_text:
-                                        raw_ocr_text = " ".join(colored_spans_text)
-                                except Exception:
-                                    raw_ocr_text = ""
-
-                            # 3. Check for enclosed digital text inside revision clouds and redline markups
-                            if not raw_ocr_text:
-                                try:
-                                    enclosed_digital_text = p_obj.get_text("text", clip=unrot_clip).strip()
-                                    if enclosed_digital_text:
-                                        # Normalize multiple spaces and line breaks
-                                        clean_candidate = " ".join(enclosed_digital_text.split())
-                                        cand_words = [w for w in clean_candidate.split() if any(c.isalnum() for c in w)]
-                                        if len(cand_words) > 0 and not (len(clean_candidate) <= 2 and clean_candidate.upper() in [
-                                            'A', 'B', 'C', 'D', 'E', 'F', 'G', 'H', '1', '2', '3', '4', '5', '6', '7', '8', '.', '-'
-                                        ]):
-                                            raw_ocr_text = clean_candidate
-                                except Exception:
-                                    raw_ocr_text = ""
-
-                             # 4. Fall back to high-resolution OCR (for scanned drawings, clouds & handwriting)
-                            if not raw_ocr_text and crop_rect.width > 2 and crop_rect.height > 2:
-                                try:
-                                    zoom = 200.0 / 72.0
-                                    mat = fitz.Matrix(zoom, zoom)
-                                    pix = p_obj.get_pixmap(matrix=mat, clip=crop_rect)
-                                    if pix.width > 0 and pix.height > 0:
-                                        img_bytes = pix.tobytes("png")
-                                        pil_img = Image.open(io.BytesIO(img_bytes)).convert("RGB")
-                                        np_img = np.array(pil_img)
-                                        
-                                        # Fast variance/contrast check: skip Tesseract if image lacks text contrast
-                                        gray_arr = np.mean(np_img, axis=2)
-                                        if float(np.std(gray_arr)) >= 6.0:
-                                            # Single fast OCR pass with PSM 6
-                                            ocr_full = pytesseract.image_to_string(pil_img, config='--psm 6').strip()
-                                            if ocr_full and len([w for w in ocr_full.split() if any(c.isalnum() for c in w)]) > 0:
-                                                raw_ocr_text = ocr_full
-                                            else:
-                                                # Optional color-isolated OCR if colored pixels exist
-                                                nr = np_img[:, :, 0].astype(int)
-                                                ng = np_img[:, :, 1].astype(int)
-                                                nb = np_img[:, :, 2].astype(int)
-                                                
-                                                mask_red = (nr >= 120) & ((nr - np.maximum(ng, nb)) >= 24)
-                                                mask_blue = (nb >= 110) & ((nb - np.maximum(nr, ng)) >= 24)
-                                                mask_green = (ng >= 100) & ((ng - np.maximum(nr, nb)) >= 24)
-                                                colored_mask = mask_red | mask_blue | mask_green
-                                                
-                                                if np.count_nonzero(colored_mask) >= 15:
-                                                    ocr_input_arr = np.full((np_img.shape[0], np_img.shape[1]), 255, dtype=np.uint8)
-                                                    ocr_input_arr[colored_mask] = 0
-                                                    ocr_input_pil = Image.fromarray(ocr_input_arr)
-                                                    
-                                                    raw_ocr_text = pytesseract.image_to_string(ocr_input_pil, config='--psm 6').strip()
-                                except Exception as ocr_err:
-                                    logger.debug(f"OCR failed for region {reg}: {ocr_err}")
-                                    raw_ocr_text = ""
-                            
-                            # Filter out single/small letter fragments, noise, and title block boilerplate
-                            clean_text_check = raw_ocr_text.strip().upper()
-                            words = [w for w in clean_text_check.split() if any(c.isalnum() for c in w)]
-                            if len(words) == 0:
-                                continue
-                            if any(phrase in clean_text_check for phrase in AnnotationDetectionServiceEnhanced.TITLE_BLOCK_PHRASES):
-                                continue
-                            # Reject review stamp sign-off sub-lines like "BY BreKol", "DATE 2/5/2026", "EXP. 06/30/2026"
-                            if re.match(r'^(BY\s+[A-Z0-9_]+|DATE\s+[0-9\/\-]+|EXP[\.\:\s]+[0-9\/\-]+)$', clean_text_check):
-                                continue
-                            # Reject title block label clusters
-                            tb_label_hits = sum(1 for label in AnnotationDetectionServiceEnhanced.TITLE_BLOCK_FIELD_LABELS if re.search(r'\b' + re.escape(label) + r'\b', clean_text_check))
-                            if tb_label_hits >= 2:
-                                continue
-                            if len(clean_text_check) <= 2 and clean_text_check in [
-                                'A', 'B', 'C', 'D', 'E', 'F', 'G', 'H', '1', '2', '3', '4', '5', '6', '7', '8', '.', '-'
-                            ]:
-                                continue
-
-                            cleaned_dto = self.text_cleaning_service.clean_text(raw_ocr_text)
-                            final_text = cleaned_dto.cleaned_text or raw_ocr_text
-                            
-                            extracted_comments_data.append({
-                                "page_number": p_idx + 1,
-                                "raw_text": raw_ocr_text,
-                                "cleaned_text": final_text,
-                                "bbox": (reg.x0, reg.y0, reg.x1, reg.y1),
-                                "confidence": reg.confidence,
-                                "label": reg.label,
-                            })
                     pdf_doc.close()
                 except Exception as e:
                     logger.error(f"OCR processing failed: {e}")
@@ -375,10 +810,24 @@ class ProcessingWorkflowEngine:
                     same_text = (t == kt or t in kt or kt in t) and (abs(b[0] - kb[0]) < 60 and abs(b[1] - kb[1]) < 60)
                     if same_text or iou > 0.35 or containment > 0.60:
                         kept["bbox"] = (min(b[0], kb[0]), min(b[1], kb[1]), max(b[2], kb[2]), max(b[3], kb[3]))
-                        if len(item.get("cleaned_text", "")) > len(kept.get("cleaned_text", "")):
+                        item_is_failed = item.get("is_ocr_failed", False) or "OCR Failed" in str(item.get("raw_text", ""))
+                        kept_is_failed = kept.get("is_ocr_failed", False) or "OCR Failed" in str(kept.get("raw_text", ""))
+
+                        if kept_is_failed and not item_is_failed:
                             kept["raw_text"] = item["raw_text"]
                             kept["cleaned_text"] = item["cleaned_text"]
+                            kept["is_ocr_failed"] = False
+                            kept["ocr_engine"] = item.get("ocr_engine", "Tesseract OCR")
+                            kept["ocr_confidence"] = item.get("ocr_confidence", 0.0)
+                        elif not kept_is_failed and not item_is_failed:
+                            if len(item.get("cleaned_text", "")) > len(kept.get("cleaned_text", "")):
+                                kept["raw_text"] = item["raw_text"]
+                                kept["cleaned_text"] = item["cleaned_text"]
+
                         kept["confidence"] = max(kept["confidence"], item["confidence"])
+                        kept["detection_confidence"] = max(kept.get("detection_confidence", 0.0), item.get("detection_confidence", 0.0))
+                        if not kept.get("is_ocr_failed", False):
+                            kept["ocr_confidence"] = max(kept.get("ocr_confidence", 0.0), item.get("ocr_confidence", 0.0))
                         merged = True
                         break
                         
@@ -406,36 +855,67 @@ class ProcessingWorkflowEngine:
             notify("AI Classification", WorkflowState.AI_CLASSIFYING, 90, f"Classifying review comments with AI.")
             
             if extracted_comments_data:
-                texts_to_classify = [
-                    item.get("cleaned_text") or item.get("raw_text", "")
-                    for item in extracted_comments_data
+                valid_items = [
+                    item for item in extracted_comments_data
+                    if not item.get("is_ocr_failed") and "OCR Failed" not in str(item.get("raw_text", ""))
                 ]
-                try:
-                    batch_dto = self.classification_service.classify_batch(
-                        texts_to_classify,
-                        drawing_id=drawing_id,
-                        department_name=effective_dept_id,
-                    )
-                    class_results = batch_dto.results
-                    for item, class_res in zip(extracted_comments_data, class_results):
-                        item["category_name"] = class_res.primary_category.category_name
-                        if class_res.primary_category.confidence > 0:
-                            item["confidence"] = round((item["confidence"] + class_res.primary_category.confidence) / 2.0, 2)
-                except Exception as batch_err:
-                    logger.warning(f"Batched classification failed, falling back to item-by-item: {batch_err}")
-                    for item in extracted_comments_data:
-                        try:
-                            text_to_classify = item.get("cleaned_text") or item.get("raw_text", "")
-                            class_res = self.classification_service.classify_comment(
-                                text_to_classify,
-                                department_name=effective_dept_id,
-                            )
+                failed_items = [
+                    item for item in extracted_comments_data
+                    if item.get("is_ocr_failed") or "OCR Failed" in str(item.get("raw_text", ""))
+                ]
+                for item in failed_items:
+                    item["category_name"] = "Uncategorized"
+                    item["classification_confidence"] = 0.0
+                    item["fallback_used"] = False
+                    item["classification_method"] = "manual_transcription_required"
+                    item["confidence"] = 0.0
+                    item["ocr_confidence"] = 0.0
+
+                if valid_items:
+                    texts_to_classify = [
+                        item.get("cleaned_text") or item.get("raw_text", "")
+                        for item in valid_items
+                    ]
+                    try:
+                        batch_dto = self.classification_service.classify_batch(
+                            texts_to_classify,
+                            drawing_id=drawing_id,
+                            department_name=effective_dept_id,
+                        )
+                        class_results = batch_dto.results
+                        for item, class_res in zip(valid_items, class_results):
                             item["category_name"] = class_res.primary_category.category_name
-                            if class_res.primary_category.confidence > 0:
-                                item["confidence"] = round((item["confidence"] + class_res.primary_category.confidence) / 2.0, 2)
-                        except Exception as class_err:
-                            logger.debug(f"Classification failed for '{item.get('raw_text')}': {class_err}")
-                            item["category_name"] = "Uncategorized"
+                            cat_conf = round(float(class_res.primary_category.confidence), 4)
+                            item["classification_confidence"] = cat_conf
+                            item["fallback_used"] = getattr(class_res, "fallback_used", False)
+                            item["classification_method"] = getattr(class_res, "classification_method", "ai_model")
+                            det_c = float(item.get("detection_confidence", 0.90))
+                            ocr_c = float(item.get("ocr_confidence", 0.90))
+                            # Balanced composite confidence retaining true separation
+                            item["confidence"] = round(min(0.99, det_c * 0.20 + ocr_c * 0.40 + cat_conf * 0.40), 2)
+                    except Exception as batch_err:
+                        logger.warning(f"Batched classification failed, falling back to item-by-item: {batch_err}")
+                        for item in valid_items:
+                            try:
+                                text_to_classify = item.get("cleaned_text") or item.get("raw_text", "")
+                                class_res = self.classification_service.classify_comment(
+                                    text_to_classify,
+                                    department_name=effective_dept_id,
+                                )
+                                item["category_name"] = class_res.primary_category.category_name
+                                cat_conf = round(float(class_res.primary_category.confidence), 4)
+                                item["classification_confidence"] = cat_conf
+                                item["fallback_used"] = getattr(class_res, "fallback_used", False)
+                                item["classification_method"] = getattr(class_res, "classification_method", "ai_model")
+                                det_c = float(item.get("detection_confidence", 0.90))
+                                ocr_c = float(item.get("ocr_confidence", 0.90))
+                                item["confidence"] = round(min(0.99, det_c * 0.20 + ocr_c * 0.40 + cat_conf * 0.40), 2)
+                            except Exception as class_err:
+                                logger.debug(f"Classification failed for '{item.get('raw_text')}': {class_err}")
+                                item["category_name"] = "Uncategorized"
+                                item["classification_confidence"] = 0.0
+                                item["fallback_used"] = True
+                                item["classification_method"] = "error_fallback"
 
             # ── Step 6: Database Persistence ─────────────────────
             notify("Data Persistence", WorkflowState.PERSISTING, 95, f"Saving drawing records to SQLite database.")
@@ -455,17 +935,45 @@ class ProcessingWorkflowEngine:
                         assigned_cid = f"CMT-{dwg_suffix}-P{p_num}-{seq:02d}"
 
                         conf = c_item.get("confidence", 0.0)
+                        det_c = float(c_item.get("detection_confidence", conf))
+                        ocr_c = float(c_item.get("ocr_confidence", conf))
+                        cat_c = float(c_item.get("classification_confidence", conf))
+                        fb_used = bool(c_item.get("fallback_used", False))
+                        class_m = str(c_item.get("classification_method", "ai_model"))
+                        c_text = c_item.get("cleaned_text") or c_item.get("raw_text", "")
+
                         auto_approve = True
                         auto_threshold = 0.85
                         try:
-                            from src.config import get_config
-                            cfg = get_config()
-                            auto_approve = getattr(cfg.ai, "auto_approve_high_confidence", True)
-                            auto_threshold = getattr(cfg.ai, "auto_approve_threshold", 0.85)
+                            cfg = self.config
+                            if cfg is None:
+                                from src.config import get_config
+                                cfg = get_config()
+                            if cfg and hasattr(cfg, "ai"):
+                                auto_approve = getattr(cfg.ai, "auto_approve_high_confidence", True)
+                                auto_threshold = getattr(cfg.ai, "auto_approve_threshold", 0.85)
                         except Exception:
                             pass
 
-                        initial_status = "Approved" if (auto_approve and conf >= auto_threshold) else "Pending"
+                        from src.services.auto_approval_policy import evaluate_auto_approval
+                        should_approve, approve_reason = evaluate_auto_approval(
+                            ocr_confidence=ocr_c,
+                            classification_confidence=cat_c,
+                            text=c_text,
+                            fallback_used=fb_used,
+                            classification_method=class_m,
+                            auto_approve_enabled=auto_approve,
+                            threshold=auto_threshold,
+                        )
+
+                        is_failed_cmt = (
+                            c_item.get("is_ocr_failed", False) or
+                            "OCR Failed" in str(c_item.get("raw_text", ""))
+                        )
+                        if is_failed_cmt:
+                            initial_status = "Flagged"
+                        else:
+                            initial_status = "Approved" if should_approve else "Pending"
 
                         saved_c = self.comment_repo.save_comment(
                             drawing_id=drawing_id,
@@ -473,7 +981,13 @@ class ProcessingWorkflowEngine:
                             raw_text=c_item["raw_text"],
                             cleaned_text=c_item.get("cleaned_text", ""),
                             bbox=c_item["bbox"],
-                            confidence=conf,
+                            confidence=float(conf),
+                            detection_confidence=det_c,
+                            ocr_confidence=ocr_c,
+                            classification_confidence=cat_c,
+                            classification_method=class_m,
+                            fallback_used=fb_used,
+                            ocr_engine=c_item.get("ocr_engine", "OCR Failed" if is_failed_cmt else "Tesseract OCR"),
                             category_name=c_item.get("category_name", "Uncategorized"),
                             department_id=effective_dept_id,
                             label=c_item.get("label", "comment_red"),
@@ -490,7 +1004,7 @@ class ProcessingWorkflowEngine:
                                     reviewer_name="AI Auto-Approval",
                                     old_value="Pending",
                                     new_value="Approved",
-                                    notes=f"Auto-approved by AI (Confidence: {int(conf * 100)}%)",
+                                    notes=f"Auto-approved by AI ({approve_reason})",
                                 )
                             except Exception as audit_err:
                                 logger.debug(f"Auto-approve audit log error: {audit_err}")

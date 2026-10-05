@@ -50,17 +50,23 @@ class _CommentAdapter:
     """Lightweight adapter that wraps comment dicts for BBoxItem compatibility."""
     def __init__(self, comment: Union[Dict[str, Any], Any]) -> None:
         if isinstance(comment, dict):
-            self.id         = comment.get("id", "")
-            self.status     = comment.get("status", "Pending")
-            self.ocr_text   = comment.get("ocr_text", "")
-            self.label      = comment.get("label", "comment_red")
-            self.confidence = comment.get("confidence", 0.0)
+            self.id                       = comment.get("id", "")
+            self.status                   = comment.get("status", "Pending")
+            self.ocr_text                 = comment.get("ocr_text", "")
+            self.label                    = comment.get("label", "comment_red")
+            self.confidence               = comment.get("confidence", 0.0)
+            self.detection_confidence     = comment.get("detection_confidence", 0.0)
+            self.ocr_confidence           = comment.get("ocr_confidence", 0.0)
+            self.classification_confidence= comment.get("classification_confidence", 0.0)
         else:
-            self.id         = getattr(comment, "id", "")
-            self.status     = getattr(comment, "status", "Pending")
-            self.ocr_text   = getattr(comment, "ocr_text", "")
-            self.label      = getattr(comment, "label", "comment_red")
-            self.confidence = getattr(comment, "confidence", 0.0)
+            self.id                       = getattr(comment, "id", "")
+            self.status                   = getattr(comment, "status", "Pending")
+            self.ocr_text                 = getattr(comment, "ocr_text", "")
+            self.label                    = getattr(comment, "label", "comment_red")
+            self.confidence               = getattr(comment, "confidence", 0.0)
+            self.detection_confidence     = getattr(comment, "detection_confidence", 0.0)
+            self.ocr_confidence           = getattr(comment, "ocr_confidence", 0.0)
+            self.classification_confidence= getattr(comment, "classification_confidence", 0.0)
 
 
 def _get(c: Union[Dict[str, Any], Any], field: str, default: Any = "") -> Any:
@@ -601,9 +607,33 @@ class HumanReviewPage(QWidget):
         edit_lay.addLayout(cat_row)
 
         conf_row = QHBoxLayout()
-        self._conf_lbl = QLabel("Confidence: —")
-        self._conf_lbl.setObjectName("SubCaption")
-        conf_row.addWidget(self._conf_lbl)
+        self._ocr_conf_lbl = QLabel("OCR: —")
+        self._ocr_conf_lbl.setStyleSheet(
+            "color: #38BDF8; font-family: 'Cascadia Code'; font-size: 11px; font-weight: bold; "
+            "background: #0284C722; padding: 2px 7px; border-radius: 4px; border: 1px solid #38BDF844;"
+        )
+        self._ocr_conf_lbl.setToolTip("OCR Text Recognition Confidence")
+        conf_row.addWidget(self._ocr_conf_lbl)
+
+        self._cat_conf_lbl = QLabel("Category: —")
+        self._cat_conf_lbl.setStyleSheet(
+            "color: #A78BFA; font-family: 'Cascadia Code'; font-size: 11px; font-weight: bold; "
+            "background: #7C3AED22; padding: 2px 7px; border-radius: 4px; border: 1px solid #A78BFA44;"
+        )
+        self._cat_conf_lbl.setToolTip("AI Classification Confidence")
+        conf_row.addWidget(self._cat_conf_lbl)
+
+        self._method_badge = QLabel("🤖 AI Model")
+        self._method_badge.setStyleSheet(
+            "color: #818CF8; font-family: 'Segoe UI'; font-size: 11px; font-weight: bold; "
+            "background: #1E1B4B; padding: 2px 7px; border-radius: 4px; border: 1px solid #4338CA;"
+        )
+        self._method_badge.setToolTip("DistilBERT AI Classification Method")
+        conf_row.addWidget(self._method_badge)
+
+        # Backwards compatibility alias
+        self._conf_lbl = self._cat_conf_lbl
+
         conf_row.addStretch()
         self._cat_badge = CategoryBadge("")
         conf_row.addWidget(self._cat_badge)
@@ -726,6 +756,29 @@ class HumanReviewPage(QWidget):
 
     # ── Canvas / comment helpers ──────────────────────────────────
 
+    def _update_method_badge(self, method: str, fallback_used: bool = False) -> None:
+        """Update the method badge text, tooltip, and styling."""
+        low_val = str(method or "").lower()
+        if "transcription" in low_val:
+            lbl, col, bg, border, tip = "⚠️ Needs Transc.", "#F87171", "#3D1A1A", "#7F1D1D", "Manual transcription required"
+        elif "error" in low_val:
+            lbl, col, bg, border, tip = "⚠️ Fallback", "#F87171", "#3D1A1A", "#7F1D1D", "Error fallback classification"
+        elif "manual" in low_val or "human" in low_val:
+            lbl, col, bg, border, tip = "✍️ Manual", "#34D399", "#064E3B", "#047857", "Manually classified / verified by reviewer"
+        elif "fallback" in low_val or fallback_used:
+            lbl, col, bg, border, tip = "📋 Rule Fallback", "#FBBF24", "#3D2E0A", "#78350F", "Rule-based fallback method used (AI low confidence or unavailable)"
+        elif "rule" in low_val:
+            lbl, col, bg, border, tip = "⚡ Rule-Based", "#F59E0B", "#2A1F05", "#B45309", "Rule-based keyword classification"
+        else:
+            lbl, col, bg, border, tip = "🤖 AI Model", "#818CF8", "#1E1B4B", "#4338CA", "DistilBERT AI Model classification"
+
+        self._method_badge.setText(lbl)
+        self._method_badge.setToolTip(tip)
+        self._method_badge.setStyleSheet(
+            f"color: {col}; font-family: 'Segoe UI'; font-size: 11px; font-weight: bold; "
+            f"background: {bg}; padding: 2px 7px; border-radius: 4px; border: 1px solid {border};"
+        )
+
     def _on_category_changed(self, new_cat: str) -> None:
         if not new_cat:
             return
@@ -736,16 +789,27 @@ class HumanReviewPage(QWidget):
             old_cat = _get(c, "category", "")
             if isinstance(c, dict):
                 c["category"] = new_cat
+                c["classification_method"] = "manual"
+                c["fallback_used"] = False
             else:
                 setattr(c, "category", new_cat)
+                setattr(c, "classification_method", "manual")
+                setattr(c, "fallback_used", False)
 
             for ac in getattr(self, "_all_comments", []):
                 if _get(ac, "id") == cid:
                     if isinstance(ac, dict):
                         ac["category"] = new_cat
+                        ac["classification_method"] = "manual"
+                        ac["fallback_used"] = False
                     else:
                         setattr(ac, "category", new_cat)
+                        setattr(ac, "classification_method", "manual")
+                        setattr(ac, "fallback_used", False)
                     break
+
+            if hasattr(self, "_method_badge"):
+                self._update_method_badge("manual", False)
 
             if self._controller and cid and not cid.startswith("C-") and old_cat != new_cat:
                 self._controller.update_comment_category(cid, new_cat)
@@ -927,7 +991,8 @@ class HumanReviewPage(QWidget):
             self._prog_bar.setValue(0)
             self._comment_id_lbl.setText("")
             self._ocr_edit.setPlainText("")
-            self._conf_lbl.setText("Confidence: —")
+            self._ocr_conf_lbl.setText("OCR: —")
+            self._cat_conf_lbl.setText("Category: —")
             self._cat_badge.set_category("")
             if hasattr(self, "_auto_approved_badge"):
                 self._auto_approved_badge.hide()
@@ -969,7 +1034,21 @@ class HumanReviewPage(QWidget):
         self._cat_badge.set_category(category)
 
         confidence = _get(c, "confidence", 0.0)
-        self._conf_lbl.setText(f"Confidence: {int(confidence * 100)}%")
+        ocr_conf = _get(c, "ocr_confidence", None)
+        cls_conf = _get(c, "classification_confidence", None)
+        if ocr_conf is None or float(ocr_conf) <= 0.0:
+            ocr_conf = confidence
+        if cls_conf is None or float(cls_conf) <= 0.0:
+            cls_conf = confidence
+
+        self._ocr_conf_lbl.setText(f"OCR: {int(float(ocr_conf) * 100)}%")
+        self._cat_conf_lbl.setText(f"Category: {int(float(cls_conf) * 100)}%")
+
+        method = _get(c, "classification_method", "ai_model") or "ai_model"
+        fallback_used = bool(_get(c, "fallback_used", False))
+        if hasattr(self, "_method_badge"):
+            self._update_method_badge(method, fallback_used)
+
         cur_status = self._statuses.get(cid, _get(c, "status", "Pending"))
         self._status_chip.set_status(cur_status)
 

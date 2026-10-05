@@ -455,6 +455,9 @@ class AnnotationDetectionServiceEnhanced:
                     ir_raw = fitz.Rect(ibox)
                     ir = ir_raw * rot_mat if page.rotation != 0 else ir_raw
                     ir_norm = fitz.Rect(min(ir.x0, ir.x1), min(ir.y0, ir.y1), max(ir.x0, ir.x1), max(ir.y0, ir.y1))
+                    # Ignore large page background images or full-page scans
+                    if ir_norm.width > pw * 0.35 or ir_norm.height > ph * 0.35:
+                        continue
                     img_item = (ir_norm, True)
                     if ir_norm.x0 < pw * 0.45 and ir_norm.y0 < ph * 0.45:
                         corner_rects["top_left"].append(img_item)
@@ -464,6 +467,7 @@ class AnnotationDetectionServiceEnhanced:
                         corner_rects["bottom_left"].append(img_item)
                     if ir_norm.x1 > pw * 0.55 and ir_norm.y1 > ph * 0.55:
                         corner_rects["bottom_right"].append(img_item)
+
         except Exception:
             pass
 

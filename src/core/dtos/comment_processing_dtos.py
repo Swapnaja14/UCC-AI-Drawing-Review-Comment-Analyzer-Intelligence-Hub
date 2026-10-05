@@ -27,3 +27,23 @@ class TextCleaningResultDTO:
     cleaned_comments: List[CleanedCommentDTO]
     duplicates_removed: int
     processing_time_ms: float
+
+
+@dataclass
+class ExtractedCommentDTO:
+    """Comment extracted from a drawing with disentangled multi-stage confidences."""
+    page_number: int
+    raw_text: str
+    cleaned_text: str
+    bbox: tuple[float, float, float, float]
+    detection_confidence: float = 0.0
+    ocr_confidence: float = 0.0
+    classification_confidence: float = 0.0
+    confidence: float = 0.0
+    category_name: str = "Uncategorized"
+    label: str = "comment_red"
+    status: str = "Pending"
+    ocr_engine: str = "tesseract"
+    fallback_used: bool = False
+    classification_method: str = "ai_model"
+

@@ -333,6 +333,7 @@ class AppController(QObject):
             classification_service=self.classification_service,
             audit_repo=self.audit_repo,
             processing_run_repo=self.processing_run_repo,
+            config=self.config,
         )
 
         # ── In-session state ──────────────────────────────────────

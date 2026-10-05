@@ -152,6 +152,24 @@ class DatabaseEngine:
                 if columns and "department_id" not in columns:
                     logger.info("Migrating database: adding 'department_id' column to 'comments' table")
                     conn.execute(text("ALTER TABLE comments ADD COLUMN department_id VARCHAR(50);"))
+                if columns and "detection_confidence" not in columns:
+                    logger.info("Migrating database: adding 'detection_confidence' column to 'comments' table")
+                    conn.execute(text("ALTER TABLE comments ADD COLUMN detection_confidence FLOAT DEFAULT 0.0;"))
+                if columns and "ocr_confidence" not in columns:
+                    logger.info("Migrating database: adding 'ocr_confidence' column to 'comments' table")
+                    conn.execute(text("ALTER TABLE comments ADD COLUMN ocr_confidence FLOAT DEFAULT 0.0;"))
+                if columns and "classification_confidence" not in columns:
+                    logger.info("Migrating database: adding 'classification_confidence' column to 'comments' table")
+                    conn.execute(text("ALTER TABLE comments ADD COLUMN classification_confidence FLOAT DEFAULT 0.0;"))
+                if columns and "classification_method" not in columns:
+                    logger.info("Migrating database: adding 'classification_method' column to 'comments' table")
+                    conn.execute(text("ALTER TABLE comments ADD COLUMN classification_method VARCHAR(50) DEFAULT 'ai_model';"))
+                if columns and "fallback_used" not in columns:
+                    logger.info("Migrating database: adding 'fallback_used' column to 'comments' table")
+                    conn.execute(text("ALTER TABLE comments ADD COLUMN fallback_used BOOLEAN DEFAULT 0;"))
+                if columns and "ocr_engine" not in columns:
+                    logger.info("Migrating database: adding 'ocr_engine' column to 'comments' table")
+                    conn.execute(text("ALTER TABLE comments ADD COLUMN ocr_engine VARCHAR(50) DEFAULT 'Tesseract OCR';"))
 
                 # Check columns in drawings table
                 dwg_result = conn.execute(text("PRAGMA table_info(drawings);"))
@@ -917,6 +935,12 @@ class CommentRepository:
         raw_text: str,
         bbox: tuple[float, float, float, float],
         confidence: float = 0.0,
+        detection_confidence: float = 0.0,
+        ocr_confidence: float = 0.0,
+        classification_confidence: float = 0.0,
+        classification_method: str = "ai_model",
+        fallback_used: bool = False,
+        ocr_engine: str = "Tesseract OCR",
         category_id: Optional[str] = None,
         category_name: Optional[str] = "Uncategorized",
         department_id: Optional[str] = None,
@@ -927,7 +951,15 @@ class CommentRepository:
         label: str = "comment_red",
         comment_id: Optional[str] = None,
     ) -> Dict[str, Any]:
-        """Persist a single extracted comment."""
+        """Persist a single extracted comment with separated confidence scores and model provenance."""
+        # Backward-compatible fallbacks if specific confidences not supplied
+        if detection_confidence == 0.0 and confidence > 0.0:
+            detection_confidence = confidence
+        if ocr_confidence == 0.0 and confidence > 0.0:
+            ocr_confidence = confidence
+        if classification_confidence == 0.0 and confidence > 0.0:
+            classification_confidence = confidence
+
         with self._db.get_session() as session:
             if not comment_id:
                 count = (
@@ -959,6 +991,12 @@ class CommentRepository:
                 cleaned_text=cleaned_text,
                 category_name=category_name,
                 confidence=confidence,
+                detection_confidence=detection_confidence,
+                ocr_confidence=ocr_confidence,
+                classification_confidence=classification_confidence,
+                classification_method=classification_method,
+                fallback_used=fallback_used,
+                ocr_engine=ocr_engine,
                 status=status,
                 label=label,
                 bbox_x0=bbox[0],
@@ -1166,6 +1204,8 @@ class CommentRepository:
 
             row.category_name = new_category
             row.is_verified_by_human = True
+            row.classification_method = "manual"
+            row.fallback_used = False
             row.updated_at = datetime.now(timezone.utc)
 
             audit_entry = AuditLogModel(
@@ -1739,7 +1779,13 @@ def _comment_to_dict(c: CommentModel) -> Dict[str, Any]:
         "department_id":        c.department_id,
         "department_name":      c.department_name,
         "user_id":              c.user_id,
-        "confidence":           c.confidence,
+        "confidence":                c.confidence,
+        "detection_confidence":      getattr(c, "detection_confidence", 0.0) or 0.0,
+        "ocr_confidence":            getattr(c, "ocr_confidence", 0.0) or 0.0,
+        "classification_confidence": getattr(c, "classification_confidence", 0.0) or 0.0,
+        "classification_method":     getattr(c, "classification_method", "ai_model") or "ai_model",
+        "fallback_used":             bool(getattr(c, "fallback_used", False)),
+        "ocr_engine":                getattr(c, "ocr_engine", "Tesseract OCR") or "Tesseract OCR",
         "status":               c.status,
         "label":                getattr(c, "label", "comment_red") or "comment_red",
         "bbox":                 (c.bbox_x0, c.bbox_y0, c.bbox_x1, c.bbox_y1),
