@@ -32,7 +32,12 @@ from PySide6.QtGui import QFont, QStandardItemModel, QStandardItem, QColor
 from PySide6.QtCore import Qt, QSortFilterProxyModel, Signal, QModelIndex
 
 from app import mock_data as md
-from app.components.comment_table import ConfidenceDelegate, StatusDelegate
+from app.components.comment_table import (
+    ConfidenceDelegate,
+    StatusDelegate,
+    EngineDelegate,
+    PageDelegate,
+)
 from app.components.search_bar import SearchBar
 from src.services.text_cleaning_service import TextCleaningService
 from src.core.dtos.comment_processing_dtos import CleanedCommentDTO, CorrectionDTO
@@ -231,7 +236,7 @@ class OcrResultsPage(QWidget):
         
         self._status_proxy = QSortFilterProxyModel()
         self._status_proxy.setSourceModel(self._model)
-        self._status_proxy.setFilterKeyColumn(3)
+        self._status_proxy.setFilterKeyColumn(6)
         
         self._proxy = QSortFilterProxyModel()
         self._proxy.setSourceModel(self._status_proxy)
@@ -247,16 +252,23 @@ class OcrResultsPage(QWidget):
         self._table.horizontalHeader().setStretchLastSection(True)
         self._table.verticalHeader().hide()
         self._table.setShowGrid(False)
-        self._table.setItemDelegateForColumn(2, ConfidenceDelegate(self._table))
-        self._table.setItemDelegateForColumn(3, StatusDelegate(self._table))
+        self._table.setItemDelegateForColumn(1, PageDelegate(self._table))
+        self._table.setItemDelegateForColumn(4, ConfidenceDelegate(self._table))
+        self._table.setItemDelegateForColumn(5, EngineDelegate(self._table))
+        self._table.setItemDelegateForColumn(6, StatusDelegate(self._table))
 
         hdr = self._table.horizontalHeader()
-        hdr.setSectionResizeMode(0, QHeaderView.ResizeMode.ResizeToContents)
-        hdr.setSectionResizeMode(1, QHeaderView.ResizeMode.Stretch)
-        hdr.setSectionResizeMode(2, QHeaderView.ResizeMode.Fixed)
-        self._table.setColumnWidth(2, 130)
-        hdr.setSectionResizeMode(3, QHeaderView.ResizeMode.Fixed)
-        self._table.setColumnWidth(3, 120)
+        hdr.setSectionResizeMode(0, QHeaderView.ResizeMode.ResizeToContents) # Comment ID
+        hdr.setSectionResizeMode(1, QHeaderView.ResizeMode.Fixed)            # Page
+        self._table.setColumnWidth(1, 75)
+        hdr.setSectionResizeMode(2, QHeaderView.ResizeMode.Stretch)          # OCR Text
+        hdr.setSectionResizeMode(3, QHeaderView.ResizeMode.ResizeToContents) # BBox (X, Y, W, H)
+        hdr.setSectionResizeMode(4, QHeaderView.ResizeMode.Fixed)            # OCR Conf.
+        self._table.setColumnWidth(4, 125)
+        hdr.setSectionResizeMode(5, QHeaderView.ResizeMode.Fixed)            # Engine
+        self._table.setColumnWidth(5, 120)
+        hdr.setSectionResizeMode(6, QHeaderView.ResizeMode.Fixed)            # Status
+        self._table.setColumnWidth(6, 115)
 
         # Connect row click & double click to jump to Human Review
         self._table.clicked.connect(self._on_table_clicked)
@@ -379,9 +391,9 @@ class OcrResultsPage(QWidget):
     # ── Model builder ─────────────────────────────────────────────
 
     def _build_model(self) -> QStandardItemModel:
-        model = QStandardItemModel(0, 4)
+        model = QStandardItemModel(0, 7)
         model.setHorizontalHeaderLabels(
-            ["Comment ID", "OCR Text", "Confidence", "Status"]
+            ["Comment ID", "Page", "OCR Text", "BBox (X, Y, W, H)", "OCR Conf.", "Engine", "Status"]
         )
         for c in self._comments:
             self._append_row(c, model)
@@ -392,17 +404,64 @@ class OcrResultsPage(QWidget):
         c: Union[Dict[str, Any], Any],
         model: Optional[QStandardItemModel] = None,
     ) -> None:
-        """Append a single comment row to the model."""
+        """Append a single comment row with Page, BBox, and Engine telemetry to the model."""
         if model is None:
             model = self._model
 
         cid        = _get(c, "id", "")
-        ocr_text   = _get(c, "ocr_text", "")
-        confidence = _get(c, "confidence", 0.0)
+        ocr_text   = _get(c, "ocr_text", "") or _get(c, "cleaned_text", "") or _get(c, "raw_text", "")
+        ocr_conf   = _get(c, "ocr_confidence", None)
+        if ocr_conf is None:
+            ocr_conf = _get(c, "confidence", 0.0)
+        confidence = float(ocr_conf)
         status     = _get(c, "status", "Pending")
         drawing_id = _get(c, "drawing_id", "")
         drawing_no = _get(c, "drawing_no", "")
 
+        # Page extraction
+        raw_p = _get(c, "page_number", None)
+        if raw_p is None:
+            raw_p = _get(c, "page", 1)
+        try:
+            page_val = int(raw_p)
+        except Exception:
+            page_val = 1
+        page_str = str(page_val)
+
+        # Engine extraction & attribution
+        engine_str = _get(c, "ocr_engine", "")
+        if not engine_str:
+            engine_str = "Tesseract OCR"
+
+        # Bounding box & spatial telemetry (X, Y, W, H)
+        raw_bbox = _get(c, "bbox", None)
+        if not raw_bbox:
+            bx0 = _get(c, "bbox_x0", 0.0)
+            by0 = _get(c, "bbox_y0", 0.0)
+            bx1 = _get(c, "bbox_x1", 0.0)
+            by1 = _get(c, "bbox_y1", 0.0)
+            raw_bbox = (bx0, by0, bx1, by1)
+
+        x, y, w, h = 0.0, 0.0, 0.0, 0.0
+        if raw_bbox and isinstance(raw_bbox, (list, tuple)) and len(raw_bbox) == 4:
+            b0, b1, b2, b3 = float(raw_bbox[0]), float(raw_bbox[1]), float(raw_bbox[2]), float(raw_bbox[3])
+            is_mock = str(cid).startswith("C-")
+            if is_mock:
+                # Mock format: (x, y, w, h)
+                x, y, w, h = b0, b1, b2, b3
+            else:
+                # Pipeline / Database format: (x0, y0, x1, y1)
+                x = b0
+                y = b1
+                w = max(0.0, b2 - b0)
+                h = max(0.0, b3 - b1)
+
+        if max(x, y, w, h) <= 1.0 and (x > 0 or y > 0 or w > 0 or h > 0):
+            bbox_str = f"[{x:.2f}, {y:.2f}, {w:.2f}, {h:.2f}]"
+        else:
+            bbox_str = f"[{int(round(x))}, {int(round(y))}, {int(round(w))}, {int(round(h))}]"
+
+        # 0. Comment ID
         id_item = QStandardItem(cid)
         id_item.setFont(QFont("Cascadia Code", 12))
         id_item.setForeground(QColor("#38BDF8"))
@@ -411,21 +470,60 @@ class OcrResultsPage(QWidget):
         id_item.setToolTip(tooltip)
         id_item.setEditable(False)
 
+        # 1. Page
+        page_item = QStandardItem(page_str)
+        page_item.setToolTip(f"Drawing Page {page_str}")
+        page_item.setEditable(False)
+
+        # 2. OCR Text
         text_item = QStandardItem(ocr_text)
+        is_ocr_failed_placeholder = (
+            "OCR Failed" in ocr_text or
+            "Needs Manual Transcription" in ocr_text or
+            "fail" in engine_str.lower()
+        )
+        if is_ocr_failed_placeholder:
+            text_item.setForeground(QColor("#F87171"))
+            text_item.setFont(QFont("Segoe UI", 11, QFont.Weight.Medium))
+            text_item.setToolTip(
+                "OCR could not transcribe text in this detected markup region.\n"
+                "Double-click to manually transcribe in Human Review, or edit directly in this cell."
+            )
         text_item.setEditable(True)   # Inline editing enabled
 
+        # 3. BBox (X, Y, W, H)
+        bbox_item = QStandardItem(bbox_str)
+        bbox_item.setFont(QFont("Cascadia Code", 11))
+        bbox_item.setForeground(QColor("#94A3B8"))
+        bbox_item.setToolTip(
+            f"Spatial Telemetry (Bounding Box):\n"
+            f"• X (Left): {x:.2f}\n"
+            f"• Y (Top): {y:.2f}\n"
+            f"• Width: {w:.2f}\n"
+            f"• Height: {h:.2f}"
+        )
+        bbox_item.setEditable(False)
+
+        # 4. OCR Conf.
         conf_item = QStandardItem()
         conf_item.setData(float(confidence), Qt.ItemDataRole.UserRole)
+        conf_item.setToolTip(f"OCR Recognition Confidence: {int(float(confidence) * 100)}%")
         conf_item.setEditable(False)
 
+        # 5. Engine
+        engine_item = QStandardItem(engine_str)
+        engine_item.setToolTip(f"OCR Engine Attribution: {engine_str}")
+        engine_item.setEditable(False)
+
+        # 6. Status
         status_item = QStandardItem(status)
         status_item.setEditable(False)
 
-        for item in [id_item, text_item, conf_item, status_item]:
+        for item in [id_item, page_item, text_item, bbox_item, conf_item, engine_item, status_item]:
             item.setTextAlignment(
                 Qt.AlignmentFlag.AlignVCenter | Qt.AlignmentFlag.AlignLeft
             )
-        model.appendRow([id_item, text_item, conf_item, status_item])
+        model.appendRow([id_item, page_item, text_item, bbox_item, conf_item, engine_item, status_item])
 
     # ── Comment Navigation Slots ──────────────────────────────────
 
@@ -460,7 +558,7 @@ class OcrResultsPage(QWidget):
 
     def _on_table_double_clicked(self, index: QModelIndex) -> None:
         """Double-clicking any non-text column redirects directly to Human Review."""
-        if index.column() != 1:  # Keep column 1 for inline text editing
+        if index.column() != 2:  # Keep column 2 (OCR Text) for inline text editing
             cid, c_dwg_id = self._resolve_comment_data(index)
             self._emit_jump_to_review(cid, c_dwg_id)
 
@@ -514,7 +612,7 @@ class OcrResultsPage(QWidget):
         source_row = source_idx.row()
 
         id_item = self._model.item(source_row, 0)
-        text_item = self._model.item(source_row, 1)
+        text_item = self._model.item(source_row, 2)
         if not id_item or not text_item:
             return
 
@@ -569,12 +667,12 @@ class OcrResultsPage(QWidget):
         """
         if Qt.ItemDataRole.EditRole not in roles:
             return
-        if top_left.column() != 1:
+        if top_left.column() != 2:
             return
 
         row = top_left.row()
         id_item   = self._model.item(row, 0)
-        text_item = self._model.item(row, 1)
+        text_item = self._model.item(row, 2)
         if id_item is None or text_item is None:
             return
 

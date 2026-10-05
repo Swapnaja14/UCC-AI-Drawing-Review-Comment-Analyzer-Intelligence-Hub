@@ -128,7 +128,13 @@ class VerificationService:
             self._log_audit(comment_id, AuditAction.EDIT_TEXT, reviewer_id, old_text, new_text, '')
         return success
 
-    def approve_all_high_confidence(self, drawing_id: str, threshold: float = 0.85, reviewer_id: str = 'system') -> BulkActionResultDTO:
+    def approve_all_high_confidence(
+        self,
+        drawing_id: str,
+        threshold: float = 0.85,
+        reviewer_id: str = 'system',
+        hardened: bool = False,
+    ) -> BulkActionResultDTO:
         comments = self.comment_repo.get_comments_for_drawing(drawing_id)
         result = BulkActionResultDTO(
             total_processed=0,
@@ -138,9 +144,35 @@ class VerificationService:
             failed_ids=[]
         )
         for comment in comments:
-            if comment.get('confidence', 0.0) >= threshold and comment.get('status') == 'Pending':
+            if comment.get('status') != 'Pending':
+                result.skipped += 1
+                continue
+
+            if hardened:
+                from src.services.auto_approval_policy import evaluate_auto_approval
+                ocr_c = float(comment.get('ocr_confidence', comment.get('confidence', 0.0)))
+                cat_c = float(comment.get('classification_confidence', comment.get('confidence', 0.0)))
+                text = comment.get('cleaned_text') or comment.get('raw_text', '')
+                fb_used = bool(comment.get('fallback_used', False))
+                class_m = str(comment.get('classification_method', 'ai_model'))
+
+                should_approve, reason = evaluate_auto_approval(
+                    ocr_confidence=ocr_c,
+                    classification_confidence=cat_c,
+                    text=text,
+                    fallback_used=fb_used,
+                    classification_method=class_m,
+                    auto_approve_enabled=True,
+                    threshold=threshold,
+                )
+                audit_note = f'Bulk approved (Hardened: {reason})'
+            else:
+                should_approve = comment.get('confidence', 0.0) >= threshold
+                audit_note = 'Bulk approved'
+
+            if should_approve:
                 result.total_processed += 1
-                success = self.approve_comment(comment['id'], reviewer_id, 'Bulk approved')
+                success = self.approve_comment(comment['id'], reviewer_id, audit_note)
                 if success:
                     result.successful += 1
                 else:

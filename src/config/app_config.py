@@ -73,6 +73,11 @@ class OCRConfig:
     confidence_threshold: float = 0.50
     annotation_method: str = "hybrid"  # "hybrid", "color", "native"
     filter_template_regions: bool = False
+    enable_micro_upscaling: bool = True
+    micro_upscaling_min_px: int = 35
+    micro_upscaling_target_px: int = 80
+    parallel_region_ocr: bool = True
+    max_region_workers: int = 4
 
 
 @dataclass
@@ -190,6 +195,8 @@ class AppConfig:
             "UCC_PDF_DISPLAY_DPI": ("pdf.display_dpi", int),
             "UCC_PDF_OCR_DPI": ("pdf.ocr_dpi", int),
             "UCC_OCR_ENGINE": ("ocr.engine", str),
+            "UCC_OCR_TESSERACT_PSM": ("ocr.tesseract_psm", int),
+            "UCC_OCR_FALLBACK_PSM": ("ocr.fallback_psm", int),
             "UCC_OCR_CONFIDENCE_THRESHOLD": ("ocr.confidence_threshold", float),
             "UCC_AI_CLASSIFIER_TYPE": ("ai.classifier_type", str),
             "UCC_AI_MODEL_PATH": ("ai.model_path", str),

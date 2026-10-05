@@ -15,6 +15,8 @@ class ClassificationResultDTO:
     alternative_categories: List[CategoryPredictionDTO]
     classification_method: str
     requires_human_review: bool
+    fallback_used: bool = False
+    fallback_reason: str = ""
 
 @dataclass
 class BatchClassificationDTO:
@@ -24,3 +26,7 @@ class BatchClassificationDTO:
     high_confidence_count: int
     low_confidence_count: int
     flagged_count: int
+    ai_classified_count: int = 0
+    fallback_count: int = 0
+    rule_classified_count: int = 0
+

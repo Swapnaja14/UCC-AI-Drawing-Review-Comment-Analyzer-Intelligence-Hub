@@ -74,6 +74,10 @@ class Comment:
     bbox: tuple           # (x, y, w, h) normalised 0–1
     reviewer: Optional[str]
     timestamp: str
+    ocr_confidence: Optional[float] = None
+    classification_confidence: Optional[float] = None
+    classification_method: str = "ai_model"
+    fallback_used: bool = False
 
 _raw_comments = [
     ("C-0001","PRJ-001","UCC-E-101",1,"INCORRECT MEMBER SIZE: UPGRADE W12X45 TO W14X68 FOR SPAN LOAD","Technical",0.97,"Approved",(0.12,0.23,0.28,0.04),"A. Mehta","2026-07-28 09:14"),
@@ -98,7 +102,24 @@ _raw_comments = [
     ("C-0020","PRJ-007","OP-M-702",2,"REVISION TABLE NOT UPDATED: ADD REV B DESCRIPTION INCORPORATED COMMENTS","Revision",0.88,"Approved",(0.50,0.30,0.25,0.03),"J. Sharma","2026-07-29 09:30"),
 ]
 
-COMMENTS: List[Comment] = [Comment(*r) for r in _raw_comments]
+COMMENTS: List[Comment] = []
+for _raw_rec in _raw_comments:
+    _c = Comment(*_raw_rec)
+    _c.ocr_confidence = _c.confidence
+    _c.classification_confidence = _c.confidence
+    if _c.id in ("C-0005", "C-0009", "C-0018"):
+        _c.classification_method = "rule_based_fallback"
+        _c.fallback_used = True
+    elif _c.id in ("C-0006", "C-0010"):
+        _c.classification_method = "rule_based"
+        _c.fallback_used = False
+    elif _c.id in ("C-0013", "C-0020"):
+        _c.classification_method = "manual"
+        _c.fallback_used = False
+    else:
+        _c.classification_method = "ai_model"
+        _c.fallback_used = False
+    COMMENTS.append(_c)
 
 # ── Activity feed ─────────────────────────────────────────────────────────────
 

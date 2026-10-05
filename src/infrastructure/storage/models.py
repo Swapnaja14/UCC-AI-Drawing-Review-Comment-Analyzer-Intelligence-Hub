@@ -278,8 +278,14 @@ class CommentModel(Base):
     cleaned_text         = Column(Text,       nullable=True, default="")
     category_name        = Column(String(100),nullable=True, default="Uncategorized")
     # Denormalised label for fast reads; canonical FK is category_id
-    confidence           = Column(Float,      nullable=False, default=0.0)
-    status               = Column(String(50), nullable=False, default="Pending")
+    confidence                = Column(Float,      nullable=False, default=0.0)
+    detection_confidence      = Column(Float,      nullable=False, default=0.0)
+    ocr_confidence            = Column(Float,      nullable=False, default=0.0)
+    classification_confidence = Column(Float,      nullable=False, default=0.0)
+    classification_method     = Column(String(50), nullable=True,  default="ai_model")
+    fallback_used             = Column(Boolean,    nullable=False, default=False)
+    ocr_engine                = Column(String(50), nullable=True,  default="Tesseract OCR")
+    status                    = Column(String(50), nullable=False, default="Pending")
     # "Pending" | "Approved" | "Rejected" | "Flagged"
     bbox_x0              = Column(Float,      nullable=False, default=0.0)
     bbox_y0              = Column(Float,      nullable=False, default=0.0)

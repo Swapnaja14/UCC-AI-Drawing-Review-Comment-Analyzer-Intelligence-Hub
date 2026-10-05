@@ -12,7 +12,14 @@ Provides:
     CategoryDelegate
         Renders a category string as a rounded pill with category-keyed colours.
 
-All three delegates share the same selection highlight behaviour.
+    ClassificationMethodDelegate
+        Renders an AI vs. Fallback classification method pill badge (AI Model, Rule Fallback, Manual).
+
+    EngineDelegate
+        Renders an OCR engine name as an attributed pill badge (Tesseract, Native, OCR Failed).
+
+    PageDelegate
+        Renders a drawing page indicator as a compact styled chip.
 """
 from __future__ import annotations
 from PySide6.QtWidgets import QStyledItemDelegate, QStyleOptionViewItem, QStyle
@@ -83,10 +90,12 @@ class StatusDelegate(QStyledItemDelegate):
     """
 
     _STATUS_COLORS: dict[str, tuple[str, str]] = {
-        "Pending":  ("#A6A9B1", "#3A3C42"),
-        "Approved": ("#4ADE80", "#1a3d26"),
-        "Rejected": ("#F87171", "#3d1a1a"),
-        "Flagged":  ("#FBBF24", "#3d2e0a"),
+        "Pending":    ("#A6A9B1", "#3A3C42"),
+        "Approved":   ("#4ADE80", "#1a3d26"),
+        "Rejected":   ("#F87171", "#3d1a1a"),
+        "Flagged":    ("#FBBF24", "#3d2e0a"),
+        "OCR Failed": ("#F87171", "#3d1a1a"),
+        "Failed":     ("#F87171", "#3d1a1a"),
     }
 
     def paint(
@@ -171,4 +180,173 @@ class CategoryDelegate(QStyledItemDelegate):
             QRect(x, y, pill_w, pill_h),
             Qt.AlignmentFlag.AlignCenter,
             cat.upper(),
+        )
+
+
+class EngineDelegate(QStyledItemDelegate):
+    """
+    Cell delegate that renders an OCR engine name as an attributed pill badge.
+    Supported engines: Tesseract / Tesseract OCR, Native (PDF text layer), Failed / OCR Failed.
+    """
+
+    _ENGINE_STYLES: dict[str, tuple[str, str, str, str]] = {
+        # key: (display_label, text_color, bg_color, border_color)
+        "tesseract": ("⚡ Tesseract",  "#38BDF8", "#0e2c45", "#1e4976"),
+        "native":    ("📄 Native",     "#34D399", "#064e3b", "#047857"),
+        "failed":    ("⚠️ OCR Failed", "#F87171", "#3d1a1a", "#7f1d1d"),
+    }
+
+    def paint(
+        self,
+        painter: QPainter,
+        option: QStyleOptionViewItem,
+        index: QModelIndex,
+    ) -> None:
+        raw_val = str(index.data() or "")
+        if not raw_val:
+            super().paint(painter, option, index)
+            return
+
+        if option.state & QStyle.StateFlag.State_Selected:
+            painter.fillRect(option.rect, QColor("#3E9BFF22"))
+
+        low_val = raw_val.lower()
+        if "fail" in low_val or "unreadable" in low_val or "error" in low_val:
+            label, text_c, bg_c, border_c = self._ENGINE_STYLES["failed"]
+        elif "native" in low_val:
+            label, text_c, bg_c, border_c = self._ENGINE_STYLES["native"]
+        else:
+            label, text_c, bg_c, border_c = self._ENGINE_STYLES["tesseract"]
+
+        pill_h = 24
+        pill_w = min(110, option.rect.width() - 12)
+        x = option.rect.x() + (option.rect.width() - pill_w) // 2
+        y = option.rect.y() + (option.rect.height() - pill_h) // 2
+
+        painter.setRenderHint(QPainter.RenderHint.Antialiasing)
+        painter.setBrush(QColor(bg_c))
+        painter.setPen(QColor(border_c))
+        painter.drawRoundedRect(x, y, pill_w, pill_h, 5, 5)
+
+        painter.setPen(QColor(text_c))
+        painter.setFont(QFont("Segoe UI", 10, QFont.Weight.Bold))
+        painter.drawText(
+            QRect(x, y, pill_w, pill_h),
+            Qt.AlignmentFlag.AlignCenter,
+            label,
+        )
+
+
+class ClassificationMethodDelegate(QStyledItemDelegate):
+    """
+    Cell delegate that renders an AI vs. Fallback classification method pill badge.
+    Supported methods:
+        - "ai_model" / "distilbert" -> "🤖 AI Model"
+        - "rule_based_fallback" / "fallback" -> "📋 Rule Fallback"
+        - "rule_based" -> "⚡ Rule-Based"
+        - "manual" / "human_verified" -> "✍️ Manual"
+        - "error_fallback" -> "⚠️ Fallback"
+        - "manual_transcription_required" -> "⚠️ Needs Transc."
+    """
+
+    _METHOD_STYLES: dict[str, tuple[str, str, str, str]] = {
+        # key: (display_label, text_color, bg_color, border_color)
+        "ai_model":      ("🤖 AI Model",      "#818CF8", "#1E1B4B", "#4338CA"),
+        "rule_fallback": ("📋 Rule Fallback", "#FBBF24", "#3D2E0A", "#78350F"),
+        "rule_based":    ("⚡ Rule-Based",    "#F59E0B", "#2A1F05", "#B45309"),
+        "manual":        ("✍️ Manual",        "#34D399", "#064E3B", "#047857"),
+        "error":         ("⚠️ Fallback",      "#F87171", "#3D1A1A", "#7F1D1D"),
+        "transcription": ("⚠️ Needs Transc.", "#F87171", "#3D1A1A", "#7F1D1D"),
+    }
+
+    def paint(
+        self,
+        painter: QPainter,
+        option: QStyleOptionViewItem,
+        index: QModelIndex,
+    ) -> None:
+        raw_val = str(index.data() or "").strip()
+        fallback_used = bool(index.data(Qt.ItemDataRole.UserRole + 1) or False)
+
+        if not raw_val:
+            super().paint(painter, option, index)
+            return
+
+        if option.state & QStyle.StateFlag.State_Selected:
+            painter.fillRect(option.rect, QColor("#3E9BFF22"))
+
+        low_val = raw_val.lower()
+        if "transcription" in low_val:
+            label, text_c, bg_c, border_c = self._METHOD_STYLES["transcription"]
+        elif "error" in low_val:
+            label, text_c, bg_c, border_c = self._METHOD_STYLES["error"]
+        elif "manual" in low_val or "human" in low_val:
+            label, text_c, bg_c, border_c = self._METHOD_STYLES["manual"]
+        elif "fallback" in low_val or fallback_used:
+            label, text_c, bg_c, border_c = self._METHOD_STYLES["rule_fallback"]
+        elif "rule" in low_val:
+            label, text_c, bg_c, border_c = self._METHOD_STYLES["rule_based"]
+        elif "ai" in low_val or "model" in low_val or "distilbert" in low_val:
+            label, text_c, bg_c, border_c = self._METHOD_STYLES["ai_model"]
+        else:
+            label, text_c, bg_c, border_c = self._METHOD_STYLES["ai_model"]
+
+        pill_h = 24
+        pill_w = min(120, option.rect.width() - 12)
+        x = option.rect.x() + (option.rect.width() - pill_w) // 2
+        y = option.rect.y() + (option.rect.height() - pill_h) // 2
+
+        painter.setRenderHint(QPainter.RenderHint.Antialiasing)
+        painter.setBrush(QColor(bg_c))
+        painter.setPen(QColor(border_c))
+        painter.drawRoundedRect(x, y, pill_w, pill_h, 5, 5)
+
+        painter.setPen(QColor(text_c))
+        painter.setFont(QFont("Segoe UI", 10, QFont.Weight.Bold))
+        painter.drawText(
+            QRect(x, y, pill_w, pill_h),
+            Qt.AlignmentFlag.AlignCenter,
+            label,
+        )
+
+
+class PageDelegate(QStyledItemDelegate):
+    """
+    Cell delegate that renders a drawing page indicator as a compact styled chip.
+    """
+
+    def paint(
+        self,
+        painter: QPainter,
+        option: QStyleOptionViewItem,
+        index: QModelIndex,
+    ) -> None:
+        val = str(index.data() or "").strip()
+        if not val:
+            super().paint(painter, option, index)
+            return
+
+        if option.state & QStyle.StateFlag.State_Selected:
+            painter.fillRect(option.rect, QColor("#3E9BFF22"))
+
+        # Format label e.g. "1" -> "P. 1", "Page 2" -> "P. 2"
+        digits = "".join(ch for ch in val if ch.isdigit())
+        display_label = f"P. {digits}" if digits else val
+
+        pill_h = 22
+        pill_w = min(64, option.rect.width() - 8)
+        x = option.rect.x() + (option.rect.width() - pill_w) // 2
+        y = option.rect.y() + (option.rect.height() - pill_h) // 2
+
+        painter.setRenderHint(QPainter.RenderHint.Antialiasing)
+        painter.setBrush(QColor("#1E293B"))
+        painter.setPen(QColor("#475569"))
+        painter.drawRoundedRect(x, y, pill_w, pill_h, 4, 4)
+
+        painter.setPen(QColor("#CBD5E1"))
+        painter.setFont(QFont("Cascadia Code", 10, QFont.Weight.Bold))
+        painter.drawText(
+            QRect(x, y, pill_w, pill_h),
+            Qt.AlignmentFlag.AlignCenter,
+            display_label,
         )

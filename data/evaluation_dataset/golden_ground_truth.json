@@ -1,0 +1,143 @@
+{
+  "metadata": {
+    "version": "1.0.0",
+    "description": "Fixed Golden Evaluation Benchmark for Drawing Review Intelligence",
+    "created_date": "2026-10-06",
+    "total_cases": 5
+  },
+  "test_cases": [
+    {
+      "case_id": "CASE-01-VECTOR",
+      "pdf_file": "data\\evaluation_dataset\\case_1_vector_drawing.pdf",
+      "description": "Vector drawing with standard red, blue, and green reviewer markups",
+      "pdf_type": "vector",
+      "expected_min_regions": 3,
+      "expected_max_regions": 3,
+      "expected_comments": [
+        {
+          "index": 0,
+          "required_keywords": [
+            "BEAM",
+            "SIZE",
+            "W24X68",
+            "MOMENT"
+          ],
+          "expected_category": "Technical",
+          "min_ocr_confidence": 0.85,
+          "min_classification_confidence": 0.7
+        },
+        {
+          "index": 1,
+          "required_keywords": [
+            "CLEARANCE",
+            "DIMENSION",
+            "GRIDLINE"
+          ],
+          "expected_category": "Dimension",
+          "min_ocr_confidence": 0.85,
+          "min_classification_confidence": 0.7
+        },
+        {
+          "index": 2,
+          "required_keywords": [
+            "WELD",
+            "SYMBOL",
+            "AWS"
+          ],
+          "expected_category": "Standards",
+          "min_ocr_confidence": 0.8,
+          "min_classification_confidence": 0.7
+        }
+      ]
+    },
+    {
+      "case_id": "CASE-02-SCANNED",
+      "pdf_file": "data\\evaluation_dataset\\case_2_scanned_drawing.pdf",
+      "description": "Scanned rasterized P&ID drawing with revision cloud markups",
+      "pdf_type": "scanned",
+      "expected_min_regions": 2,
+      "expected_max_regions": 2,
+      "expected_comments": [
+        {
+          "index": 0,
+          "required_keywords": [
+            "PIPE",
+            "SCHEDULE",
+            "SCH"
+          ],
+          "expected_category": "Technical",
+          "min_ocr_confidence": 0.7
+        },
+        {
+          "index": 1,
+          "required_keywords": [
+            "VALVE",
+            "TAG",
+            "CV-102"
+          ],
+          "expected_category": "Technical",
+          "min_ocr_confidence": 0.7
+        }
+      ]
+    },
+    {
+      "case_id": "CASE-03-ROTATED",
+      "pdf_file": "data\\evaluation_dataset\\case_3_rotated_drawing.pdf",
+      "description": "Drawing with 90\u00b0 vertical conduit callout requiring orientation correction",
+      "pdf_type": "rotated",
+      "expected_min_regions": 1,
+      "expected_max_regions": 1,
+      "expected_comments": [
+        {
+          "index": 0,
+          "required_keywords": [
+            "CONDUIT",
+            "VERTICAL",
+            "RISER"
+          ],
+          "expected_category": "Dimension",
+          "allowed_categories": ["Dimension", "Technical", "Drafting"],
+          "min_ocr_confidence": 0.75
+        }
+      ]
+    },
+    {
+      "case_id": "CASE-04-MICRO",
+      "pdf_file": "data\\evaluation_dataset\\case_4_micro_drawing.pdf",
+      "description": "Small/micro engineering notes requiring Lanczos micro-upscaling",
+      "pdf_type": "micro",
+      "expected_min_regions": 2,
+      "expected_max_regions": 2,
+      "expected_comments": [
+        {
+          "index": 0,
+          "required_keywords": [
+            "REV",
+            "DELTA"
+          ],
+          "expected_category": "Drafting",
+          "min_ocr_confidence": 0.6
+        },
+        {
+          "index": 1,
+          "required_keywords": [
+            "ELEV",
+            "104.5M",
+            "TOC"
+          ],
+          "expected_category": "Dimension",
+          "min_ocr_confidence": 0.7
+        }
+      ]
+    },
+    {
+      "case_id": "CASE-05-NEGATIVE-CONTROL",
+      "pdf_file": "data\\evaluation_dataset\\case_5_negative_drawing.pdf",
+      "description": "Negative control with CAD border lines and title block (0 comments expected)",
+      "pdf_type": "negative_control",
+      "expected_min_regions": 0,
+      "expected_max_regions": 0,
+      "expected_comments": []
+    }
+  ]
+}
