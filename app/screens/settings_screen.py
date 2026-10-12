@@ -522,24 +522,14 @@ class SettingsPage(QWidget):
 
         lay.addWidget(form_frame)
 
-        # Department Filter for Categories List
-        filter_row = QHBoxLayout()
-        filter_lbl = QLabel("Filter Categories by Scope:")
-        filter_lbl.setStyleSheet("color: #94A3B8; font-size: 12px; font-weight: 600;")
-        filter_row.addWidget(filter_lbl)
-
+        # Department Filter for Categories List (retained hidden for backwards/test compatibility)
         self._filter_dept_combo = QComboBox()
-        self._filter_dept_combo.setFixedHeight(30)
-        self._filter_dept_combo.setStyleSheet("background-color: #161922; color: #E2E8F0; border: 1px solid #334155; border-radius: 4px; padding: 0 8px;")
+        self._filter_dept_combo.hide()
         self._filter_dept_combo.addItem("Show All Categories")
         self._filter_dept_combo.addItem("All Departments (Universal Only)")
         for dept in ["Piping Engineering", "Electrical Engineering", "Pipe Support Engineering", "Structural & Physical Design", "System Engineering", "GPD", "Plakon"]:
             self._filter_dept_combo.addItem(dept)
         self._filter_dept_combo.currentTextChanged.connect(self._refresh_categories)
-        filter_row.addWidget(self._filter_dept_combo)
-        filter_row.addStretch()
-
-        lay.addLayout(filter_row)
         
         # List widget to show categories
         self._cat_list = QListWidget()
@@ -572,6 +562,11 @@ class SettingsPage(QWidget):
             ]
         for d in depts:
             self._new_cat_dept.addItem(f"📁 {d}")
+        if self._controller and getattr(self._controller, "current_department_name", None):
+            cur_d = self._controller.current_department_name
+            idx = self._new_cat_dept.findText(cur_d, Qt.MatchFlag.MatchContains)
+            if idx != -1:
+                self._new_cat_dept.setCurrentIndex(idx)
 
     def _on_add_category(self) -> None:
         name = self._new_cat_name.text().strip()

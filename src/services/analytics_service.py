@@ -47,9 +47,15 @@ def _apply_comment_filters(
     category_name: Optional[str] = None,
     date_from: Optional[datetime] = None,
     date_to: Optional[datetime] = None,
+    drawing_ids: Optional[List[str]] = None,
 ):
     if drawing_id:
         query = query.filter(CommentModel.drawing_id == drawing_id)
+    elif drawing_ids is not None:
+        if drawing_ids:
+            query = query.filter(CommentModel.drawing_id.in_(drawing_ids))
+        else:
+            query = query.filter(False)
     elif project_id:
         dwg_subquery = session.query(DrawingModel.id).filter(DrawingModel.project_id == project_id)
         query = query.filter(CommentModel.drawing_id.in_(dwg_subquery))
@@ -93,6 +99,7 @@ class AnalyticsService:
         category_name: Optional[str] = None,
         date_from: Optional[datetime] = None,
         date_to: Optional[datetime] = None,
+        drawing_ids: Optional[List[str]] = None,
     ) -> KPISummaryDTO:
         with self._db.get_session() as session:
             p_query = session.query(func.count(ProjectModel.id))
@@ -103,6 +110,8 @@ class AnalyticsService:
             d_query = session.query(func.count(DrawingModel.id))
             if drawing_id:
                 d_query = d_query.filter(DrawingModel.id == drawing_id)
+            elif drawing_ids is not None:
+                d_query = d_query.filter(DrawingModel.id.in_(drawing_ids)) if drawing_ids else d_query.filter(False)
             elif project_id:
                 d_query = d_query.filter(DrawingModel.project_id == project_id)
             total_drawings = d_query.scalar() or 0
@@ -110,6 +119,8 @@ class AnalyticsService:
             pg_query = session.query(func.count(PageModel.id))
             if drawing_id:
                 pg_query = pg_query.filter(PageModel.drawing_id == drawing_id)
+            elif drawing_ids is not None:
+                pg_query = pg_query.filter(PageModel.drawing_id.in_(drawing_ids)) if drawing_ids else pg_query.filter(False)
             elif project_id:
                 dwg_sub = session.query(DrawingModel.id).filter(DrawingModel.project_id == project_id)
                 pg_query = pg_query.filter(PageModel.drawing_id.in_(dwg_sub))
@@ -128,7 +139,7 @@ class AnalyticsService:
                 func.sum(case(((CommentModel.status == "Approved") & (CommentModel.is_verified_by_human == True), 1), else_=0))
             )
             stats_query = _apply_comment_filters(
-                stats_query, session, project_id, drawing_id, department_name, category_name, date_from, date_to
+                stats_query, session, project_id, drawing_id, department_name, category_name, date_from, date_to, drawing_ids=drawing_ids
             )
             stats = stats_query.first()
             
@@ -175,13 +186,14 @@ class AnalyticsService:
         date_from: Optional[datetime] = None,
         date_to: Optional[datetime] = None,
         include_rejected: bool = True,
+        drawing_ids: Optional[List[str]] = None,
     ) -> List[CategoryDistributionDTO]:
         with self._db.get_session() as session:
             query = session.query(CommentModel.category_name, func.count(CommentModel.id))
             if not include_rejected:
                 query = query.filter(CommentModel.status != "Rejected")
             query = _apply_comment_filters(
-                query, session, project_id, drawing_id, department_name, category_name, date_from, date_to
+                query, session, project_id, drawing_id, department_name, category_name, date_from, date_to, drawing_ids=drawing_ids
             )
             query = query.group_by(CommentModel.category_name)
             
@@ -239,6 +251,7 @@ class AnalyticsService:
         date_to: Optional[datetime] = None,
         top_n: int = 10,
         include_rejected: bool = False,
+        drawing_ids: Optional[List[str]] = None,
     ) -> List[CategoryDistributionDTO]:
         distribution = self.get_category_distribution(
             project_id=project_id,
@@ -248,6 +261,7 @@ class AnalyticsService:
             date_from=date_from,
             date_to=date_to,
             include_rejected=include_rejected,
+            drawing_ids=drawing_ids,
         )
         return distribution[:top_n]
 
@@ -294,11 +308,12 @@ class AnalyticsService:
         category_name: Optional[str] = None,
         date_from: Optional[datetime] = None,
         date_to: Optional[datetime] = None,
+        drawing_ids: Optional[List[str]] = None,
     ) -> List[TrendDataPointDTO]:
         with self._db.get_session() as session:
             query = session.query(CommentModel.created_at)
             query = _apply_comment_filters(
-                query, session, project_id, drawing_id, department_name, category_name, date_from, date_to
+                query, session, project_id, drawing_id, department_name, category_name, date_from, date_to, drawing_ids=drawing_ids
             )
             dates = [r[0] for r in query.all() if r[0]]
             

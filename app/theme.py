@@ -212,6 +212,7 @@ QComboBox {{
     border-radius: 8px;
     padding: 4px 32px 4px 12px;
     height: 36px;
+    min-width: 140px;
 }}
 QComboBox:hover {{
     border-color: {t['accent']};

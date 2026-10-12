@@ -93,6 +93,24 @@ def _axis_style(axis, color: str = "#A6A9B1") -> None:
     axis.setLabelsFont(QFont("Segoe UI", 10))
 
 
+def _make_integer_value_axis(max_val: int) -> "QValueAxis":
+    """Create a QValueAxis with strict integer tick marks, preventing fractional tick alignment."""
+    import math
+    ax = QValueAxis()
+    int_max = max(int(max_val), 1)
+    if int_max <= 10:
+        ax.setRange(0, int_max)
+        ax.setTickCount(int_max + 1)
+    else:
+        step = max(1, math.ceil(int_max / 5.0))
+        y_max = step * 5
+        ax.setRange(0, y_max)
+        ax.setTickCount(6)
+    ax.setLabelFormat("%d")
+    _axis_style(ax)
+    return ax
+
+
 # ── Public chart builders ─────────────────────────────────────────────────────
 
 def no_chart_label(text: str) -> QFrame:
@@ -115,7 +133,8 @@ def no_chart_label(text: str) -> QFrame:
 
 
 def build_pareto_chart(
-    data: Optional[Union[List[Any], Dict[str, Any]]] = None
+    data: Optional[Union[List[Any], Dict[str, Any]]] = None,
+    title: str = "Pareto — Comments by Category",
 ) -> "QChartView | QFrame":
     """
     Build a Pareto chart: bar series for category counts with a
@@ -126,6 +145,8 @@ def build_pareto_chart(
     data:
         Either a list of CategoryDistributionDTO objects, a list of dicts,
         or a dict containing 'categories', 'counts', and optional 'cumulative' keys.
+    title:
+        Custom title for the Pareto chart.
 
     Returns
     -------
@@ -133,9 +154,9 @@ def build_pareto_chart(
         QChartView if QtCharts is available, fallback QFrame otherwise.
     """
     if not _HAS_CHARTS:
-        return no_chart_label("Pareto Chart")
+        return no_chart_label(title)
 
-    chart = _styled_chart("Pareto — Comments by Category")
+    chart = _styled_chart(title)
     chart.legend().hide()
 
     cats: List[str] = []
@@ -199,6 +220,7 @@ def build_pareto_chart(
     chart.addSeries(bar_series)
 
     max_count = max(counts) if max(counts) > 0 else 10
+    ax_val = _make_integer_value_axis(max_count)
 
     line_series = QLineSeries()
     line_series.setName("Cumulative %")
@@ -207,7 +229,7 @@ def build_pareto_chart(
     pen.setWidth(2)
     line_series.setPen(pen)
     for i, pct in enumerate(cumuls):
-        line_series.append(i + 0.5, pct * max_count / 100.0)
+        line_series.append(i + 0.5, pct * ax_val.max() / 100.0)
     chart.addSeries(line_series)
 
     ax_cat = QBarCategoryAxis()
@@ -216,10 +238,6 @@ def build_pareto_chart(
     chart.addAxis(ax_cat, Qt.AlignmentFlag.AlignBottom)
     bar_series.attachAxis(ax_cat)
 
-    ax_val = QValueAxis()
-    ax_val.setRange(0, max_count * 1.15)
-    ax_val.setLabelFormat("%d")
-    _axis_style(ax_val)
     chart.addAxis(ax_val, Qt.AlignmentFlag.AlignLeft)
     bar_series.attachAxis(ax_val)
     line_series.attachAxis(ax_cat)
@@ -280,10 +298,7 @@ def build_monthly_chart(
         _axis_style(ax_cat)
         chart.addAxis(ax_cat, Qt.AlignmentFlag.AlignBottom)
 
-        ax_val = QValueAxis()
-        ax_val.setRange(0, max_val * 1.15)
-        ax_val.setLabelFormat("%d")
-        _axis_style(ax_val)
+        ax_val = _make_integer_value_axis(max_val)
         chart.addAxis(ax_val, Qt.AlignmentFlag.AlignLeft)
 
         series.attachAxis(ax_cat)
@@ -317,10 +332,7 @@ def build_monthly_chart(
             _axis_style(ax_cat)
             chart.addAxis(ax_cat, Qt.AlignmentFlag.AlignBottom)
 
-            ax_val = QValueAxis()
-            ax_val.setRange(0, max_val * 1.15)
-            ax_val.setLabelFormat("%d")
-            _axis_style(ax_val)
+            ax_val = _make_integer_value_axis(max_val)
             chart.addAxis(ax_val, Qt.AlignmentFlag.AlignLeft)
 
             for s in chart.series():
@@ -346,10 +358,7 @@ def build_monthly_chart(
             _axis_style(ax_cat)
             chart.addAxis(ax_cat, Qt.AlignmentFlag.AlignBottom)
 
-            ax_val = QValueAxis()
-            ax_val.setRange(0, max_val * 1.15)
-            ax_val.setLabelFormat("%d")
-            _axis_style(ax_val)
+            ax_val = _make_integer_value_axis(max_val)
             chart.addAxis(ax_val, Qt.AlignmentFlag.AlignLeft)
 
             series.attachAxis(ax_cat)

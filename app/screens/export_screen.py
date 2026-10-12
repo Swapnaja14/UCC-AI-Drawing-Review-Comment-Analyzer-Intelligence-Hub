@@ -313,61 +313,29 @@ class ExportPage(QWidget):
         dept_lbl = QLabel("Engineering Department (Column 10):")
         dept_lbl.setFont(QFont("Segoe UI", 13, QFont.Weight.DemiBold))
         dept_lbl.setStyleSheet("color: #CBD5E1;")
-        self._dept_combo = QComboBox()
-        self._dept_combo.setStyleSheet("""
-            QComboBox {
+
+        # Read-only department indicator (department scoped from login)
+        self._dept_display = QLineEdit("Piping Engineering")
+        self._dept_display.setReadOnly(True)
+        self._dept_display.setStyleSheet("""
+            QLineEdit {
                 background-color: #12141A;
-                color: #F8FAFC;
+                color: #38BDF8;
                 border: 1px solid #334155;
                 border-radius: 8px;
-                padding: 10px 36px 10px 14px;
+                padding: 10px 14px;
                 font-size: 14px;
                 font-family: 'Segoe UI', Arial;
+                font-weight: 600;
                 min-height: 22px;
             }
-            QComboBox:hover {
-                border-color: #38BDF8;
-            }
-            QComboBox::drop-down {
-                subcontrol-origin: padding;
-                subcontrol-position: top right;
-                width: 32px;
-                border: none;
-                background: transparent;
-            }
-            QComboBox::drop-down:hover {
-                background-color: rgba(56, 189, 248, 0.15);
-                border-top-right-radius: 7px;
-                border-bottom-right-radius: 7px;
-            }
-            QComboBox::down-arrow {
-                image: none;
-                width: 0;
-                height: 0;
-                border-left: 5px solid transparent;
-                border-right: 5px solid transparent;
-                border-top: 6px solid #94A3B8;
-                margin-right: 10px;
-            }
-            QComboBox::down-arrow:hover, QComboBox:hover::down-arrow {
-                border-top-color: #38BDF8;
-            }
-            QComboBox::down-arrow:on {
-                border-top: none;
-                border-left: 5px solid transparent;
-                border-right: 5px solid transparent;
-                border-bottom: 6px solid #38BDF8;
-            }
-            QComboBox QAbstractItemView {
-                background-color: #1E222B;
-                color: #F8FAFC;
-                selection-background-color: #0284C7;
-                border: 1px solid #334155;
-                border-radius: 6px;
-                padding: 4px;
-            }
         """)
-        # Populate 7 official UCC engineering departments
+        dept_box.addWidget(dept_lbl)
+        dept_box.addWidget(self._dept_display)
+        grid.addLayout(dept_box, 2, 1)
+
+        # Retain hidden _dept_combo for test and backwards compatibility
+        self._dept_combo = QComboBox()
         ucc_depts = [
             "Electrical Engineering",
             "GPD",
@@ -379,9 +347,7 @@ class ExportPage(QWidget):
         ]
         self._dept_combo.addItems(ucc_depts)
         self._dept_combo.setCurrentText("Piping Engineering")
-        dept_box.addWidget(dept_lbl)
-        dept_box.addWidget(self._dept_combo)
-        grid.addLayout(dept_box, 2, 1)
+        self._dept_combo.hide()
 
         # Row 3 (Col 0): Auto-read program fields explanation
         info_box = QVBoxLayout()
@@ -704,7 +670,12 @@ class ExportPage(QWidget):
             epod_wo_no      = self._epod_input.text().strip()
             designer_name   = self._designer_input.text().strip()
             date_str        = self._date_input.text().strip()
-            department_name = self._dept_combo.currentText().strip() if hasattr(self, "_dept_combo") else "Piping Engineering"
+            department_name = (
+                getattr(self._controller, "current_department_name", None)
+                or (self._dept_display.text().strip() if hasattr(self, "_dept_display") else None)
+                or (self._dept_combo.currentText().strip() if hasattr(self, "_dept_combo") else None)
+                or "Piping Engineering"
+            )
 
             config = ExportConfigDTO(
                 output_path=out_path,
@@ -868,16 +839,22 @@ class ExportPage(QWidget):
         """Auto-refresh Export screen data, scope labels, and history table."""
         self.update_scope_labels()
         self._reload_history_table()
-        if self._controller and self._controller.current_drawing_id:
+        dept_name = None
+        if self._controller and getattr(self._controller, "current_department_name", None):
+            dept_name = self._controller.current_department_name
+        elif self._controller and self._controller.current_drawing_id:
             cur_dwg = self._controller.get_current_drawing()
             if cur_dwg:
-                dwg_dept = cur_dwg.get("department_name")
-                if dwg_dept and hasattr(self, "_dept_combo"):
-                    idx = self._dept_combo.findText(dwg_dept)
-                    if idx != -1 and self._dept_combo.currentIndex() != idx:
-                        self._dept_combo.blockSignals(True)
-                        self._dept_combo.setCurrentIndex(idx)
-                        self._dept_combo.blockSignals(False)
+                dept_name = cur_dwg.get("department_name")
+        if dept_name:
+            if hasattr(self, "_dept_display"):
+                self._dept_display.setText(dept_name)
+            if hasattr(self, "_dept_combo"):
+                idx = self._dept_combo.findText(dept_name)
+                if idx != -1 and self._dept_combo.currentIndex() != idx:
+                    self._dept_combo.blockSignals(True)
+                    self._dept_combo.setCurrentIndex(idx)
+                    self._dept_combo.blockSignals(False)
 
     def reload_comments(self) -> None:
         """Called by MainWindow when comments or drawings are updated."""

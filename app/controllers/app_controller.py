@@ -865,63 +865,299 @@ class AppController(QObject):
         raw = self.comment_repo.get_comments_for_drawing(drawing_id)
         return [self.normalise_comment(c) for c in raw]
 
-    def update_comment_status(
-        self, comment_id: str, status: str, verified_by_human: bool = True, changed_by_user_id: Optional[str] = None
+    def _resolve_mutation_user(
+        self, changed_by_user_id: Optional[str] = None, user_override: Optional[UserDTO] = None
+    ) -> Optional[UserDTO]:
+        """Resolves the user responsible for a mutation, defaulting to active session user."""
+        if user_override is not None:
+            return user_override
+        if self.current_user is not None:
+            return self.current_user
+        if changed_by_user_id and hasattr(self, "db_engine") and self.db_engine:
+            try:
+                from src.infrastructure.storage.models import UserModel
+                with self.db_engine.get_session() as session:
+                    u_row = session.get(UserModel, changed_by_user_id)
+                    if u_row:
+                        return UserDTO(
+                            user_id=u_row.id,
+                            username=u_row.username,
+                            email=u_row.email,
+                            role=u_row.role or "User",
+                            department_id=u_row.department_id,
+                        )
+            except Exception:
+                pass
+        return None
+
+    def can_user_modify_comment(
+        self, comment_id: str, user: Optional[UserDTO] = None
+    ) -> tuple[bool, str]:
+        """
+        Validates backend authorization for modifying a specific comment.
+
+        Rules:
+        - Authenticated user required.
+        - Comment and parent drawing must exist.
+        - Administrative users (Lead Engineer / Admin) may manage comments across departments,
+          including comments on unassigned drawings (department_id IS NULL).
+        - Department-scoped users may modify comments in their own department only.
+        - Department-scoped users CANNOT modify comments on unassigned drawings.
+        - Users without a department assignment who lack administrative roles are DENIED.
+        - Cross-department modifications by unauthorized users are DENIED.
+
+        Returns:
+            tuple[bool, str]: (is_authorized, reason_or_audit_note)
+        """
+        active_user = user or self.current_user
+        if not active_user or not getattr(active_user, "is_authenticated", True):
+            return False, "User not authenticated"
+
+        if not hasattr(self, "comment_repo") or not self.comment_repo:
+            return False, "Comment repository unavailable"
+        if not hasattr(self, "drawing_repo") or not self.drawing_repo:
+            return False, "Drawing repository unavailable"
+
+        comment = self.comment_repo.get_comment_by_id(comment_id)
+        if not comment:
+            return False, "Comment not found"
+
+        drawing_id = comment.get("drawing_id")
+        if not drawing_id:
+            return False, "Parent drawing not found"
+
+        drawing = self.drawing_repo.get_drawing_by_id(drawing_id)
+        if not drawing:
+            return False, "Parent drawing not found"
+
+        user_role = (getattr(active_user, "role", "") or "").strip()
+        user_dept = getattr(active_user, "department_id", None)
+        drawing_dept = drawing.get("department_id")
+
+        # 1. Explicitly authorized administrative roles (Lead Engineer / Admin)
+        if user_role in ("Lead Engineer", "Admin"):
+            if drawing_dept is None:
+                return True, "Administrative override on unassigned drawing"
+            return True, "Administrative access"
+
+        # 2. Unassigned drawing policy for non-admin users
+        if drawing_dept is None:
+            if user_dept is not None:
+                return False, "Department-scoped users cannot modify comments on unassigned drawings"
+            return False, "Unscoped non-administrative users cannot modify comments"
+
+        # 3. Department matching for department-assigned drawings
+        if user_dept is not None and user_dept == drawing_dept:
+            return True, "Authorized department reviewer"
+
+        return False, "Cross-department comment modification denied"
+
+    def can_user_reprocess_drawing(
+        self, drawing_id: str, user: Optional[UserDTO] = None
+    ) -> tuple[bool, str]:
+        """
+        Validates backend authorization for reprocessing a drawing.
+
+        Rules:
+        - Authenticated user required.
+        - Drawing must exist.
+        - Administrative users (Lead Engineer / Admin) may reprocess drawings across departments,
+          including unassigned drawings.
+        - Department-scoped users may reprocess drawings in their own department only.
+        - Department-scoped users CANNOT reprocess unassigned drawings.
+        - Unauthorized cross-department reprocessing is DENIED.
+
+        Returns:
+            tuple[bool, str]: (is_authorized, reason_or_audit_note)
+        """
+        active_user = user or self.current_user
+        if not active_user or not getattr(active_user, "is_authenticated", True):
+            return False, "User not authenticated"
+
+        if not hasattr(self, "drawing_repo") or not self.drawing_repo:
+            return False, "Drawing repository unavailable"
+
+        drawing = self.drawing_repo.get_drawing_by_id(drawing_id)
+        if not drawing:
+            return False, "Drawing not found"
+
+        user_role = (getattr(active_user, "role", "") or "").strip()
+        user_dept = getattr(active_user, "department_id", None)
+        drawing_dept = drawing.get("department_id")
+
+        # 1. Explicitly authorized administrative roles
+        if user_role in ("Lead Engineer", "Admin"):
+            if drawing_dept is None:
+                return True, "Administrative override on unassigned drawing"
+            return True, "Administrative access"
+
+        # 2. Unassigned drawing policy for non-admin users
+        if drawing_dept is None:
+            return False, "Unassigned drawings cannot be reprocessed by non-administrative users"
+
+        # 3. Department matching
+        if user_dept is not None and user_dept == drawing_dept:
+            return True, "Authorized department reprocess"
+
+        return False, "Cross-department drawing reprocessing denied"
+
+    def _log_auth_denied(
+        self, comment_id: str, operation: str, reason: str, user: Optional[UserDTO] = None
     ) -> None:
         """
-        Persist a status change for a single comment.
+        Safely records an unauthorized mutation attempt in audit_logs without breaking control flow.
         """
-        user_id = changed_by_user_id or (self.current_user.id if self.current_user else "anonymous")
+        if not hasattr(self, "audit_repo") or not self.audit_repo or not comment_id:
+            return
+        try:
+            active_user = user or self.current_user
+            user_id = active_user.id if active_user else None
+            user_name = active_user.username if active_user else "anonymous"
+            self.audit_repo.create_audit_entry(
+                comment_id=comment_id,
+                action="auth_denied",
+                reviewer_id=user_id,
+                reviewer_name=user_name,
+                notes=f"Operation '{operation}' denied: {reason}",
+            )
+        except Exception as audit_err:
+            logger.debug(f"Audit logging for denied mutation failed (safely ignored): {audit_err}")
+
+    def update_comment_status(
+        self, comment_id: str, status: str, verified_by_human: bool = True, changed_by_user_id: Optional[str] = None
+    ) -> bool:
+        """
+        Persist a status change for a single comment, subject to backend authorization.
+        """
+        effective_user = self._resolve_mutation_user(changed_by_user_id)
+        authorized, reason = self.can_user_modify_comment(comment_id, user=effective_user)
+        if not authorized:
+            self._log_auth_denied(comment_id, f"update_comment_status({status})", reason, user=effective_user)
+            self.processing_error_signal.emit(f"Permission Denied: {reason}")
+            return False
+
+        user_id = changed_by_user_id or (effective_user.id if effective_user else "anonymous")
+        audit_note = "Administrative override on unassigned drawing" if "Administrative override" in reason else ""
         
         if status == "Approved":
-            self.verification_service.approve_comment(comment_id, user_id)
+            res = self.verification_service.approve_comment(comment_id, user_id, notes=audit_note)
         elif status == "Rejected":
-            self.verification_service.reject_comment(comment_id, user_id, "Rejected via UI")
+            res = self.verification_service.reject_comment(comment_id, user_id, notes=audit_note or "Rejected via UI")
         elif status == "Flagged":
-            self.verification_service.flag_comment(comment_id, user_id, "Flagged via UI")
+            res = self.verification_service.flag_comment(comment_id, user_id, notes=audit_note or "Flagged via UI")
         else:
-            self.comment_repo.update_comment_status(comment_id, status, verified_by_human, changed_by_user_id=user_id)
+            res = self.comment_repo.update_comment_status(comment_id, status, verified_by_human, changed_by_user_id=user_id)
+
+        if audit_note and hasattr(self, "audit_repo") and self.audit_repo:
+            try:
+                self.audit_repo.create_audit_entry(
+                    comment_id=comment_id,
+                    action="admin_override",
+                    reviewer_id=user_id,
+                    reviewer_name=effective_user.username if effective_user else "admin",
+                    old_value="",
+                    new_value=status,
+                    notes=audit_note,
+                )
+            except Exception as log_err:
+                logger.debug(f"Recording admin override audit entry failed: {log_err}")
+
+        return bool(res)
 
     def get_audit_trail(self, comment_id: str) -> List[Any]:
         """Return the audit history for a given comment."""
         return self.verification_service.get_audit_history(comment_id)
 
-    def update_comment_text(self, comment_id: str, new_text: str, changed_by_user_id: Optional[str] = None) -> None:
+    def update_comment_text(self, comment_id: str, new_text: str, changed_by_user_id: Optional[str] = None) -> bool:
         """
-        Persist a corrected OCR/cleaned text for a single comment.
+        Persist a corrected OCR/cleaned text for a single comment, subject to backend authorization.
         """
-        user_id = changed_by_user_id or (self.current_user.id if self.current_user else "anonymous")
+        effective_user = self._resolve_mutation_user(changed_by_user_id)
+        authorized, reason = self.can_user_modify_comment(comment_id, user=effective_user)
+        if not authorized:
+            self._log_auth_denied(comment_id, "update_comment_text", reason, user=effective_user)
+            self.processing_error_signal.emit(f"Permission Denied: {reason}")
+            return False
+
+        user_id = changed_by_user_id or (effective_user.id if effective_user else "anonymous")
         if hasattr(self, "comment_repo"):
-            self.comment_repo.update_comment_text(comment_id, new_text, changed_by_user_id=user_id)
+            res = self.comment_repo.update_comment_text(comment_id, new_text, changed_by_user_id=user_id)
+            return bool(res)
         elif hasattr(self.verification_service, "edit_comment_text"):
-            self.verification_service.edit_comment_text(comment_id, new_text, user_id)
+            return bool(self.verification_service.edit_comment_text(comment_id, new_text, user_id))
+        return False
 
     def update_comment_category(self, comment_id: str, new_category: str, changed_by_user_id: Optional[str] = None) -> bool:
         """
-        Persist a corrected or updated classification category for a single comment.
+        Persist a corrected or updated classification category for a single comment, subject to backend authorization.
         """
-        user_id = changed_by_user_id or (self.current_user.id if self.current_user else "reviewer")
+        effective_user = self._resolve_mutation_user(changed_by_user_id)
+        authorized, reason = self.can_user_modify_comment(comment_id, user=effective_user)
+        if not authorized:
+            self._log_auth_denied(comment_id, "update_comment_category", reason, user=effective_user)
+            self.processing_error_signal.emit(f"Permission Denied: {reason}")
+            return False
+
+        user_id = changed_by_user_id or (effective_user.id if effective_user else "reviewer")
         if hasattr(self, "comment_repo"):
             return self.comment_repo.update_comment_category(comment_id, new_category, user_id)
         return False
 
     def update_comment_department(self, comment_id: str, new_department: str, changed_by_user_id: Optional[str] = None) -> bool:
         """
-        Persist an updated engineering department for a single comment.
+        Persist an updated engineering department for a single comment, subject to backend authorization.
         """
-        user_id = changed_by_user_id or (self.current_user.id if self.current_user else "reviewer")
+        effective_user = self._resolve_mutation_user(changed_by_user_id)
+        authorized, reason = self.can_user_modify_comment(comment_id, user=effective_user)
+        if not authorized:
+            self._log_auth_denied(comment_id, "update_comment_department", reason, user=effective_user)
+            self.processing_error_signal.emit(f"Permission Denied: {reason}")
+            return False
+
+        user_id = changed_by_user_id or (effective_user.id if effective_user else "reviewer")
         if hasattr(self, "comment_repo"):
             return self.comment_repo.update_comment_department(comment_id, new_department, user_id)
         return False
 
     def update_comment_reviewer(self, comment_id: str, new_reviewer: str, changed_by_user_id: Optional[str] = None) -> bool:
         """
-        Persist an updated reviewer assignment for a single comment.
+        Persist an updated reviewer assignment for a single comment, subject to backend authorization.
         """
-        user_id = changed_by_user_id or (self.current_user.id if self.current_user else "reviewer")
+        effective_user = self._resolve_mutation_user(changed_by_user_id)
+        authorized, reason = self.can_user_modify_comment(comment_id, user=effective_user)
+        if not authorized:
+            self._log_auth_denied(comment_id, "update_comment_reviewer", reason, user=effective_user)
+            self.processing_error_signal.emit(f"Permission Denied: {reason}")
+            return False
+
+        user_id = changed_by_user_id or (effective_user.id if effective_user else "reviewer")
         if hasattr(self, "comment_repo"):
             return self.comment_repo.update_comment_reviewer(comment_id, new_reviewer, user_id)
         return False
+
+    def reprocess_drawing(self, drawing_id: str) -> bool:
+        """
+        Reprocess an existing drawing by drawing ID, subject to drawing-level authorization.
+        """
+        authorized, reason = self.can_user_reprocess_drawing(drawing_id)
+        if not authorized:
+            logger.warning(f"Reprocess drawing denied for {drawing_id}: {reason}")
+            self.processing_error_signal.emit(f"Permission Denied: {reason}")
+            return False
+
+        drawing = self.drawing_repo.get_drawing_by_id(drawing_id) if hasattr(self, "drawing_repo") else None
+        if not drawing:
+            self.processing_error_signal.emit("Drawing not found")
+            return False
+
+        file_path = drawing.get("file_path")
+        if not file_path or not Path(file_path).exists():
+            self.processing_error_signal.emit(f"Drawing source file not found: {file_path}")
+            return False
+
+        dept_id = drawing.get("department_id")
+        self.start_processing_workflow(file_path, department_id=dept_id)
+        return True
 
     def get_category_counts(
         self, drawing_id: Optional[str] = None
@@ -1209,6 +1445,7 @@ class AppController(QObject):
         category_name: Optional[str] = None,
         date_from: Optional[Any] = None,
         date_to: Optional[Any] = None,
+        drawing_ids: Optional[List[str]] = None,
     ):
         """Proxy to analytics_service.get_global_kpis with full multi-criteria filtering."""
         return self.analytics_service.get_global_kpis(
@@ -1218,6 +1455,7 @@ class AppController(QObject):
             category_name=category_name,
             date_from=date_from,
             date_to=date_to,
+            drawing_ids=drawing_ids,
         )
 
     def get_category_distribution(
@@ -1229,6 +1467,7 @@ class AppController(QObject):
         date_from: Optional[Any] = None,
         date_to: Optional[Any] = None,
         include_rejected: bool = True,
+        drawing_ids: Optional[List[str]] = None,
     ):
         """Proxy to analytics_service.get_category_distribution with full filtering."""
         return self.analytics_service.get_category_distribution(
@@ -1239,6 +1478,7 @@ class AppController(QObject):
             date_from=date_from,
             date_to=date_to,
             include_rejected=include_rejected,
+            drawing_ids=drawing_ids,
         )
 
     def get_pareto_analysis(
@@ -1251,6 +1491,7 @@ class AppController(QObject):
         date_to: Optional[Any] = None,
         top_n: int = 10,
         include_rejected: bool = False,
+        drawing_ids: Optional[List[str]] = None,
     ):
         """Proxy to analytics_service.get_pareto_analysis with full filtering."""
         return self.analytics_service.get_pareto_analysis(
@@ -1262,6 +1503,7 @@ class AppController(QObject):
             date_to=date_to,
             top_n=top_n,
             include_rejected=include_rejected,
+            drawing_ids=drawing_ids,
         )
 
     def get_status_trend(
@@ -1272,6 +1514,7 @@ class AppController(QObject):
         category_name: Optional[str] = None,
         date_from: Optional[Any] = None,
         date_to: Optional[Any] = None,
+        drawing_ids: Optional[List[str]] = None,
     ):
         """Proxy to analytics_service.get_status_trend with full filtering."""
         return self.analytics_service.get_status_trend(
@@ -1281,5 +1524,6 @@ class AppController(QObject):
             category_name=category_name,
             date_from=date_from,
             date_to=date_to,
+            drawing_ids=drawing_ids,
         )
 

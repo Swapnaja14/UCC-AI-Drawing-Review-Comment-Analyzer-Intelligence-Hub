@@ -167,19 +167,12 @@ class UploadPage(QWidget):
         s_sub.setStyleSheet("color: #94A3B8; font-size: 12px;")
         single_lay.addWidget(s_sub)
 
-        # Single Mode Department Selector Dropdown
-        s_dept_lay = QHBoxLayout()
-        s_dept_lbl = QLabel("Engineering Dept *")
-        s_dept_lbl.setFont(QFont("Segoe UI Variable", 11, QFont.Weight.DemiBold))
-        s_dept_lbl.setStyleSheet("color: #94A3B8;")
-        s_dept_lay.addWidget(s_dept_lbl)
-
+        # Single Mode Department Dropdown (hidden - scoped to logged-in user)
         self._single_dept_combo = QComboBox()
         self._single_dept_combo.setFixedHeight(34)
         self._single_dept_combo.setStyleSheet(dept_combo_style)
         self._single_dept_combo.currentIndexChanged.connect(self._validate_single_form)
-        s_dept_lay.addWidget(self._single_dept_combo, 1)
-        single_lay.addLayout(s_dept_lay)
+        self._single_dept_combo.hide()
 
         # Drop Zone for Single PDF
         self._single_drop = DropZone(allow_zips=False)
@@ -302,19 +295,12 @@ class UploadPage(QWidget):
         b_sub.setStyleSheet("color: #94A3B8; font-size: 12px;")
         batch_lay.addWidget(b_sub)
 
-        # Batch Mode Department Selector Dropdown
-        b_dept_lay = QHBoxLayout()
-        b_dept_lbl = QLabel("Engineering Dept *")
-        b_dept_lbl.setFont(QFont("Segoe UI Variable", 11, QFont.Weight.DemiBold))
-        b_dept_lbl.setStyleSheet("color: #94A3B8;")
-        b_dept_lay.addWidget(b_dept_lbl)
-
+        # Batch Mode Department Dropdown (hidden - scoped to logged-in user)
         self._batch_dept_combo = QComboBox()
         self._batch_dept_combo.setFixedHeight(34)
         self._batch_dept_combo.setStyleSheet(dept_combo_style)
         self._batch_dept_combo.currentIndexChanged.connect(self._validate_batch_form)
-        b_dept_lay.addWidget(self._batch_dept_combo, 1)
-        batch_lay.addLayout(b_dept_lay)
+        self._batch_dept_combo.hide()
 
         # Drop Zone for Batch Upload
         self._batch_drop = DropZone(allow_zips=True)
@@ -509,24 +495,32 @@ class UploadPage(QWidget):
     # ── Department Selection Getters ────────────────────────────────────────
 
     def get_single_department_id(self) -> str | None:
+        if self._controller and getattr(self._controller, "current_department_id", None):
+            return self._controller.current_department_id
         idx = self._single_dept_combo.currentIndex()
         if idx <= 0:
             return None
         return self._single_dept_combo.itemData(idx, Qt.ItemDataRole.UserRole)
 
     def get_single_department_name(self) -> str | None:
+        if self._controller and getattr(self._controller, "current_department_name", None):
+            return self._controller.current_department_name
         idx = self._single_dept_combo.currentIndex()
         if idx <= 0:
             return None
         return self._single_dept_combo.currentText()
 
     def get_batch_department_id(self) -> str | None:
+        if self._controller and getattr(self._controller, "current_department_id", None):
+            return self._controller.current_department_id
         idx = self._batch_dept_combo.currentIndex()
         if idx <= 0:
             return None
         return self._batch_dept_combo.itemData(idx, Qt.ItemDataRole.UserRole)
 
     def get_batch_department_name(self) -> str | None:
+        if self._controller and getattr(self._controller, "current_department_name", None):
+            return self._controller.current_department_name
         idx = self._batch_dept_combo.currentIndex()
         if idx <= 0:
             return None

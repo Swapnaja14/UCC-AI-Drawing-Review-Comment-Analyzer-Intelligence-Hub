@@ -10,7 +10,7 @@ from __future__ import annotations
 from typing import Any, Dict, List, Optional
 from PySide6.QtWidgets import (QWidget, QVBoxLayout, QHBoxLayout, QFrame,
                                 QLabel, QPushButton, QComboBox,
-                                QDateEdit, QGridLayout)
+                                QDateEdit, QGridLayout, QSizePolicy)
 from PySide6.QtCore import Qt, QDate
 from PySide6.QtGui import QFont
 
@@ -57,76 +57,100 @@ class AnalyticsPage(QWidget):
         root.setSpacing(16)
 
         # ── Filter bar ────────────────────────────────────────────
-        fb = QHBoxLayout()
-        fb.setSpacing(12)
+        # ── Filter card container ────────────────────────────────
+        filter_card = QFrame()
+        filter_card.setObjectName("Card")
+        filter_layout = QVBoxLayout(filter_card)
+        filter_layout.setContentsMargins(16, 12, 16, 12)
+        filter_layout.setSpacing(10)
 
-        # Project combobox
+        # Row 1: Primary Entity Filters (Project, Batch, Drawing, Category)
+        fb1 = QHBoxLayout()
+        fb1.setSpacing(12)
+
         p_lbl = QLabel("Project:")
         p_lbl.setObjectName("SubCaption")
-        fb.addWidget(p_lbl)
+        fb1.addWidget(p_lbl)
         self._proj_cb = QComboBox()
         self._proj_cb.setFixedHeight(36)
-        fb.addWidget(self._proj_cb)
+        self._proj_cb.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Fixed)
+        fb1.addWidget(self._proj_cb)
 
-        # Drawing combobox (for drawing-level Pareto & category distribution)
+        b_lbl = QLabel("Batch:")
+        b_lbl.setObjectName("SubCaption")
+        fb1.addWidget(b_lbl)
+        self._batch_cb = QComboBox()
+        self._batch_cb.setFixedHeight(36)
+        self._batch_cb.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Fixed)
+        fb1.addWidget(self._batch_cb)
+
         dwg_lbl = QLabel("Drawing:")
         dwg_lbl.setObjectName("SubCaption")
-        fb.addWidget(dwg_lbl)
+        fb1.addWidget(dwg_lbl)
         self._dwg_cb = QComboBox()
         self._dwg_cb.setFixedHeight(36)
-        fb.addWidget(self._dwg_cb)
+        self._dwg_cb.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Fixed)
+        fb1.addWidget(self._dwg_cb)
 
-        # Department combobox (for per-department Pareto analysis)
-        d_lbl = QLabel("Department:")
-        d_lbl.setObjectName("SubCaption")
-        fb.addWidget(d_lbl)
-        self._dept_cb = QComboBox()
-        self._dept_cb.setFixedHeight(36)
-        fb.addWidget(self._dept_cb)
-
-        # Category combobox
         c_lbl = QLabel("Category:")
         c_lbl.setObjectName("SubCaption")
-        fb.addWidget(c_lbl)
+        fb1.addWidget(c_lbl)
         self._cat_cb = QComboBox()
         self._cat_cb.setFixedHeight(36)
-        fb.addWidget(self._cat_cb)
+        self._cat_cb.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Fixed)
+        fb1.addWidget(self._cat_cb)
+
+        filter_layout.addLayout(fb1)
+
+        # Department combobox (hidden - auto-scoped to authenticated user)
+        self._dept_cb = QComboBox()
+        self._dept_cb.setFixedHeight(36)
+        self._dept_cb.hide()
+
+        # Row 2: Date Filters & Action Button
+        fb2 = QHBoxLayout()
+        fb2.setSpacing(12)
+
+        from_lbl = QLabel("From Date:")
+        from_lbl.setObjectName("SubCaption")
+        fb2.addWidget(from_lbl)
+        self._date_from = QDateEdit(QDate.currentDate().addYears(-1))
+        self._date_from.setFixedHeight(36)
+        self._date_from.setMinimumWidth(130)
+        self._date_from.setCalendarPopup(True)
+        self._date_from.dateChanged.connect(self._apply_filters)
+        fb2.addWidget(self._date_from)
+
+        to_lbl = QLabel("To Date:")
+        to_lbl.setObjectName("SubCaption")
+        fb2.addWidget(to_lbl)
+        self._date_to = QDateEdit(QDate.currentDate())
+        self._date_to.setFixedHeight(36)
+        self._date_to.setMinimumWidth(130)
+        self._date_to.setCalendarPopup(True)
+        self._date_to.dateChanged.connect(self._apply_filters)
+        fb2.addWidget(self._date_to)
+
+        fb2.addStretch()
+
+        apply_btn = QPushButton("Apply Filters")
+        apply_btn.setObjectName("PrimaryBtn")
+        apply_btn.setFixedHeight(36)
+        apply_btn.setMinimumWidth(130)
+        apply_btn.clicked.connect(self._apply_filters)
+        fb2.addWidget(apply_btn)
+
+        filter_layout.addLayout(fb2)
+        root.addWidget(filter_card)
 
         self._populate_filters()
 
         # Connect filter widgets to auto-update charts & cascading drawings
         self._proj_cb.currentIndexChanged.connect(self._on_project_changed)
+        self._batch_cb.currentIndexChanged.connect(self._on_batch_changed)
         self._dwg_cb.currentIndexChanged.connect(self._apply_filters)
         self._dept_cb.currentIndexChanged.connect(self._apply_filters)
         self._cat_cb.currentIndexChanged.connect(self._apply_filters)
-
-        from_lbl = QLabel("From:")
-        from_lbl.setObjectName("SubCaption")
-        fb.addWidget(from_lbl)
-        # Default start date: 1 year prior to today
-        self._date_from = QDateEdit(QDate.currentDate().addYears(-1))
-        self._date_from.setFixedHeight(36)
-        self._date_from.setCalendarPopup(True)
-        self._date_from.dateChanged.connect(self._apply_filters)
-        fb.addWidget(self._date_from)
-
-        to_lbl = QLabel("To:")
-        to_lbl.setObjectName("SubCaption")
-        fb.addWidget(to_lbl)
-        self._date_to = QDateEdit(QDate.currentDate())
-        self._date_to.setFixedHeight(36)
-        self._date_to.setCalendarPopup(True)
-        self._date_to.dateChanged.connect(self._apply_filters)
-        fb.addWidget(self._date_to)
-
-        fb.addStretch()
-
-        apply_btn = QPushButton("Apply Filters")
-        apply_btn.setObjectName("PrimaryBtn")
-        apply_btn.setFixedHeight(36)
-        apply_btn.clicked.connect(self._apply_filters)
-        fb.addWidget(apply_btn)
-        root.addLayout(fb)
 
         # ── KPI summary ───────────────────────────────────────────
         self._kpi_row = QHBoxLayout()
@@ -141,7 +165,7 @@ class AnalyticsPage(QWidget):
         root.addLayout(self._grid, 1)
 
     def _populate_filters(self) -> None:
-        """Populate project, drawing, department, and category filter dropdowns."""
+        """Populate project, batch, drawing, department, and category filter dropdowns."""
         self._proj_cb.blockSignals(True)
         self._proj_cb.clear()
         self._proj_cb.addItem("All Projects", "")
@@ -155,6 +179,16 @@ class AnalyticsPage(QWidget):
             except Exception:
                 pass
         self._proj_cb.blockSignals(False)
+
+        # Populate batch combobox
+        self._batch_cb.blockSignals(True)
+        self._batch_cb.clear()
+        self._batch_cb.addItem("All Uploads / Batches", "")
+        if self._controller:
+            batch_ids = getattr(self._controller, "current_batch_drawing_ids", []) or []
+            if batch_ids:
+                self._batch_cb.addItem(f"⚡ Current Batch ({len(batch_ids)} Drawings)", "CURRENT_BATCH")
+        self._batch_cb.blockSignals(False)
 
         self._populate_drawings_for_selected_project()
 
@@ -202,20 +236,35 @@ class AnalyticsPage(QWidget):
         self._cat_cb.blockSignals(False)
 
     def _populate_drawings_for_selected_project(self) -> None:
-        """Populate drawing dropdown filtered by current project selection."""
+        """Populate drawing dropdown filtered by current project and/or batch selection."""
         proj_id = self._proj_cb.currentData() if hasattr(self, "_proj_cb") else ""
+        batch_selection = self._batch_cb.currentData() if hasattr(self, "_batch_cb") else ""
+
         self._dwg_cb.blockSignals(True)
         self._dwg_cb.clear()
-        self._dwg_cb.addItem("All Drawings", "")
-        if self._controller:
-            try:
-                drawings = self._controller.get_all_drawings(project_id=proj_id if proj_id else None)
-                for d in drawings:
-                    did = d.get("id", "")
-                    fname = d.get("file_name", "Drawing")
-                    self._dwg_cb.addItem(fname, did)
-            except Exception:
-                pass
+
+        if batch_selection == "CURRENT_BATCH":
+            self._dwg_cb.addItem("All Drawings in Batch", "")
+            if self._controller:
+                try:
+                    drawings = self._controller.get_batch_drawings()
+                    for d in drawings:
+                        did = d.get("id", "")
+                        fname = d.get("file_name", "Drawing")
+                        self._dwg_cb.addItem(fname, did)
+                except Exception:
+                    pass
+        else:
+            self._dwg_cb.addItem("All Drawings", "")
+            if self._controller:
+                try:
+                    drawings = self._controller.get_all_drawings(project_id=proj_id if proj_id else None)
+                    for d in drawings:
+                        did = d.get("id", "")
+                        fname = d.get("file_name", "Drawing")
+                        self._dwg_cb.addItem(fname, did)
+                except Exception:
+                    pass
         self._dwg_cb.blockSignals(False)
 
     def _on_project_changed(self, index: int) -> None:
@@ -223,11 +272,18 @@ class AnalyticsPage(QWidget):
         self._populate_drawings_for_selected_project()
         self._apply_filters()
 
+    def _on_batch_changed(self, index: int) -> None:
+        """Update drawing combobox options when batch filter changes and reload data."""
+        self._populate_drawings_for_selected_project()
+        self._apply_filters()
+
     def _get_active_filters(self) -> dict:
         """Read current filter state from all widgets."""
         proj_id = self._proj_cb.currentData() if hasattr(self, "_proj_cb") else ""
+        batch_selection = self._batch_cb.currentData() if hasattr(self, "_batch_cb") else ""
         dwg_id  = self._dwg_cb.currentData() if hasattr(self, "_dwg_cb") else ""
-        dept    = self._dept_cb.currentText() if hasattr(self, "_dept_cb") else "All Departments"
+        user_dept = self._controller.current_department_name if self._controller and getattr(self._controller, "current_department_name", None) else None
+        dept    = user_dept or (self._dept_cb.currentText() if hasattr(self, "_dept_cb") else "All Departments")
         cat     = self._cat_cb.currentText() if hasattr(self, "_cat_cb") else "All Categories"
 
         # Read date limits from QDateEdit
@@ -237,10 +293,19 @@ class AnalyticsPage(QWidget):
         from_dt = datetime(qfrom.year(), qfrom.month(), qfrom.day()) if qfrom and qfrom.isValid() else None
         to_dt   = datetime(qto.year(), qto.month(), qto.day(), 23, 59, 59) if qto and qto.isValid() else None
 
+        # Determine batch drawing IDs if Current Batch is selected
+        batch_drawing_ids = None
+        is_current_batch = False
+        if batch_selection == "CURRENT_BATCH" and self._controller:
+            batch_drawing_ids = getattr(self._controller, "current_batch_drawing_ids", None) or []
+            is_current_batch = True
+
         return {
             "project_id": proj_id if proj_id else None,
             "drawing_id": dwg_id if dwg_id else None,
-            "department_name": None if dept in ("All Departments", "") else dept,
+            "drawing_ids": batch_drawing_ids if (batch_drawing_ids and not dwg_id) else None,
+            "is_current_batch": is_current_batch,
+            "department_name": None if dept in ("All Departments", "", "Unassigned") else dept,
             "category_name": None if cat in ("All Categories", "") else cat,
             "date_from": from_dt,
             "date_to": to_dt,
@@ -259,6 +324,7 @@ class AnalyticsPage(QWidget):
         kpi_data = self._controller.get_dashboard_kpis(
             project_id=filters["project_id"],
             drawing_id=filters["drawing_id"],
+            drawing_ids=filters.get("drawing_ids"),
             department_name=filters["department_name"],
             category_name=filters["category_name"],
             date_from=filters["date_from"],
@@ -309,6 +375,8 @@ class AnalyticsPage(QWidget):
         filters = self._get_active_filters()
         proj_id   = filters["project_id"]
         dwg_id    = filters["drawing_id"]
+        dwg_ids   = filters.get("drawing_ids")
+        is_cur_b  = filters.get("is_current_batch", False)
         dept_name = filters["department_name"]
         cat_name  = filters["category_name"]
         d_from    = filters["date_from"]
@@ -317,6 +385,7 @@ class AnalyticsPage(QWidget):
         pareto_data = self._controller.get_pareto_analysis(
             project_id=proj_id,
             drawing_id=dwg_id,
+            drawing_ids=dwg_ids,
             department_name=dept_name,
             category_name=cat_name,
             date_from=d_from,
@@ -326,6 +395,7 @@ class AnalyticsPage(QWidget):
         category_data = self._controller.get_category_distribution(
             project_id=proj_id,
             drawing_id=dwg_id,
+            drawing_ids=dwg_ids,
             department_name=dept_name,
             category_name=cat_name,
             date_from=d_from,
@@ -335,13 +405,15 @@ class AnalyticsPage(QWidget):
         trend_data = self._controller.get_status_trend(
             project_id=proj_id,
             drawing_id=dwg_id,
+            drawing_ids=dwg_ids,
             department_name=dept_name,
             category_name=cat_name,
             date_from=d_from,
             date_to=d_to,
         ) if self._controller else None
 
-        pareto_view  = build_pareto_chart(pareto_data)
+        pareto_title = "Pareto — Current Batch Errors" if is_cur_b else "Pareto — Comments by Category"
+        pareto_view  = build_pareto_chart(pareto_data, title=pareto_title)
         monthly_view = build_monthly_chart(trend_data)
         pie_view     = build_category_pie(category_data)
 
@@ -364,10 +436,25 @@ class AnalyticsPage(QWidget):
 
     def reload_data(self) -> None:
         """Reload live KPI metrics, charts, and filter options from the controller."""
+        # Refresh batch dropdown in case a new batch was processed
+        if hasattr(self, "_batch_cb") and self._controller:
+            prev_batch = self._batch_cb.currentData()
+            self._batch_cb.blockSignals(True)
+            self._batch_cb.clear()
+            self._batch_cb.addItem("All Uploads / Batches", "")
+            batch_ids = getattr(self._controller, "current_batch_drawing_ids", []) or []
+            if batch_ids:
+                self._batch_cb.addItem(f"⚡ Current Batch ({len(batch_ids)} Drawings)", "CURRENT_BATCH")
+            idx = self._batch_cb.findData(prev_batch)
+            if idx >= 0:
+                self._batch_cb.setCurrentIndex(idx)
+            self._batch_cb.blockSignals(False)
+
         self._build_kpi_cards()
         self._build_charts()
 
     def reload_comments(self) -> None:
         """Alias to refresh analytics when comments or drawings update."""
         self.reload_data()
+
 

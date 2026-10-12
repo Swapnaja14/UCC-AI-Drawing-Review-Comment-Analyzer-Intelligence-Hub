@@ -144,31 +144,7 @@ class ClassificationPage(QWidget):
         tb.addStretch()
 
         self._dept_filt = QComboBox()
-        dept_options = ["All Departments"]
-        if self._controller and hasattr(self._controller, "get_all_departments"):
-            try:
-                db_depts = self._controller.get_all_departments()
-                for d in db_depts:
-                    if d.get("name") and d.get("name") not in dept_options:
-                        dept_options.append(d.get("name"))
-            except Exception:
-                pass
-        if len(dept_options) <= 1:
-            dept_options = [
-                "All Departments",
-                "Electrical Engineering",
-                "GPD",
-                "Pipe Support Engineering",
-                "Piping Engineering",
-                "Plakon",
-                "Structural & Physical Design",
-                "System Engineering",
-                "Unassigned",
-            ]
-        self._dept_filt.addItems(dept_options)
-        self._dept_filt.setFixedHeight(36)
-        self._dept_filt.currentTextChanged.connect(self._on_dept_filter_changed)
-        tb.addWidget(self._dept_filt)
+        self._dept_filt.hide()
 
         self._cat_filt = QComboBox()
         self._cat_filt.addItems(["All Categories"] + list(category_counts.keys()))
