@@ -20,6 +20,8 @@ def qapp():
 
 def create_mock_controller():
     controller = MagicMock()
+    controller.current_department_id = None
+    controller.current_department_name = None
     controller.get_all_departments.return_value = [
         {"id": "DEPT-01", "name": "Electrical Engineering"},
         {"id": "DEPT-02", "name": "Piping Engineering"},
@@ -124,3 +126,83 @@ def test_workflow_error_stops_timer(mock_exists, qapp):
     page._on_doc_error("Corrupted PDF file header")
     assert not page._ui_timer.isActive()
     assert "❌ Corrupted PDF file header" in page._single_status_lbl.text()
+
+
+@patch("os.path.exists", return_value=True)
+def test_single_upload_refreshes_on_new_file_selection(mock_exists, qapp):
+    """Verify that when a second file is uploaded, the Single File Upload UI completely refreshes."""
+    mock_controller = create_mock_controller()
+    mock_val = MagicMock()
+    mock_val.is_valid = True
+    mock_val.file_size_mb = 1.5
+    mock_controller.validate_file.return_value = mock_val
+
+    page = UploadPage(controller=mock_controller)
+    page._single_dept_combo.setCurrentIndex(1)
+
+    # 1. First file upload & processing completion
+    page._on_single_file_selected("first_drawing.pdf")
+    page._start_single_workflow()
+
+    class DummyResult:
+        processing_duration_seconds = 8.2
+
+    page._on_workflow_completed(DummyResult())
+
+    # Verify completed state (green viewer button)
+    assert "View PDF Drawing" in page._single_process_btn.text()
+    assert "#059669" in page._single_process_btn.styleSheet()
+
+    # Verify open_viewer signal emission on click when in completed state
+    viewer_emitted = []
+    page.open_viewer_requested.connect(lambda: viewer_emitted.append(True))
+    page._single_process_btn.click()
+    assert len(viewer_emitted) == 1
+
+    # 2. User selects a SECOND file
+    page._on_single_file_selected("second_drawing.pdf")
+
+    # Verify UI is completely refreshed
+    assert page._single_filepath == "second_drawing.pdf"
+    assert "Process Single Drawing" in page._single_process_btn.text()
+    assert page._single_process_btn.styleSheet() == ""
+    assert page._single_process_btn.isEnabled() is True
+    assert page._single_prog.isHidden() is True
+    assert page._single_prog.value() == 0
+    assert page._single_timer_lbl.isHidden() is True
+    assert "Ready: 'second_drawing.pdf'" in page._single_status_lbl.text()
+
+    # 3. Clicking "Process Single Drawing" must now trigger the workflow, NOT open the viewer!
+    page._single_process_btn.click()
+    # It must have called start_processing_workflow on the controller with second_drawing.pdf
+    mock_controller.start_processing_workflow.assert_called_with(
+        "second_drawing.pdf", department_id="DEPT-01"
+    )
+    # The viewer signal must NOT have been emitted again
+    assert len(viewer_emitted) == 1
+
+
+@patch("os.path.exists", return_value=True)
+def test_single_upload_clear_refreshes_ui(mock_exists, qapp):
+    """Verify that clearing the single file resets button connections and hides cards."""
+    mock_controller = create_mock_controller()
+    page = UploadPage(controller=mock_controller)
+    page._single_dept_combo.setCurrentIndex(1)
+
+    # Simulate completed file
+    page._single_filepath = "drawing_done.pdf"
+    class DummyResult:
+        processing_duration_seconds = 5.0
+    page._on_workflow_completed(DummyResult())
+
+    # User clicks remove (✕)
+    page._clear_single_file()
+
+    assert page._single_filepath is None
+    assert page._single_file_card.isHidden() is True
+    assert page._single_process_btn.isEnabled() is False
+    assert "Process Single Drawing" in page._single_process_btn.text()
+    assert page._single_process_btn.styleSheet() == ""
+    assert page._single_prog.isHidden() is True
+    assert page._single_timer_lbl.isHidden() is True
+

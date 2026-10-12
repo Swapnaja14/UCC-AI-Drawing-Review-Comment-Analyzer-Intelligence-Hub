@@ -4,15 +4,32 @@ import math
 from pathlib import Path
 from typing import List, Dict, Any, Optional
 
-try:
-    import torch
-    from transformers import AutoTokenizer, AutoModelForSequenceClassification
-    TRANSFORMERS_AVAILABLE = True
-except (ImportError, OSError, Exception):
-    torch = None
-    AutoTokenizer = None
-    AutoModelForSequenceClassification = None
-    TRANSFORMERS_AVAILABLE = False
+torch = None
+AutoTokenizer = None
+AutoModelForSequenceClassification = None
+_TRANSFORMERS_INITIALIZED = False
+TRANSFORMERS_AVAILABLE = False
+
+
+def _init_transformers() -> bool:
+    global torch, AutoTokenizer, AutoModelForSequenceClassification, _TRANSFORMERS_INITIALIZED, TRANSFORMERS_AVAILABLE
+    if _TRANSFORMERS_INITIALIZED:
+        return TRANSFORMERS_AVAILABLE
+    try:
+        import torch as _torch
+        from transformers import AutoTokenizer as _AT, AutoModelForSequenceClassification as _AM
+        torch = _torch
+        AutoTokenizer = _AT
+        AutoModelForSequenceClassification = _AM
+        TRANSFORMERS_AVAILABLE = True
+    except (ImportError, OSError, Exception):
+        torch = None
+        AutoTokenizer = None
+        AutoModelForSequenceClassification = None
+        TRANSFORMERS_AVAILABLE = False
+    _TRANSFORMERS_INITIALIZED = True
+    return TRANSFORMERS_AVAILABLE
+
 
 from src.core.dtos.classification_dtos import (
     CategoryPredictionDTO,
@@ -372,7 +389,7 @@ class ClassificationService:
 
     def _ensure_model_loaded(self) -> bool:
         """Helper to ensure DistilBERT is loaded once on target device in a thread-safe manner."""
-        if not TRANSFORMERS_AVAILABLE:
+        if not _init_transformers():
             return False
 
         key = str(self.model_dir.resolve()) if self.model_dir else ""

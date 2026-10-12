@@ -532,6 +532,65 @@ class UploadPage(QWidget):
     def get_selected_department_name(self) -> str | None:
         return self.get_single_department_name() or self.get_batch_department_name()
 
+    # ── Upload UI Reset Methods ──────────────────────────────────────────────
+
+    def reset_single_upload_ui(self) -> None:
+        """Completely resets the Single File Upload processing state, button connections, and styles."""
+        if self._active_workflow_mode == self.MODE_SINGLE:
+            self._stop_workflow_timer()
+            self._active_workflow_mode = self.MODE_NONE
+
+        # Disconnect any existing clicked handlers safely (e.g., _open_viewer)
+        try:
+            self._single_process_btn.clicked.disconnect()
+        except Exception:
+            pass
+        # Reconnect to start single workflow
+        self._single_process_btn.clicked.connect(self._start_single_workflow)
+
+        # Reset button text and clear custom inline stylesheet (reverting to PrimaryBtn theme styling)
+        self._single_process_btn.setText("  Process Single Drawing")
+        self._single_process_btn.setStyleSheet("")
+
+        # Reset progress bar
+        self._single_prog.setRange(0, 100)
+        self._single_prog.setValue(0)
+        self._single_prog.hide()
+
+        # Reset timer label and internal state
+        self._single_timer_lbl.setText("")
+        self._single_timer_lbl.hide()
+        self._workflow_start_time = None
+        self._current_progress_pct = 0
+
+    def reset_batch_upload_ui(self) -> None:
+        """Completely resets the Batch Upload processing state, button connections, and styles."""
+        if self._active_workflow_mode == self.MODE_BATCH:
+            self._stop_workflow_timer()
+            self._active_workflow_mode = self.MODE_NONE
+
+        try:
+            self._batch_process_btn.clicked.disconnect()
+        except Exception:
+            pass
+        self._batch_process_btn.clicked.connect(self._start_batch_workflow)
+
+        self._batch_process_btn.setText("  Process Batch Upload")
+        self._batch_process_btn.setStyleSheet(
+            "QPushButton { background-color: #4F46E5; color: white; border-radius: 8px; font-size: 12px; font-weight: bold; }"
+            "QPushButton:hover { background-color: #4338CA; }"
+            "QPushButton:disabled { background-color: #2D313A; color: #64748B; }"
+        )
+
+        self._batch_prog.setRange(0, 100)
+        self._batch_prog.setValue(0)
+        self._batch_prog.hide()
+
+        self._batch_timer_lbl.setText("")
+        self._batch_timer_lbl.hide()
+        self._workflow_start_time = None
+        self._current_progress_pct = 0
+
     # ── Form Validation & State Management ───────────────────────────────────
 
     def _validate_forms(self) -> bool:
@@ -543,6 +602,14 @@ class UploadPage(QWidget):
         has_dept = self.get_single_department_id() is not None or self.get_single_department_name() is not None
         dept_name = self.get_single_department_name() or ""
         has_single = bool(self._single_filepath and os.path.exists(self._single_filepath))
+
+        # Ensure button is wired to process workflow and not stuck on green viewer
+        try:
+            self._single_process_btn.clicked.disconnect()
+        except Exception:
+            pass
+        self._single_process_btn.clicked.connect(self._start_single_workflow)
+        self._single_process_btn.setStyleSheet("")
 
         if has_single:
             self._update_card_style(self._single_card, active=True, accent_color="#3E9BFF")
@@ -559,6 +626,7 @@ class UploadPage(QWidget):
                 self._single_status_lbl.setStyleSheet("color: #FBBF24;")
                 self._single_status_lbl.show()
                 self._single_process_btn.setEnabled(False)
+                self._single_process_btn.setText("  Process Single Drawing")
                 return False
         else:
             self._update_card_style(self._single_card, active=False, accent_color="#3E9BFF")
@@ -570,6 +638,19 @@ class UploadPage(QWidget):
         has_dept = self.get_batch_department_id() is not None or self.get_batch_department_name() is not None
         dept_name = self.get_batch_department_name() or ""
         has_batch = bool(self._batch_filepaths)
+
+        batch_btn_style = (
+            "QPushButton { background-color: #4F46E5; color: white; border-radius: 8px; font-size: 12px; font-weight: bold; }"
+            "QPushButton:hover { background-color: #4338CA; }"
+            "QPushButton:disabled { background-color: #2D313A; color: #64748B; }"
+        )
+
+        try:
+            self._batch_process_btn.clicked.disconnect()
+        except Exception:
+            pass
+        self._batch_process_btn.clicked.connect(self._start_batch_workflow)
+        self._batch_process_btn.setStyleSheet(batch_btn_style)
 
         if has_batch:
             self._update_card_style(self._batch_card, active=True, accent_color="#8B9CFF")
@@ -585,6 +666,7 @@ class UploadPage(QWidget):
                 self._batch_status_lbl.setStyleSheet("color: #FBBF24;")
                 self._batch_status_lbl.show()
                 self._batch_process_btn.setEnabled(False)
+                self._batch_process_btn.setText("  Process Batch Upload")
                 return False
         else:
             self._update_card_style(self._batch_card, active=False, accent_color="#8B9CFF")
@@ -620,6 +702,9 @@ class UploadPage(QWidget):
             self._on_single_file_selected(path)
 
     def _on_single_file_selected(self, path: str) -> None:
+        # Completely refresh single upload processing state and reset button before handling new file
+        self.reset_single_upload_ui()
+
         self._single_filepath = path
         name = os.path.basename(path)
 
@@ -642,16 +727,10 @@ class UploadPage(QWidget):
         self._validate_single_form()
 
     def _clear_single_file(self) -> None:
-        if self._active_workflow_mode == self.MODE_SINGLE:
-            self._stop_workflow_timer()
-            self._active_workflow_mode = self.MODE_NONE
+        self.reset_single_upload_ui()
         self._single_filepath = None
         self._single_file_card.hide()
-        self._single_prog.hide()
         self._single_status_lbl.hide()
-        self._single_timer_lbl.hide()
-        self._single_prog.setRange(0, 100)
-        self._single_prog.setValue(0)
         self._validate_single_form()
 
     # ── Batch Files & Zip Handlers ────────────────────────────────────────────
@@ -662,6 +741,10 @@ class UploadPage(QWidget):
             self._on_batch_files_selected(paths)
 
     def _on_batch_files_selected(self, paths: List[str]) -> None:
+        # If previous batch had completed, reset the workflow UI first
+        if "View" in self._batch_process_btn.text():
+            self.reset_batch_upload_ui()
+
         existing = set(self._batch_filepaths)
         for p in paths:
             if p and p not in existing:
