@@ -155,7 +155,13 @@ def test_3_app_controller_historical_edits_survive_restart(temp_db):
     cmt_id = c_res["id"]
 
     # Controller updates status, category, department, and reviewer
+    from src.core.dtos.auth_dtos import UserDTO, SessionTokenDTO
     controller = AppController(db_engine=engine)
+    controller._current_session = SessionTokenDTO(
+        token="test_token",
+        user=UserDTO(user_id="eng_user", username="eng_user", email="eng@ucc.com", role="Lead Engineer"),
+        created_at=datetime.now(timezone.utc),
+    )
     controller.update_comment_category(cmt_id, "Electrical", changed_by_user_id="eng_user")
     controller.update_comment_status(cmt_id, "Approved", verified_by_human=True, changed_by_user_id="eng_user")
     controller.update_comment_department(cmt_id, "Electrical Engineering", changed_by_user_id="eng_user")
@@ -164,6 +170,11 @@ def test_3_app_controller_historical_edits_survive_restart(temp_db):
     # Restart app with fresh engine
     restart_engine = DatabaseEngine(db_path=db_file)
     restart_controller = AppController(db_engine=restart_engine)
+    restart_controller._current_session = SessionTokenDTO(
+        token="test_token_restart",
+        user=UserDTO(user_id="eng_user", username="eng_user", email="eng@ucc.com", role="Lead Engineer"),
+        created_at=datetime.now(timezone.utc),
+    )
 
     reloaded_raw = restart_controller.comment_repo.get_comment_by_id(cmt_id)
     normalised = restart_controller.normalise_comment(reloaded_raw)

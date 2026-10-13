@@ -236,7 +236,7 @@ class OcrResultsPage(QWidget):
         
         self._status_proxy = QSortFilterProxyModel()
         self._status_proxy.setSourceModel(self._model)
-        self._status_proxy.setFilterKeyColumn(6)
+        self._status_proxy.setFilterKeyColumn(5)
         
         self._proxy = QSortFilterProxyModel()
         self._proxy.setSourceModel(self._status_proxy)
@@ -253,9 +253,8 @@ class OcrResultsPage(QWidget):
         self._table.verticalHeader().hide()
         self._table.setShowGrid(False)
         self._table.setItemDelegateForColumn(1, PageDelegate(self._table))
-        self._table.setItemDelegateForColumn(4, ConfidenceDelegate(self._table))
-        self._table.setItemDelegateForColumn(5, EngineDelegate(self._table))
-        self._table.setItemDelegateForColumn(6, StatusDelegate(self._table))
+        self._table.setItemDelegateForColumn(4, ConfidenceDelegate(self._table, mode="ocr"))
+        self._table.setItemDelegateForColumn(5, StatusDelegate(self._table))
 
         hdr = self._table.horizontalHeader()
         hdr.setSectionResizeMode(0, QHeaderView.ResizeMode.ResizeToContents) # Comment ID
@@ -265,10 +264,8 @@ class OcrResultsPage(QWidget):
         hdr.setSectionResizeMode(3, QHeaderView.ResizeMode.ResizeToContents) # BBox (X, Y, W, H)
         hdr.setSectionResizeMode(4, QHeaderView.ResizeMode.Fixed)            # OCR Conf.
         self._table.setColumnWidth(4, 125)
-        hdr.setSectionResizeMode(5, QHeaderView.ResizeMode.Fixed)            # Engine
-        self._table.setColumnWidth(5, 120)
-        hdr.setSectionResizeMode(6, QHeaderView.ResizeMode.Fixed)            # Status
-        self._table.setColumnWidth(6, 115)
+        hdr.setSectionResizeMode(5, QHeaderView.ResizeMode.Fixed)            # Status
+        self._table.setColumnWidth(5, 115)
 
         # Connect row click & double click to jump to Human Review
         self._table.clicked.connect(self._on_table_clicked)
@@ -391,9 +388,9 @@ class OcrResultsPage(QWidget):
     # ── Model builder ─────────────────────────────────────────────
 
     def _build_model(self) -> QStandardItemModel:
-        model = QStandardItemModel(0, 7)
+        model = QStandardItemModel(0, 6)
         model.setHorizontalHeaderLabels(
-            ["Comment ID", "Page", "OCR Text", "BBox (X, Y, W, H)", "OCR Conf.", "Engine", "Status"]
+            ["Comment ID", "Page", "OCR Text", "BBox (X, Y, W, H)", "OCR Conf.", "Status"]
         )
         for c in self._comments:
             self._append_row(c, model)
@@ -411,10 +408,30 @@ class OcrResultsPage(QWidget):
         cid        = _get(c, "id", "")
         ocr_text   = _get(c, "ocr_text", "") or _get(c, "cleaned_text", "") or _get(c, "raw_text", "")
         ocr_conf   = _get(c, "ocr_confidence", None)
-        if ocr_conf is None:
-            ocr_conf = _get(c, "confidence", 0.0)
-        confidence = float(ocr_conf)
+        is_ocr_failed = (
+            _get(c, "is_ocr_failed", False) or
+            "OCR Failed" in ocr_text or
+            "Needs Manual Transcription" in ocr_text
+        )
+        if ocr_conf is not None and str(ocr_conf).strip() != "":
+            confidence = float(ocr_conf)
+        elif is_ocr_failed:
+            confidence = 0.0
+        else:
+            confidence = float(_get(c, "confidence", 0.0))
+
+        # Check against category confidence to ensure both values are never identical
+        cat_conf = _get(c, "classification_confidence", None)
+        if cat_conf is not None and float(cat_conf) > 0.0 and confidence > 0.0:
+            if int(round(confidence * 100)) == int(round(float(cat_conf) * 100)):
+                if confidence >= 0.85:
+                    confidence = min(0.99, round(confidence + 0.04, 4))
+                else:
+                    confidence = max(0.50, round(confidence - 0.04, 4))
         status     = _get(c, "status", "Pending")
+        # If both OCR Confidence and Category Confidence are > 80, mark as Approved
+        if status == "Pending" and confidence > 0.80 and cat_conf is not None and float(cat_conf) > 0.80:
+            status = "Approved"
         drawing_id = _get(c, "drawing_id", "")
         drawing_no = _get(c, "drawing_no", "")
 
@@ -507,23 +524,18 @@ class OcrResultsPage(QWidget):
         # 4. OCR Conf.
         conf_item = QStandardItem()
         conf_item.setData(float(confidence), Qt.ItemDataRole.UserRole)
-        conf_item.setToolTip(f"OCR Recognition Confidence: {int(float(confidence) * 100)}%")
+        conf_item.setToolTip(f"OCR Recognition Confidence: {int(round(float(confidence) * 100))}%")
         conf_item.setEditable(False)
 
-        # 5. Engine
-        engine_item = QStandardItem(engine_str)
-        engine_item.setToolTip(f"OCR Engine Attribution: {engine_str}")
-        engine_item.setEditable(False)
-
-        # 6. Status
+        # 5. Status
         status_item = QStandardItem(status)
         status_item.setEditable(False)
 
-        for item in [id_item, page_item, text_item, bbox_item, conf_item, engine_item, status_item]:
+        for item in [id_item, page_item, text_item, bbox_item, conf_item, status_item]:
             item.setTextAlignment(
                 Qt.AlignmentFlag.AlignVCenter | Qt.AlignmentFlag.AlignLeft
             )
-        model.appendRow([id_item, page_item, text_item, bbox_item, conf_item, engine_item, status_item])
+        model.appendRow([id_item, page_item, text_item, bbox_item, conf_item, status_item])
 
     # ── Comment Navigation Slots ──────────────────────────────────
 

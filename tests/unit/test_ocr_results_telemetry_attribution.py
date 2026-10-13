@@ -31,7 +31,7 @@ def qapp():
 
 
 def test_ocr_results_table_columns_and_headers(qapp):
-    """Verify table has 7 columns with exact required telemetry and attribution headers."""
+    """Verify table has 6 columns with exact required telemetry and status headers (Engine column removed)."""
     page = OcrResultsPage(controller=None)
     model = page._model
 
@@ -41,10 +41,9 @@ def test_ocr_results_table_columns_and_headers(qapp):
         "OCR Text",
         "BBox (X, Y, W, H)",
         "OCR Conf.",
-        "Engine",
         "Status",
     ]
-    assert model.columnCount() == 7
+    assert model.columnCount() == 6
     for col_idx, expected_title in enumerate(expected_headers):
         header_text = model.headerData(col_idx, Qt.Orientation.Horizontal, Qt.ItemDataRole.DisplayRole)
         assert header_text == expected_title, f"Column {col_idx} header mismatch: expected '{expected_title}', got '{header_text}'"
@@ -57,14 +56,13 @@ def test_ocr_results_delegates_assigned(qapp):
 
     assert isinstance(table.itemDelegateForColumn(1), PageDelegate)
     assert isinstance(table.itemDelegateForColumn(4), ConfidenceDelegate)
-    assert isinstance(table.itemDelegateForColumn(5), EngineDelegate)
-    assert isinstance(table.itemDelegateForColumn(6), StatusDelegate)
+    assert isinstance(table.itemDelegateForColumn(5), StatusDelegate)
 
 
 def test_ocr_results_status_proxy_column(qapp):
-    """Verify status proxy filters on column 6 (Status)."""
+    """Verify status proxy filters on column 5 (Status)."""
     page = OcrResultsPage(controller=None)
-    assert page._status_proxy.filterKeyColumn() == 6
+    assert page._status_proxy.filterKeyColumn() == 5
 
 
 def test_ocr_results_telemetry_and_attribution_display(qapp):
@@ -117,18 +115,13 @@ def test_ocr_results_telemetry_and_attribution_display(qapp):
     assert float(item_conf.data(Qt.ItemDataRole.UserRole)) == 0.94
     assert "94%" in item_conf.toolTip()
 
-    # Col 5: Engine
-    item_engine = model.item(0, 5)
-    assert item_engine.text() == "Tesseract OCR"
-    assert "Tesseract OCR" in item_engine.toolTip()
-
-    # Col 6: Status
-    item_status = model.item(0, 6)
+    # Col 5: Status (Engine column removed)
+    item_status = model.item(0, 5)
     assert item_status.text() == "Approved"
 
 
 def test_ocr_results_native_engine_and_normalized_bbox(qapp):
-    """Verify handling of Native OCR engine and normalized float bboxes."""
+    """Verify handling of normalized float bboxes in OCR Results table."""
     test_comment = {
         "id": "CMT-P1-05",
         "page_number": 1,
@@ -147,5 +140,5 @@ def test_ocr_results_native_engine_and_normalized_bbox(qapp):
     item_bbox = model.item(0, 3)
     assert "[0.10, 0.20, 0.30, 0.05]" == item_bbox.text()
 
-    item_engine = model.item(0, 5)
-    assert item_engine.text() == "Native"
+    item_status = model.item(0, 5)
+    assert item_status.text() == "Pending"

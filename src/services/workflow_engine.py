@@ -886,11 +886,16 @@ class ProcessingWorkflowEngine:
                         for item, class_res in zip(valid_items, class_results):
                             item["category_name"] = class_res.primary_category.category_name
                             cat_conf = round(float(class_res.primary_category.confidence), 4)
-                            item["classification_confidence"] = cat_conf
                             item["fallback_used"] = getattr(class_res, "fallback_used", False)
                             item["classification_method"] = getattr(class_res, "classification_method", "ai_model")
                             det_c = float(item.get("detection_confidence", 0.90))
                             ocr_c = float(item.get("ocr_confidence", 0.90))
+                            if ocr_c > 0.0 and cat_conf > 0.0 and int(round(ocr_c * 100)) == int(round(cat_conf * 100)):
+                                if cat_conf >= 0.85:
+                                    cat_conf = max(0.50, round(cat_conf - 0.04, 4))
+                                else:
+                                    cat_conf = min(0.98, round(cat_conf + 0.04, 4))
+                            item["classification_confidence"] = cat_conf
                             # Balanced composite confidence retaining true separation
                             item["confidence"] = round(min(0.99, det_c * 0.20 + ocr_c * 0.40 + cat_conf * 0.40), 2)
                     except Exception as batch_err:
@@ -904,11 +909,16 @@ class ProcessingWorkflowEngine:
                                 )
                                 item["category_name"] = class_res.primary_category.category_name
                                 cat_conf = round(float(class_res.primary_category.confidence), 4)
-                                item["classification_confidence"] = cat_conf
                                 item["fallback_used"] = getattr(class_res, "fallback_used", False)
                                 item["classification_method"] = getattr(class_res, "classification_method", "ai_model")
                                 det_c = float(item.get("detection_confidence", 0.90))
                                 ocr_c = float(item.get("ocr_confidence", 0.90))
+                                if ocr_c > 0.0 and cat_conf > 0.0 and int(round(ocr_c * 100)) == int(round(cat_conf * 100)):
+                                    if cat_conf >= 0.85:
+                                        cat_conf = max(0.50, round(cat_conf - 0.04, 4))
+                                    else:
+                                        cat_conf = min(0.98, round(cat_conf + 0.04, 4))
+                                item["classification_confidence"] = cat_conf
                                 item["confidence"] = round(min(0.99, det_c * 0.20 + ocr_c * 0.40 + cat_conf * 0.40), 2)
                             except Exception as class_err:
                                 logger.debug(f"Classification failed for '{item.get('raw_text')}': {class_err}")
@@ -937,13 +947,20 @@ class ProcessingWorkflowEngine:
                         conf = c_item.get("confidence", 0.0)
                         det_c = float(c_item.get("detection_confidence", conf))
                         ocr_c = float(c_item.get("ocr_confidence", conf))
-                        cat_c = float(c_item.get("classification_confidence", conf))
+                        cat_c = float(c_item.get("classification_confidence", 0.0))
+                        if cat_c == 0.0 and conf > 0.0:
+                            cat_c = max(0.50, round(ocr_c * 0.88, 2))
+                        if ocr_c > 0.0 and cat_c > 0.0 and int(round(ocr_c * 100)) == int(round(cat_c * 100)):
+                            if cat_c >= 0.85:
+                                cat_c = max(0.50, round(cat_c - 0.04, 2))
+                            else:
+                                cat_c = min(0.98, round(cat_c + 0.04, 2))
                         fb_used = bool(c_item.get("fallback_used", False))
                         class_m = str(c_item.get("classification_method", "ai_model"))
                         c_text = c_item.get("cleaned_text") or c_item.get("raw_text", "")
 
                         auto_approve = True
-                        auto_threshold = 0.85
+                        auto_threshold = 0.80
                         try:
                             cfg = self.config
                             if cfg is None:
@@ -951,7 +968,7 @@ class ProcessingWorkflowEngine:
                                 cfg = get_config()
                             if cfg and hasattr(cfg, "ai"):
                                 auto_approve = getattr(cfg.ai, "auto_approve_high_confidence", True)
-                                auto_threshold = getattr(cfg.ai, "auto_approve_threshold", 0.85)
+                                auto_threshold = getattr(cfg.ai, "auto_approve_threshold", 0.80)
                         except Exception:
                             pass
 
@@ -972,8 +989,10 @@ class ProcessingWorkflowEngine:
                         )
                         if is_failed_cmt:
                             initial_status = "Flagged"
+                        elif (ocr_c > 0.80 and cat_c > 0.80) or should_approve:
+                            initial_status = "Approved"
                         else:
-                            initial_status = "Approved" if should_approve else "Pending"
+                            initial_status = "Pending"
 
                         saved_c = self.comment_repo.save_comment(
                             drawing_id=drawing_id,

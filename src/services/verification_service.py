@@ -131,7 +131,7 @@ class VerificationService:
     def approve_all_high_confidence(
         self,
         drawing_id: str,
-        threshold: float = 0.85,
+        threshold: float = 0.80,
         reviewer_id: str = 'system',
         hardened: bool = False,
     ) -> BulkActionResultDTO:

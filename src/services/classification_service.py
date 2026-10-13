@@ -106,7 +106,12 @@ class ClassificationService:
                 'part number wrong', 'part number mismatch', 'ECN no', 'ECN number', 'machining symbol', 
                 'machining finish', 'surface finish', 'incorrect tolerance', 'tolerance', 'stiffener plate', 
                 'gusset plate', 'flange rating', 'pipe schedule', 'pressure rating', 'bolt grade', 
-                'A325', 'nozzle flange', 'undersized', 'shear connection'
+                'A325', 'nozzle flange', 'undersized', 'shear connection',
+                'single line diagram', 'cable tray', 'conduit schedule', 'wire size', 'ground loop', 
+                'junction box', 'terminal strip', 'pipe rack', 'pipe support', 'isometric drawing', 
+                'hydrostatic test', 'flow direction', 'base plate', 'anchor bolt projection', 
+                'fillet weld size', 'full penetration weld', 'butt weld', 'pipe centerline', 
+                'valve clearance', 'conduit fill', 'instrument loop', 'control schematic'
             ],
             'Drafting': [
                 'line overlap', 'missing hidden line', 'hidden line', 'incorrect drawing scale', 
@@ -114,34 +119,52 @@ class ClassificationService:
                 'leader line', 'detail bubble', 'dashed line', 'hatch pattern', 'line weight', 
                 'isometric view', 'match line', 'centerline', 'arrowhead', 'break line', 
                 'overlapping text', 'view mismatch', 'align', 'aligned', 'center', 'move this up',
-                'move down', 'spacing', 'space between', 'terminal block'
+                'move down', 'spacing', 'space between', 'terminal block',
+                'section view', 'detail view', 'scale bar', 'text overlap', 'text illegible',
+                'arrowhead size', 'elevation view', 'plan view', 'cross section', 'unreadable callout',
+                'missing arrowhead', 'detail reference', 'callout bubble'
             ],
             'Dimension': [
                 'incorrect dimension', 'missing dimension', 'dimension', 'dim', 'CL EL', 
                 'centerline elevation', 'center-to-center', 'elevation callout', 'TOC', 
                 'dimension string', 'radial clearance', 'coordinate dimensions', 'nozzle projection', 
                 'anchor bolt centers', 'vertical clearance', 'cut length', 'setback', 'discrepancy in diameter', 
-                'radius dimension', 'overall height', 'projection dimension'
+                'radius dimension', 'overall height', 'projection dimension',
+                'center to center', 'face to face', 'clearance required', 'minimum clearance',
+                'top of steel', 'top of concrete', 'invert elevation', 'overall length',
+                'wall thickness', 'outer diameter', 'inner diameter', 'bolt circle',
+                'flange projection', 'working point', 'running dimension', 'tolerance stackup'
             ],
             'Cosmetic': [
                 'text alignment', 'font size', 'spelling', 'typo', 'typo error', 
                 'font style', 'Romans', 'text overlapping', 'text rotated', 'justification', 
                 'font height', 'cosmetic cleanup', 'stray CAD', 'capitalization', 'font thickness', 
-                'misaligned column'
+                'misaligned column',
+                'spelling mistake', 'misaligned callout', 'clean up markup', 'line bleed',
+                'text orientation', 'cluttered text', 'overlapping label', 'spelling correction',
+                'formatting error', 'misspelled word'
             ],
             'Standards': [
                 'incorrect symbol', 'codal issue', 'symbol', 'standard', 'ISA-5.1', 
                 'OSHA', 'IBC', 'AWS A2.4', 'STD-001', 'IEEE', 'IEC', 
                 'hazardous area', 'NFPA 497', 'ASME B16.5', 'API 526', 'AISC', 
                 'MSS SP-58', 'GD&T', 'ASME Y14.5', 'ISO 7010', 'NFPA 101', 'ANSI Z358.1', 
-                'ASME B36.10M', 'non-standard abbreviation', 'code stamp'
+                'ASME B36.10M', 'non-standard abbreviation', 'code stamp',
+                'national electrical code', 'nec code', 'asme code', 'nfpa standard',
+                'osha regulation', 'hazardous area rating', 'class 1 div 2', 'nema rating',
+                'ip rating', 'astm standard', 'aisc specification', 'code compliance',
+                'industry standard', 'governing code', 'standard symbol'
             ],
             'Coordination': [
                 'clash', 'conflict', 'inter-discipline', 'coordinate', 'interference', 
                 'clash with piping', 'clash with civil', 'clash with electrical', 'cable tray clash', 
                 'HVAC duct clash', 'penetrates', 'junction box clash', 'footprint', 
                 'sprinkler clash', 'hook travel', 'tie-in', 'battery limit', 'diagonal bracing blocks', 
-                'motor removal path'
+                'motor removal path',
+                'clash with tray', 'clash with pipe', 'clash with duct', 'hvac duct interference',
+                'inter-discipline clash', 'maintenance access', 'pull space', 'headroom clearance',
+                'equipment footprint', 'battery limit interface', 'space conflict', 'spatial interference',
+                'conduit clash', 'structural interference'
             ],
             'Documentation': [
                 'title block', 'title block incomplete', 'project number missing', 'client drawing reference', 
@@ -149,7 +172,10 @@ class ClassificationService:
                 'sheet reference', 'scale box', 'project code', 'CAD drawing file', 'specification number', 
                 'drawing status stamp', 'ISSUED FOR CONSTRUCTION', 'IFC', 'IFD', 'sheet number', 
                 'client logo', 'vendor certified', 'cross-reference index', 'professional seal', 
-                'transmittal number', 'work order'
+                'transmittal number', 'work order',
+                'sheet number', 'drawing title', 'project number', 'checker initials',
+                'approval signature', 'drawing register', 'transmittal reference', 'drawing index',
+                'reference drawing', 'sheet count', 'document number', 'stamp missing'
             ],
             'Revision': [
                 'revision cloud', 'revision table', 'revision symbol', 'delta', 'triangle tag', 
@@ -158,7 +184,10 @@ class ClassificationService:
                 'revision note', 'ECN', 'revision history', 'cloud boundary',
                 'revision', 'revision flag', 'revision flags', 'rev flag', 'rev flags',
                 'revision a', 'revision b', 'revision c', 'revision d', 'revision e',
-                'rev. a', 'rev. b', 'rev. c', 'flag', 'flags', 'revision update'
+                'rev. a', 'rev. b', 'rev. c', 'flag', 'flags', 'revision update',
+                'revision triangle', 'delta tag', 'issued for approval', 'issued for review',
+                'engineering change notice', 'ecn number', 'latest revision', 'revision block',
+                'change order', 'revision index'
             ],
             'Calculation': [
                 'calculation', 'design inconsistency', 'pressure drop calculation', 'calculation sheet', 
@@ -167,7 +196,10 @@ class ClassificationService:
                 'relief valve sizing', 'overturning moment', 'flow rate calculation', 
                 'short circuit current', 'deflection calculation', 'hydraulic gradient', 
                 'seismic load', 'thermal relief', 'heat loss calculation', 'buckling calculation', 
-                'bearing pressure'
+                'bearing pressure',
+                'voltage drop', 'fault current', 'pressure drop', 'pump head', 'stress analysis',
+                'wind load', 'structural deflection', 'hydraulic calculation', 'load calculation',
+                'capacity check', 'safety factor', 'design margin'
             ],
             'Feasibility': [
                 'erection feasibility', 'fabrication feasibility', 'feasibility', 'accessibility', 
@@ -175,7 +207,10 @@ class ClassificationService:
                 'handwheel unreachable', 'chain wheel', 'bolting accessibility', 'torque wrench clearance', 
                 'lifting lug', 'shipping clearance', 'roadway clearance', 'bolted splice', 
                 'field assembly', 'constructability', 'rebar congestion', 'hand lever hits', 
-                'filter basket', 'field weld accessibility'
+                'filter basket', 'field weld accessibility',
+                'constructability issue', 'erection clearance', 'crane access', 'rigging clearance',
+                'torque wrench access', 'tube pull space', 'field weld access', 'shipping dimension',
+                'transport clearance', 'assembly interference', 'installation clearance'
             ],
             'Material': [
                 'incorrect material', 'material specified', 'material grade', 'ASTM A36', 
@@ -183,19 +218,28 @@ class ClassificationService:
                 'ASTM A193', '316L', '304SS', 'carbon steel', 'anchor bolt material', 
                 'insulation material', 'ASTM A572', 'O-ring elastomer', 'Viton', 'rebar grade', 
                 'A615', 'grout material', 'non-shrink cementitious', 'ASTM A105', 
-                'corrosion allowance'
+                'corrosion allowance',
+                'material specification', 'stainless steel', 'structural steel', 'schedule 40',
+                'schedule 80', 'gasket rating', 'flange class', 'concrete grade', 'rebar specification',
+                'coating specification', 'galvanized steel', 'alloy specification'
             ],
             'Notes': [
                 'incorrect notes', 'update notes', 'general note', 'note', 'mandatory note', 
                 'PWHT requirement', 'obsolete specification', 'contradicts note', 'safety note', 
                 'coating note', 'paint note', 'environmental note', 'torque requirements', 
-                'hydrotest pressure note', 'NDT requirement', 'slope requirement', 'compressive strength'
+                'hydrotest pressure note', 'NDT requirement', 'slope requirement', 'compressive strength',
+                'general notes', 'sheet notes', 'specification note', 'hold note', 
+                'special instructions', 'painting note', 'testing note', 'fabrication note',
+                'installation note', 'field note', 'reference note'
             ],
             'BOM': [
                 'BOM', 'bill of materials', 'incorrect part number', 'part number in BOM', 
                 'BOM quantity', 'quantity mismatch', 'BOM description', 'MTO line item', 
                 'material take-off', 'unit weight', 'flange rating in BOM', 'spare parts list', 
-                'item count', 'component schedule', 'vendor cut sheet', 'SAP catalog'
+                'item count', 'component schedule', 'vendor cut sheet', 'SAP catalog',
+                'item count mismatch', 'spare parts', 'vendor part number', 'catalog cut',
+                'equipment schedule', 'tag number discrepancy', 'takeoff mismatch',
+                'bill of quantity', 'boq item', 'item callout'
             ]
         }
 
@@ -513,6 +557,57 @@ class ClassificationService:
             logger.debug(f"Batched DistilBERT inference failed: {batch_err}")
             return [None] * len(texts)
 
+    @staticmethod
+    def _calculate_combined_confidence(
+        ai_pred_conf: float,
+        rule_conf: float,
+        matched_kws: List[str],
+        category_name: str,
+        total_keywords_matched: int,
+        words: List[str],
+        has_competing_conflict: bool = False,
+    ) -> float:
+        """
+        Calculates guarded hybrid confidence combining DistilBERT semantic inference
+        with rule-based domain keyword matching.
+        
+        Safeguards:
+        - Dual agreement boost applies ONLY when both AI (>=0.70) and Rule (>=0.70) agree.
+        - Suppressed if text is < 3 words, contains negation terms, or has strong competing category conflict.
+        - Hard ceiling at 0.95 to maintain calibrated, trustworthy probabilities.
+        """
+        negation_tokens = {'not', 'never', 'no', 'none', 'neither', 'except', 'without', 'unassigned'}
+        has_negation = bool(set(words) & negation_tokens)
+        is_substantial = len(words) >= 3
+
+        if matched_kws and category_name != 'Documentation':
+            # Base grounded formula
+            base_conf = 0.45 * ai_pred_conf + 0.45 * rule_conf + 0.05 * min(3, len(matched_kws))
+            
+            # Dual confirmation boost condition
+            qualifies_for_boost = (
+                ai_pred_conf >= 0.70
+                and rule_conf >= 0.70
+                and is_substantial
+                and not has_negation
+                and not has_competing_conflict
+            )
+            if qualifies_for_boost:
+                # Add calibrated agreement boost (+0.08 to +0.12 depending on keyword strength)
+                boost = 0.08 + (0.02 if len(matched_kws) >= 2 else 0.0)
+                combined_conf = min(0.95, base_conf + boost)
+            else:
+                combined_conf = min(0.95, base_conf)
+        elif total_keywords_matched > 0 and category_name == 'Documentation':
+            combined_conf = max(0.01, ai_pred_conf * 0.30)
+        elif total_keywords_matched > 0 and not matched_kws:
+            # Other categories matched explicit keywords, but this AI pred had none
+            combined_conf = ai_pred_conf * 0.40
+        else:
+            combined_conf = min(0.92, ai_pred_conf * 0.85)
+
+        return float(round(combined_conf, 4))
+
     def classify_comment(
         self,
         comment_text: str,
@@ -565,26 +660,33 @@ class ClassificationService:
                 final_predictions = []
                 seen_categories = set()
 
+                # Check if multiple different categories have strong competing keyword matches
+                top_rule_matches = [p for p in matched_rule_preds if p.confidence >= 0.75]
+                has_multi_conflict = len(top_rule_matches) > 1
+
                 for p in ai_preds:
                     seen_categories.add(p.category_name)
                     rule_p = rule_map.get(p.category_name, CategoryPredictionDTO('', 0, []))
                     kws = rule_p.matched_keywords
                     rule_conf = rule_p.confidence
 
-                    # Grounding with matched engineering keywords
-                    if kws and p.category_name != 'Documentation':
-                        combined_conf = min(0.99, 0.40 * p.confidence + 0.45 * rule_conf + 0.05 * len(kws))
-                    elif total_keywords_matched > 0 and p.category_name == 'Documentation':
-                        combined_conf = max(0.01, p.confidence * 0.30)
-                    elif total_keywords_matched > 0 and not kws:
-                        # Other categories matched explicit keywords, but this AI pred had none
-                        combined_conf = p.confidence * 0.40
-                    else:
-                        combined_conf = p.confidence * 0.85
+                    # Conflict check: did another category have higher rule confidence?
+                    other_stronger = any(r.category_name != p.category_name and r.confidence > rule_conf for r in top_rule_matches)
+                    has_conflict = has_multi_conflict or other_stronger
+
+                    combined_conf = self._calculate_combined_confidence(
+                        ai_pred_conf=p.confidence,
+                        rule_conf=rule_conf,
+                        matched_kws=kws,
+                        category_name=p.category_name,
+                        total_keywords_matched=total_keywords_matched,
+                        words=words,
+                        has_competing_conflict=has_conflict,
+                    )
 
                     final_predictions.append(CategoryPredictionDTO(
                         category_name=p.category_name,
-                        confidence=float(round(combined_conf, 4)),
+                        confidence=combined_conf,
                         matched_keywords=kws
                     ))
 
@@ -734,6 +836,8 @@ class ClassificationService:
                     ai_count += 1
                     final_predictions = []
                     seen_categories = set()
+                    top_rule_matches = [pr for pr in matched_rule_preds if pr.confidence >= 0.75]
+                    has_multi_conflict = len(top_rule_matches) > 1
 
                     for p in ai_preds:
                         seen_categories.add(p.category_name)
@@ -741,18 +845,22 @@ class ClassificationService:
                         kws = rule_dto.matched_keywords
                         rule_conf = rule_dto.confidence
 
-                        if kws and p.category_name != 'Documentation':
-                            combined_conf = min(0.99, 0.40 * p.confidence + 0.45 * rule_conf + 0.05 * len(kws))
-                        elif total_keywords_matched > 0 and p.category_name == 'Documentation':
-                            combined_conf = max(0.01, p.confidence * 0.30)
-                        elif total_keywords_matched > 0 and not kws:
-                            combined_conf = p.confidence * 0.40
-                        else:
-                            combined_conf = p.confidence * 0.85
+                        other_stronger = any(r.category_name != p.category_name and r.confidence > rule_conf for r in top_rule_matches)
+                        has_conflict = has_multi_conflict or other_stronger
+
+                        combined_conf = self._calculate_combined_confidence(
+                            ai_pred_conf=p.confidence,
+                            rule_conf=rule_conf,
+                            matched_kws=kws,
+                            category_name=p.category_name,
+                            total_keywords_matched=total_keywords_matched,
+                            words=words,
+                            has_competing_conflict=has_conflict,
+                        )
 
                         final_predictions.append(CategoryPredictionDTO(
                             category_name=p.category_name,
-                            confidence=float(round(combined_conf, 4)),
+                            confidence=combined_conf,
                             matched_keywords=kws
                         ))
 
