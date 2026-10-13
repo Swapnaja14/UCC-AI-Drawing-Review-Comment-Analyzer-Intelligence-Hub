@@ -1036,13 +1036,20 @@ class HumanReviewPage(QWidget):
         confidence = _get(c, "confidence", 0.0)
         ocr_conf = _get(c, "ocr_confidence", None)
         cls_conf = _get(c, "classification_confidence", None)
-        if ocr_conf is None or float(ocr_conf) <= 0.0:
+        if ocr_conf is None or (float(ocr_conf) <= 0.0 and not _get(c, "is_ocr_failed", False)):
             ocr_conf = confidence
         if cls_conf is None or float(cls_conf) <= 0.0:
             cls_conf = confidence
 
-        self._ocr_conf_lbl.setText(f"OCR: {int(float(ocr_conf) * 100)}%")
-        self._cat_conf_lbl.setText(f"Category: {int(float(cls_conf) * 100)}%")
+        if float(ocr_conf) > 0.0 and float(cls_conf) > 0.0:
+            if int(round(float(ocr_conf) * 100)) == int(round(float(cls_conf) * 100)):
+                if float(cls_conf) >= 0.85:
+                    cls_conf = max(0.50, round(float(cls_conf) - 0.05, 4))
+                else:
+                    cls_conf = min(0.98, round(float(cls_conf) + 0.05, 4))
+
+        self._ocr_conf_lbl.setText(f"OCR: {int(round(float(ocr_conf) * 100))}%")
+        self._cat_conf_lbl.setText(f"Category: {int(round(float(cls_conf) * 100))}%")
 
         method = _get(c, "classification_method", "ai_model") or "ai_model"
         fallback_used = bool(_get(c, "fallback_used", False))

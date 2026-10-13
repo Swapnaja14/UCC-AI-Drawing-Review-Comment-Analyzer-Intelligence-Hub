@@ -3,7 +3,7 @@ Mock data for UCC AI Drawing Review Comment Analyzer.
 Provides realistic engineering drawing comment datasets for all screens.
 """
 from dataclasses import dataclass, field
-from typing import List, Optional
+from typing import List, Optional, Dict
 import random
 
 # ── Project records ──────────────────────────────────────────────────────────
@@ -102,11 +102,43 @@ _raw_comments = [
     ("C-0020","PRJ-007","OP-M-702",2,"REVISION TABLE NOT UPDATED: ADD REV B DESCRIPTION INCORPORATED COMMENTS","Revision",0.88,"Approved",(0.50,0.30,0.25,0.03),"J. Sharma","2026-07-29 09:30"),
 ]
 
+# Distinct separated confidences for mock data:
+# Format: comment_id -> (ocr_confidence, classification_confidence)
+# OCR confidence strictly reflects text recognition quality of extracted characters.
+# Category confidence strictly reflects AI / domain classification certainty.
+_MOCK_CONFIDENCES: Dict[str, tuple[float, float]] = {
+    "C-0001": (0.98, 0.94),
+    "C-0002": (0.92, 0.88),
+    "C-0003": (0.84, 0.76),
+    "C-0004": (0.96, 0.91),
+    "C-0005": (0.79, 0.65),
+    "C-0006": (0.88, 0.82),
+    "C-0007": (0.95, 0.89),
+    "C-0008": (0.97, 0.92),
+    "C-0009": (0.74, 0.58),
+    "C-0010": (0.85, 0.78),
+    "C-0011": (0.98, 0.93),
+    "C-0012": (0.93, 0.86),
+    "C-0013": (0.83, 0.71),
+    "C-0014": (0.90, 0.83),
+    "C-0015": (0.99, 0.95),
+    "C-0016": (0.91, 0.84),
+    "C-0017": (0.96, 0.89),
+    "C-0018": (0.82, 0.69),
+    "C-0019": (0.87, 0.79),
+    "C-0020": (0.94, 0.86),
+}
+
 COMMENTS: List[Comment] = []
 for _raw_rec in _raw_comments:
     _c = Comment(*_raw_rec)
-    _c.ocr_confidence = _c.confidence
-    _c.classification_confidence = _c.confidence
+    if _c.id in _MOCK_CONFIDENCES:
+        _c.ocr_confidence, _c.classification_confidence = _MOCK_CONFIDENCES[_c.id]
+    else:
+        _c.ocr_confidence = round(min(0.99, _c.confidence * 1.04), 2)
+        _c.classification_confidence = round(max(0.10, _c.confidence * 0.92), 2)
+        if int(round(_c.ocr_confidence * 100)) == int(round(_c.classification_confidence * 100)):
+            _c.classification_confidence = round(max(0.10, _c.classification_confidence - 0.05), 2)
     if _c.id in ("C-0005", "C-0009", "C-0018"):
         _c.classification_method = "rule_based_fallback"
         _c.fallback_used = True

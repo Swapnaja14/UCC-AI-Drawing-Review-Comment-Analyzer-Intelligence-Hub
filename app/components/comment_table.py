@@ -32,8 +32,14 @@ class ConfidenceDelegate(QStyledItemDelegate):
     Cell delegate that renders a confidence score as a coloured bar + text.
 
     The cell must store a ``float`` in ``Qt.ItemDataRole.UserRole``.
-    Colour thresholds: ≥ 0.90 → green, ≥ 0.70 → amber, < 0.70 → red.
+    Modes:
+      - 'ocr': > 80% (>= 81%) → green (#4ADE80), 70%–80% → yellow (#FBBF24), < 70% → red (#F87171)
+      - 'category': >= 85% → green (#4ADE80), 70%–84% → yellow (#FBBF24), < 70% → red (#F87171)
     """
+
+    def __init__(self, parent=None, mode: str = "category"):
+        super().__init__(parent)
+        self._mode = mode.lower()
 
     def paint(
         self,
@@ -65,11 +71,24 @@ class ConfidenceDelegate(QStyledItemDelegate):
         # Fill
         fill_w = int(bar.width() * val)
         if fill_w > 0:
-            fill_c = (
-                "#4ADE80" if val >= 0.9
-                else "#FBBF24" if val >= 0.7
-                else "#F87171"
-            )
+            pct = int(round(val * 100))
+            if self._mode == "ocr":
+                # User specification: >80% green, 70% to 80% yellow, else red
+                if pct > 80:
+                    fill_c = "#4ADE80"
+                elif pct >= 70:
+                    fill_c = "#FBBF24"
+                else:
+                    fill_c = "#F87171"
+            else:
+                # Category specification: >=85% green, 70% to 84% yellow, else red
+                if pct >= 85:
+                    fill_c = "#4ADE80"
+                elif pct >= 70:
+                    fill_c = "#FBBF24"
+                else:
+                    fill_c = "#F87171"
+
             painter.setBrush(QColor(fill_c))
             painter.drawRoundedRect(
                 QRect(bar.x(), bar.y(), fill_w, bar.height()), 4, 4
@@ -78,7 +97,7 @@ class ConfidenceDelegate(QStyledItemDelegate):
         painter.setPen(QColor("#F2F3F5"))
         painter.setFont(QFont("Cascadia Code", 11))
         painter.drawText(
-            option.rect, Qt.AlignmentFlag.AlignCenter, f"{int(val * 100)}%"
+            option.rect, Qt.AlignmentFlag.AlignCenter, f"{int(round(val * 100))}%"
         )
 
 

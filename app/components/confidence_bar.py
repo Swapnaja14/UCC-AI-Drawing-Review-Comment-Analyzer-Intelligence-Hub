@@ -18,9 +18,10 @@ class ConfidenceBar(QWidget):
         self.update()
 
     def _color(self) -> str:
-        if self._value >= 0.90:
+        pct = round(self._value * 100)
+        if pct >= 85:
             return "#4ADE80"
-        if self._value >= 0.70:
+        if pct >= 70:
             return "#FBBF24"
         return "#F87171"
 

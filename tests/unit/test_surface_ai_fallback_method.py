@@ -86,23 +86,24 @@ def test_classification_method_delegate_styles():
 
 
 def test_classification_screen_table_columns_and_delegate(qapp):
-    """Verify table has 5 columns with Method at column 2 using ClassificationMethodDelegate."""
+    """Verify table has 4 columns (Method column removed from table, displayed in Inspector Drawer)."""
     page = ClassificationPage(controller=None)
     table = page._table
     model = page._model
 
-    expected_headers = ["Comment", "Category", "Method", "Category Conf.", "Status"]
-    assert model.columnCount() == 5
+    expected_headers = ["Comment", "Category", "Category Conf.", "Status"]
+    assert model.columnCount() == 4
     for idx, expected in enumerate(expected_headers):
         actual = model.headerData(idx, Qt.Orientation.Horizontal, Qt.ItemDataRole.DisplayRole)
         assert actual == expected, f"Column {idx} header: expected '{expected}', got '{actual}'"
 
     col2_delegate = table.itemDelegateForColumn(2)
-    assert isinstance(col2_delegate, ClassificationMethodDelegate)
+    from app.components.comment_table import ConfidenceDelegate
+    assert isinstance(col2_delegate, ConfidenceDelegate)
 
 
 def test_classification_screen_model_build_method_metadata(qapp):
-    """Verify _build_model populates Method data and fallback_used UserRole data."""
+    """Verify _build_model populates Category Conf and Status data."""
     page = ClassificationPage(controller=None)
     page._comments_data = [
         {
@@ -112,6 +113,8 @@ def test_classification_screen_model_build_method_metadata(qapp):
             "classification_method": "ai_model",
             "fallback_used": False,
             "confidence": 0.95,
+            "ocr_confidence": 0.88,
+            "classification_confidence": 0.95,
             "status": "Approved",
         },
         {
@@ -121,6 +124,8 @@ def test_classification_screen_model_build_method_metadata(qapp):
             "classification_method": "rule_based_fallback",
             "fallback_used": True,
             "confidence": 0.65,
+            "ocr_confidence": 0.72,
+            "classification_confidence": 0.65,
             "status": "Pending",
         },
     ]
@@ -128,17 +133,14 @@ def test_classification_screen_model_build_method_metadata(qapp):
     model = page._build_model()
     assert model.rowCount() == 2
 
-    # Row 0: AI
-    row0_method = model.item(0, 2)
-    assert row0_method.text() == "ai_model"
-    assert row0_method.data(Qt.ItemDataRole.UserRole + 1) is False
-    assert "DistilBERT" in row0_method.toolTip()
+    # Col 2 is Category Conf.
+    row0_conf = model.item(0, 2)
+    assert row0_conf.data(Qt.ItemDataRole.UserRole) == 0.95
+    assert "95%" in row0_conf.toolTip()
 
-    # Row 1: Fallback
-    row1_method = model.item(1, 2)
-    assert row1_method.text() == "rule_based_fallback"
-    assert row1_method.data(Qt.ItemDataRole.UserRole + 1) is True
-    assert "Rule-Based Fallback" in row1_method.toolTip()
+    row1_conf = model.item(1, 2)
+    assert row1_conf.data(Qt.ItemDataRole.UserRole) == 0.65
+    assert "65%" in row1_conf.toolTip()
 
 
 def test_classification_screen_inspector_drawer_method_display(qapp):

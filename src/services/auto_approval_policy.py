@@ -14,7 +14,7 @@ def evaluate_auto_approval(
     fallback_used: bool = False,
     classification_method: str = "ai_model",
     auto_approve_enabled: bool = True,
-    threshold: float = 0.85,
+    threshold: float = 0.80,
 ) -> Tuple[bool, str]:
     """
     Evaluates whether an extracted comment is eligible for automatic approval.
@@ -27,8 +27,8 @@ def evaluate_auto_approval(
        - classification_method must be 'ai_model'. Fallback or rule-based classifications
          are strictly prohibited from auto-approving.
     3. Multi-stage disentangled confidence requirements:
-       - ocr_confidence >= threshold (default 0.85)
-       - classification_confidence >= threshold (default 0.85)
+       - ocr_confidence >= threshold (default 0.80)
+       - classification_confidence >= threshold (default 0.80)
        Both must be satisfied independently. High OCR confidence cannot mask
        lower classification confidence, and vice-versa.
     4. Text quality and length:

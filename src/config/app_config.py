@@ -88,7 +88,7 @@ class AIConfig:
     confidence_threshold: float = 0.70
     fallback_to_rules: bool = True
     auto_approve_high_confidence: bool = True
-    auto_approve_threshold: float = 0.85
+    auto_approve_threshold: float = 0.80
 
 
 @dataclass
