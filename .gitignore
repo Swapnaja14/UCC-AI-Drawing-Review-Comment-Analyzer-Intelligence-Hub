@@ -180,8 +180,13 @@ cython_debug/
 .spyderproject
 .spyproject
 
-# Confidential Evaluation Datasets
+# Confidential Evaluation Datasets & Real Drawing Folders
+**/real/
+**/real/**
+**/real/*.pdf
 data/evaluation_dataset/real/
+data/evaluation_dataset/real/**
+data/evaluation_dataset/real/*.pdf
 data/evaluation_dataset/55141-32_combined RJY.pdf
 data/evaluation_dataset/E-55141-32-002_A_RJY redlines.pdf
 data/evaluation_dataset/M-70086-01-007_B_.pdf
