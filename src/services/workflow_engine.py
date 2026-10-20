@@ -66,7 +66,9 @@ class ProcessingWorkflowEngine:
         self.annotation_service = annotation_service or AnnotationDetectionServiceEnhanced()
         self.comment_repo = comment_repo
         self.text_cleaning_service = text_cleaning_service or TextCleaningService()
-        self.classification_service = classification_service or ClassificationService()
+        self.classification_service = classification_service or ClassificationService(comment_repo=comment_repo)
+        if self.classification_service and not getattr(self.classification_service, "comment_repo", None):
+            self.classification_service.comment_repo = comment_repo
         self.audit_repo = audit_repo
         self.processing_run_repo = processing_run_repo
         self.config = config
@@ -406,22 +408,55 @@ class ProcessingWorkflowEngine:
         if AnnotationDetectionServiceEnhanced._is_title_block_or_status_stamp(p_obj, crop_rect, envelopes=page_envs):
             return None
 
+        det_conf = getattr(reg, "confidence", 0.90)
+
+        # Standalone markups without text (revision clouds, lines, arrows):
+        # Do NOT OCR the drawing underneath. Keep text empty and flag for human entry.
+        if getattr(reg, "region_role", "") == "markup_without_text":
+            return {
+                "page_number": p_idx + 1,
+                "raw_text": "",
+                "cleaned_text": "",
+                "bbox": (reg.x0, reg.y0, reg.x1, reg.y1),
+                "detection_confidence": det_conf,
+                "ocr_confidence": 1.0,
+                "classification_confidence": 0.0,
+                "confidence": 1.0,
+                "ocr_engine": "markup_without_text",
+                "category_name": "Markup / Redline Only",
+                "label": reg.label,
+                "status": "Pending",
+                "is_ocr_failed": False,
+                "needs_human_entry": True,
+                "is_markup_only": True,
+                "source_id": reg.source_id,
+                "region_role": "markup_without_text",
+            }
+
         raw_ocr_text = ""
-        ocr_conf = 0.95
+        ocr_conf = 1.0
         ocr_engine = "native"
 
+        # Fast-path 0: Use region's own source_text directly if available (Bug 4)
+        if reg.source_text and len(reg.source_text.strip()) > 0:
+            raw_ocr_text = reg.source_text.strip()
+            ocr_conf = 1.0
+            ocr_engine = "native_source_text"
+
         # 1. Check for native annotation content (FreeText callouts, Stamps, Notes)
-        try:
-            for annot in p_obj.annots():
-                if annot.rect.intersects(unrot_clip):
-                    c_text = (annot.info.get("content") or "").strip()
-                    if len(c_text) >= 3 and not (len(c_text) <= 2 and c_text.upper() in ["A", "B", "C", "D", "E", "F", "G", "H", "1", "2", "3", "4", "5", "6", "7", "8"]):
-                        raw_ocr_text = c_text
-                        ocr_conf = 0.99
-                        ocr_engine = "native_annot"
-                        break
-        except Exception:
-            raw_ocr_text = ""
+        if not raw_ocr_text:
+            try:
+                for annot in p_obj.annots():
+                    if annot.rect.intersects(unrot_clip):
+                        c_text = (annot.info.get("content") or "").strip()
+                        if len(c_text) >= 1:
+                            raw_ocr_text = c_text
+                            ocr_conf = 1.0
+                            ocr_engine = "native_annot"
+                            break
+            except Exception:
+                raw_ocr_text = ""
+
 
         # 2. Check for targeted colored spans (Red, Blue, or Green reviewer markup text)
         if not raw_ocr_text:
@@ -449,7 +484,7 @@ class ProcessingWorkflowEngine:
 
                 if colored_spans_text:
                     raw_ocr_text = " ".join(colored_spans_text)
-                    ocr_conf = 0.98
+                    ocr_conf = 1.0
                     ocr_engine = "pymupdf_native"
             except Exception:
                 raw_ocr_text = ""
@@ -465,7 +500,7 @@ class ProcessingWorkflowEngine:
                         "A", "B", "C", "D", "E", "F", "G", "H", "1", "2", "3", "4", "5", "6", "7", "8", ".", "-"
                     ]):
                         raw_ocr_text = clean_candidate
-                        ocr_conf = 0.95
+                        ocr_conf = 1.0
                         ocr_engine = "pymupdf_digital"
             except Exception:
                 raw_ocr_text = ""
@@ -481,56 +516,58 @@ class ProcessingWorkflowEngine:
                     pil_img = Image.open(io.BytesIO(img_bytes)).convert("RGB")
                     np_img = np.array(pil_img)
 
-                    # Fast variance/contrast check: skip Tesseract if image lacks text contrast
-                    gray_arr = np.mean(np_img, axis=2)
-                    if float(np.std(gray_arr)) >= 6.0:
-                        crop_text, crop_conf, crop_eng = self._ocr_crop_with_fallback(
-                            pil_img,
+                    # Check if region has colored markup pixels (red/blue/green reviewer pen)
+                    nr = np_img[:, :, 0].astype(int)
+                    ng = np_img[:, :, 1].astype(int)
+                    nb = np_img[:, :, 2].astype(int)
+
+                    mask_red = (nr >= 120) & ((nr - np.maximum(ng, nb)) >= 24)
+                    mask_blue = (nb >= 110) & ((nb - np.maximum(nr, ng)) >= 24)
+                    mask_green = (ng >= 100) & ((ng - np.maximum(nr, nb)) >= 24)
+                    colored_mask = mask_red | mask_blue | mask_green
+                    has_colored_markup = np.count_nonzero(colored_mask) >= 15 or getattr(reg, "label", "").startswith("comment_")
+
+                    if has_colored_markup:
+                        # STRICT DOMAIN RULE: For colored reviewer markup, ONLY OCR the colored strokes!
+                        # Never OCR the underlying black CAD linework or table headers into comment text.
+                        ocr_input_arr = np.full((np_img.shape[0], np_img.shape[1]), 255, dtype=np.uint8)
+                        ocr_input_arr[colored_mask] = 0
+                        ocr_input_pil = Image.fromarray(ocr_input_arr)
+
+                        iso_text, iso_conf, iso_eng = self._ocr_crop_with_fallback(
+                            ocr_input_pil,
                             primary_psm=primary_psm,
                             fallback_psm=fallback_psm,
                             conf_threshold=psm_conf_threshold,
-                            engine_name="tesseract",
+                            engine_name="tesseract_color_isolated",
                             enable_rotation=enable_rotation,
                             enable_micro_upscale=enable_micro_upscale,
                             min_upscale_dim=min_upscale_dim,
                             target_upscale_dim=target_upscale_dim,
                         )
-                        if crop_text:
-                            raw_ocr_text = crop_text
-                            ocr_conf = crop_conf
-                            ocr_engine = crop_eng
-
-                        # If still no text or low confidence, try color-isolated OCR if colored pixels exist
-                        if not raw_ocr_text or ocr_conf < psm_conf_threshold:
-                            nr = np_img[:, :, 0].astype(int)
-                            ng = np_img[:, :, 1].astype(int)
-                            nb = np_img[:, :, 2].astype(int)
-
-                            mask_red = (nr >= 120) & ((nr - np.maximum(ng, nb)) >= 24)
-                            mask_blue = (nb >= 110) & ((nb - np.maximum(nr, ng)) >= 24)
-                            mask_green = (ng >= 100) & ((ng - np.maximum(nr, nb)) >= 24)
-                            colored_mask = mask_red | mask_blue | mask_green
-
-                            if np.count_nonzero(colored_mask) >= 15:
-                                ocr_input_arr = np.full((np_img.shape[0], np_img.shape[1]), 255, dtype=np.uint8)
-                                ocr_input_arr[colored_mask] = 0
-                                ocr_input_pil = Image.fromarray(ocr_input_arr)
-
-                                iso_text, iso_conf, iso_eng = self._ocr_crop_with_fallback(
-                                    ocr_input_pil,
-                                    primary_psm=primary_psm,
-                                    fallback_psm=fallback_psm,
-                                    conf_threshold=psm_conf_threshold,
-                                    engine_name="tesseract_color_isolated",
-                                    enable_rotation=enable_rotation,
-                                    enable_micro_upscale=enable_micro_upscale,
-                                    min_upscale_dim=min_upscale_dim,
-                                    target_upscale_dim=target_upscale_dim,
-                                )
-                                if iso_text and (not raw_ocr_text or iso_conf > ocr_conf):
-                                    raw_ocr_text = iso_text
-                                    ocr_conf = iso_conf
-                                    ocr_engine = iso_eng
+                        if iso_text:
+                            raw_ocr_text = iso_text
+                            ocr_conf = iso_conf
+                            ocr_engine = iso_eng
+                    else:
+                        # Standard monochrome / full-crop OCR for digital or black text crops
+                        gray_arr = np.mean(np_img, axis=2)
+                        if float(np.std(gray_arr)) >= 6.0:
+                            crop_text, crop_conf, crop_eng = self._ocr_crop_with_fallback(
+                                pil_img,
+                                primary_psm=primary_psm,
+                                fallback_psm=fallback_psm,
+                                conf_threshold=psm_conf_threshold,
+                                engine_name="tesseract",
+                                enable_rotation=enable_rotation,
+                                enable_micro_upscale=enable_micro_upscale,
+                                min_upscale_dim=min_upscale_dim,
+                                target_upscale_dim=target_upscale_dim,
+                            )
+                            if crop_text:
+                                raw_ocr_text = crop_text
+                                ocr_conf = crop_conf
+                                ocr_engine = crop_eng
             except Exception as ocr_err:
                 logger.debug(f"OCR failed for region {reg}: {ocr_err}")
                 raw_ocr_text = ""
@@ -559,19 +596,8 @@ class ProcessingWorkflowEngine:
                 }
             return None
 
-        if any(phrase in clean_text_check for phrase in AnnotationDetectionServiceEnhanced.TITLE_BLOCK_PHRASES):
-            return None
-        if re.match(r"^(BY\s+[A-Z0-9_]+|DATE\s+[0-9\/\-]+|EXP[\.\:\s]+[0-9\/\-]+)$", clean_text_check):
-            return None
-        tb_label_hits = sum(1 for label in AnnotationDetectionServiceEnhanced.TITLE_BLOCK_FIELD_LABELS if re.search(r"\b" + re.escape(label) + r"\b", clean_text_check))
-        if tb_label_hits >= 2:
-            return None
-        if len(clean_text_check) <= 2 and clean_text_check in [
-            "A", "B", "C", "D", "E", "F", "G", "H", "1", "2", "3", "4", "5", "6", "7", "8", ".", "-"
-        ]:
-            return None
-
-        cleaned_dto = self.text_cleaning_service.clean_text(raw_ocr_text)
+        is_digital_stream = ocr_engine in ("native_source_text", "native_annot", "pymupdf_native", "pymupdf_digital")
+        cleaned_dto = self.text_cleaning_service.clean_text(raw_ocr_text, is_digital=is_digital_stream)
         final_text = cleaned_dto.cleaned_text or raw_ocr_text
 
         return {
@@ -586,6 +612,8 @@ class ProcessingWorkflowEngine:
             "ocr_engine": ocr_engine,
             "label": reg.label,
             "is_ocr_failed": False,
+            "source_id": reg.source_id,
+            "region_role": reg.region_role,
         }
 
     @property
@@ -670,7 +698,15 @@ class ProcessingWorkflowEngine:
                     notify("Annotation Detection", WorkflowState.ANNOTATION_DETECTING, pct, 
                            f"Detecting drawing callout boxes and redline regions ({completed}/{total} pages).")
 
-                annotation_result = self.annotation_service.detect_all_pages(path, method='hybrid', progress_callback=on_page_progress)
+                filter_tpl = False
+                if self.config and hasattr(self.config, "ocr") and self.config.ocr:
+                    filter_tpl = getattr(self.config.ocr, "filter_template_regions", False)
+                annotation_result = self.annotation_service.detect_all_pages(
+                    path, 
+                    method='hybrid', 
+                    filter_template_regions=filter_tpl, 
+                    progress_callback=on_page_progress
+                )
                 total_regions = annotation_result.total_regions
                 
                 logger.info(f"Annotation detection complete: {total_regions} regions detected across {annotation_result.total_pages} pages")
@@ -696,85 +732,93 @@ class ProcessingWorkflowEngine:
             extracted_comments_data = []
             if annotation_result and annotation_result.page_results:
                 try:
-                    pdf_doc = fitz.open(path)
-                    for page_res in annotation_result.page_results:
-                        p_idx = page_res.page_number
-                        if p_idx < 0 or p_idx >= len(pdf_doc):
-                            continue
-                        p_obj = pdf_doc[p_idx]
-                        
-                        # Cache title block and review status stamp envelopes ONCE per page
-                        page_envs = AnnotationDetectionServiceEnhanced._get_title_block_and_stamp_envelopes(p_obj)
-                        
-                        candidate_regions = []
-                        for reg in page_res.regions:
-                            # Prioritize reviewer comments and colored markups (red, blue, green)
-                            is_comment_markup = (
-                                "red" in reg.label.lower() or
-                                "blue" in reg.label.lower() or
-                                "green" in reg.label.lower() or
-                                "yellow" in reg.label.lower() or
-                                reg.label in ("native_annotation", "native_text_block", "native_freetext", "native_ink", "native_redline")
-                            )
-                            if is_comment_markup:
-                                candidate_regions.append(reg)
+                    with fitz.open(path) as pdf_doc:
+                        detect_markers = True
+                        if self.config and hasattr(self.config, "ocr") and self.config.ocr:
+                            detect_markers = getattr(self.config.ocr, "detect_markers_as_items", True)
+                        for page_res in annotation_result.page_results:
+                            p_idx = page_res.page_number
+                            if p_idx < 0 or p_idx >= len(pdf_doc):
+                                continue
+                            p_obj = pdf_doc[p_idx]
+                            
+                            # Cache title block and review status stamp envelopes ONCE per page
+                            page_envs = AnnotationDetectionServiceEnhanced._get_title_block_and_stamp_envelopes(p_obj)
+                            
+                            candidate_regions = []
+                            for reg in page_res.regions:
+                                # Skip highlighters (Bug 1 & 3)
+                                if reg.label == "highlight" or reg.region_role == "highlight":
+                                    continue
+                                # Skip supporting regions that are attached to a primary carrier (Bug 3)
+                                if reg.region_role == "supporting" and reg.parent_id:
+                                    continue
+                                # Markers: check config
+                                if reg.region_role == "marker" and not detect_markers:
+                                    continue
 
-                        if not candidate_regions:
-                            continue
-
-                        if parallel_region_ocr and len(candidate_regions) > 1:
-                            # Multi-Comment Page: Parallel Region OCR execution across worker pool
-                            def _worker_task(item):
-                                reg_idx, reg = item
-                                try:
-                                    with fitz.open(path) as local_doc:
-                                        local_page = local_doc[p_idx]
-                                        res = self._process_single_region_ocr(
-                                            local_page,
-                                            reg,
-                                            p_idx,
-                                            page_envs,
-                                            primary_psm=primary_psm,
-                                            fallback_psm=fallback_psm,
-                                            psm_conf_threshold=psm_conf_threshold,
-                                            enable_rotation=True,
-                                            enable_micro_upscale=enable_micro_upscale,
-                                            min_upscale_dim=min_upscale_dim,
-                                            target_upscale_dim=target_upscale_dim,
-                                        )
-                                        return reg_idx, res
-                                except Exception as reg_exc:
-                                    logger.debug(f"Parallel OCR worker failed for region {reg}: {reg_exc}")
-                                    return reg_idx, None
-
-                            num_workers = min(max_region_workers, len(candidate_regions))
-                            with ThreadPoolExecutor(max_workers=num_workers) as pool:
-                                worker_results = list(pool.map(_worker_task, enumerate(candidate_regions)))
-
-                            # Maintain original region sequence
-                            for reg_idx, res_item in sorted(worker_results, key=lambda x: x[0]):
-                                if res_item is not None:
-                                    extracted_comments_data.append(res_item)
-                        else:
-                            # Sequential execution for single-comment or non-parallel mode
-                            for reg in candidate_regions:
-                                res_item = self._process_single_region_ocr(
-                                    p_obj,
-                                    reg,
-                                    p_idx,
-                                    page_envs,
-                                    primary_psm=primary_psm,
-                                    fallback_psm=fallback_psm,
-                                    psm_conf_threshold=psm_conf_threshold,
-                                    enable_rotation=True,
-                                    enable_micro_upscale=enable_micro_upscale,
-                                    min_upscale_dim=min_upscale_dim,
-                                    target_upscale_dim=target_upscale_dim,
+                                is_comment_markup = (
+                                    reg.region_role in ("primary", "markup_without_text", "marker") or
+                                    any(c in reg.label.lower() for c in ("red", "blue", "green", "orange", "cyan", "purple", "magenta")) or
+                                    reg.label in ("native_annotation", "native_text_block", "native_freetext", "native_ink", "native_redline")
                                 )
-                                if res_item is not None:
-                                    extracted_comments_data.append(res_item)
+                                if is_comment_markup:
+                                    candidate_regions.append(reg)
 
-                    pdf_doc.close()
+                            if not candidate_regions:
+                                continue
+
+                            if parallel_region_ocr and len(candidate_regions) > 1:
+                                # Multi-Comment Page: Parallel Region OCR execution across worker pool
+                                def _worker_task(item):
+                                    reg_idx, reg = item
+                                    try:
+                                        with fitz.open(path) as local_doc:
+                                            local_page = local_doc[p_idx]
+                                            res = self._process_single_region_ocr(
+                                                local_page,
+                                                reg,
+                                                p_idx,
+                                                page_envs,
+                                                primary_psm=primary_psm,
+                                                fallback_psm=fallback_psm,
+                                                psm_conf_threshold=psm_conf_threshold,
+                                                enable_rotation=True,
+                                                enable_micro_upscale=enable_micro_upscale,
+                                                min_upscale_dim=min_upscale_dim,
+                                                target_upscale_dim=target_upscale_dim,
+                                            )
+                                            return reg_idx, res
+                                    except Exception as reg_exc:
+                                        logger.debug(f"Parallel OCR worker failed for region {reg}: {reg_exc}")
+                                        return reg_idx, None
+
+                                num_workers = min(max_region_workers, len(candidate_regions))
+                                with ThreadPoolExecutor(max_workers=num_workers) as pool:
+                                    worker_results = list(pool.map(_worker_task, enumerate(candidate_regions)))
+
+                                # Maintain original region sequence
+                                for reg_idx, res_item in sorted(worker_results, key=lambda x: x[0]):
+                                    if res_item is not None:
+                                        extracted_comments_data.append(res_item)
+                            else:
+                                # Sequential execution for single-comment or non-parallel mode
+                                for reg in candidate_regions:
+                                    res_item = self._process_single_region_ocr(
+                                        p_obj,
+                                        reg,
+                                        p_idx,
+                                        page_envs,
+                                        primary_psm=primary_psm,
+                                        fallback_psm=fallback_psm,
+                                        psm_conf_threshold=psm_conf_threshold,
+                                        enable_rotation=True,
+                                        enable_micro_upscale=enable_micro_upscale,
+                                        min_upscale_dim=min_upscale_dim,
+                                        target_upscale_dim=target_upscale_dim,
+                                    )
+                                    if res_item is not None:
+                                        extracted_comments_data.append(res_item)
                 except Exception as e:
                     logger.error(f"OCR processing failed: {e}")
 
@@ -783,16 +827,23 @@ class ProcessingWorkflowEngine:
             for item in extracted_comments_data:
                 p_num = item["page_number"]
                 b = item["bbox"]
-                t = (item.get("cleaned_text") or item.get("raw_text") or "").strip().upper()
+                sid = item.get("source_id")
                 
                 merged = False
                 for kept in deduped_comments:
                     if kept["page_number"] != p_num:
                         continue
+                        
+                    ksid = kept.get("source_id")
+                    # 1. Same source ID: deduplicate without altering bounding box
+                    if sid and ksid and sid == ksid:
+                        if kept.get("is_ocr_failed") and not item.get("is_ocr_failed"):
+                            kept.update(item)
+                        merged = True
+                        break
+                        
+                    # 2. Strict spatial overlap: IoU >= 0.80 (NEVER union bounding boxes)
                     kb = kept["bbox"]
-                    kt = (kept.get("cleaned_text") or kept.get("raw_text") or "").strip().upper()
-                    
-                    # Calculate spatial overlap between b and kb
                     xi_min = max(b[0], kb[0])
                     yi_min = max(b[1], kb[1])
                     xi_max = min(b[2], kb[2])
@@ -804,30 +855,10 @@ class ProcessingWorkflowEngine:
                     b_area = max(1.0, (b[2] - b[0]) * (b[3] - b[1]))
                     kb_area = max(1.0, (kb[2] - kb[0]) * (kb[3] - kb[1]))
                     iou = inter_area / (b_area + kb_area - inter_area) if (b_area + kb_area - inter_area) > 0 else 0.0
-                    containment = inter_area / min(b_area, kb_area)
                     
-                    # If same text nearby OR strong spatial overlap
-                    same_text = (t == kt or t in kt or kt in t) and (abs(b[0] - kb[0]) < 60 and abs(b[1] - kb[1]) < 60)
-                    if same_text or iou > 0.35 or containment > 0.60:
-                        kept["bbox"] = (min(b[0], kb[0]), min(b[1], kb[1]), max(b[2], kb[2]), max(b[3], kb[3]))
-                        item_is_failed = item.get("is_ocr_failed", False) or "OCR Failed" in str(item.get("raw_text", ""))
-                        kept_is_failed = kept.get("is_ocr_failed", False) or "OCR Failed" in str(kept.get("raw_text", ""))
-
-                        if kept_is_failed and not item_is_failed:
-                            kept["raw_text"] = item["raw_text"]
-                            kept["cleaned_text"] = item["cleaned_text"]
-                            kept["is_ocr_failed"] = False
-                            kept["ocr_engine"] = item.get("ocr_engine", "Tesseract OCR")
-                            kept["ocr_confidence"] = item.get("ocr_confidence", 0.0)
-                        elif not kept_is_failed and not item_is_failed:
-                            if len(item.get("cleaned_text", "")) > len(kept.get("cleaned_text", "")):
-                                kept["raw_text"] = item["raw_text"]
-                                kept["cleaned_text"] = item["cleaned_text"]
-
-                        kept["confidence"] = max(kept["confidence"], item["confidence"])
-                        kept["detection_confidence"] = max(kept.get("detection_confidence", 0.0), item.get("detection_confidence", 0.0))
-                        if not kept.get("is_ocr_failed", False):
-                            kept["ocr_confidence"] = max(kept.get("ocr_confidence", 0.0), item.get("ocr_confidence", 0.0))
+                    if iou >= 0.80:
+                        if kept.get("is_ocr_failed") and not item.get("is_ocr_failed"):
+                            kept.update(item)
                         merged = True
                         break
                         
@@ -896,8 +927,13 @@ class ProcessingWorkflowEngine:
                                 else:
                                     cat_conf = min(0.98, round(cat_conf + 0.04, 4))
                             item["classification_confidence"] = cat_conf
-                            # Balanced composite confidence retaining true separation
-                            item["confidence"] = round(min(0.99, det_c * 0.20 + ocr_c * 0.40 + cat_conf * 0.40), 2)
+
+                            eng = str(item.get("ocr_engine", ""))
+                            # For digital text (PyMuPDF / native digital streams), confidence is determined directly by PyMuPDF confidence (no classification error penalty considered in confidence formula)
+                            if eng in ("native_source_text", "native_annot", "pymupdf_native", "pymupdf_digital") or "pymupdf" in eng:
+                                item["confidence"] = round(ocr_c, 2)
+                            else:
+                                item["confidence"] = round(min(0.99, det_c * 0.20 + ocr_c * 0.40 + cat_conf * 0.40), 2)
                     except Exception as batch_err:
                         logger.warning(f"Batched classification failed, falling back to item-by-item: {batch_err}")
                         for item in valid_items:
@@ -919,7 +955,12 @@ class ProcessingWorkflowEngine:
                                     else:
                                         cat_conf = min(0.98, round(cat_conf + 0.04, 4))
                                 item["classification_confidence"] = cat_conf
-                                item["confidence"] = round(min(0.99, det_c * 0.20 + ocr_c * 0.40 + cat_conf * 0.40), 2)
+
+                                eng = str(item.get("ocr_engine", ""))
+                                if eng in ("native_source_text", "native_annot", "pymupdf_native", "pymupdf_digital") or "pymupdf" in eng:
+                                    item["confidence"] = round(ocr_c, 2)
+                                else:
+                                    item["confidence"] = round(min(0.99, det_c * 0.20 + ocr_c * 0.40 + cat_conf * 0.40), 2)
                             except Exception as class_err:
                                 logger.debug(f"Classification failed for '{item.get('raw_text')}': {class_err}")
                                 item["category_name"] = "Uncategorized"
@@ -930,15 +971,52 @@ class ProcessingWorkflowEngine:
             # ── Step 6: Database Persistence ─────────────────────
             notify("Data Persistence", WorkflowState.PERSISTING, 95, f"Saving drawing records to SQLite database.")
 
+            actually_saved_count = 0
             if self.comment_repo and extracted_comments_data:
                 try:
-                    self.comment_repo.delete_comments_for_drawing(drawing_id)
+                    self.comment_repo.delete_comments_for_drawing(drawing_id, preserve_verified=True)
                 except Exception as del_err:
                     logger.debug(f"Error clearing previous comments: {del_err}")
+
+                existing_verified = []
+                try:
+                    existing_verified = [
+                        c for c in self.comment_repo.get_comments_for_drawing(drawing_id)
+                        if c.get("is_verified_by_human")
+                    ]
+                except Exception as ev_err:
+                    logger.debug(f"Error fetching existing verified comments: {ev_err}")
+
                 page_counters: Dict[int, int] = {}
                 for c_item in extracted_comments_data:
                     try:
                         p_num = c_item.get("page_number", 1)
+
+                        # Reconcile against existing human-verified comments (spatial overlap IoU >= 0.70)
+                        is_already_verified = False
+                        for ev in existing_verified:
+                            if ev.get("page_number") == p_num:
+                                ev_b = ev.get("bbox", (0, 0, 0, 0))
+                                b = c_item.get("bbox", (0, 0, 0, 0))
+                                xi_min = max(b[0], ev_b[0])
+                                yi_min = max(b[1], ev_b[1])
+                                xi_max = min(b[2], ev_b[2])
+                                yi_max = min(b[3], ev_b[3])
+                                inter_w = max(0.0, xi_max - xi_min)
+                                inter_h = max(0.0, yi_max - yi_min)
+                                inter_area = inter_w * inter_h
+                                b_area = max(1.0, (b[2] - b[0]) * (b[3] - b[1]))
+                                ev_area = max(1.0, (ev_b[2] - ev_b[0]) * (ev_b[3] - ev_b[1]))
+                                denom = b_area + ev_area - inter_area
+                                iou = inter_area / denom if denom > 0 else 0.0
+                                if iou >= 0.70:
+                                    is_already_verified = True
+                                    actually_saved_count += 1
+                                    break
+
+                        if is_already_verified:
+                            continue
+
                         page_counters[p_num] = page_counters.get(p_num, 0) + 1
                         seq = page_counters[p_num]
                         dwg_suffix = drawing_id.replace("DWG-", "")[:6] if drawing_id else uuid.uuid4().hex[:6].upper()
@@ -1008,11 +1086,15 @@ class ProcessingWorkflowEngine:
                             fallback_used=fb_used,
                             ocr_engine=c_item.get("ocr_engine", "OCR Failed" if is_failed_cmt else "Tesseract OCR"),
                             category_name=c_item.get("category_name", "Uncategorized"),
+                            initial_category=c_item.get("initial_category") or c_item.get("category_name", "Uncategorized"),
                             department_id=effective_dept_id,
                             label=c_item.get("label", "comment_red"),
                             status=initial_status,
                             comment_id=assigned_cid,
                         )
+
+                        if saved_c:
+                            actually_saved_count += 1
 
                         if initial_status == "Approved" and self.audit_repo and saved_c:
                             try:
@@ -1033,13 +1115,19 @@ class ProcessingWorkflowEngine:
             # ── Workflow Complete ──────────────────────────────────
             duration = round(time.time() - start_time, 2)
             total_saved = len(extracted_comments_data)
+            has_page_error = any(
+                ps.status == "error" 
+                for ps in (annotation_result.page_statuses if annotation_result else [])
+            )
+            workflow_status = "Failed" if has_page_error else "Completed"
+            
             notify("Workflow Complete", WorkflowState.COMPLETED, 100, f"Successfully processed '{original_file_name}' in {duration}s.")
 
             if run_record and self.processing_run_repo:
                 try:
                     self.processing_run_repo.update_processing_run(
                         run_id=run_record["id"],
-                        status="COMPLETED",
+                        status=workflow_status.upper(),
                         completed_at=datetime.now(timezone.utc),
                         duration_seconds=duration,
                         drawing_id=drawing_id,
@@ -1048,15 +1136,23 @@ class ProcessingWorkflowEngine:
                 except Exception as ex_comp:
                     logger.warning(f"Could not complete processing run: {ex_comp}")
 
+            total_detected = total_regions
+            total_kept = len(extracted_comments_data)
+            total_dropped = max(0, total_detected - total_kept)
+
             return WorkflowResultDTO(
                 drawing_id=drawing_id,
                 file_name=original_file_name,
                 total_pages=doc_dto.total_pages,
                 is_scanned=doc_dto.is_scanned,
-                status="Completed",
-                total_comments_found=total_saved if total_saved > 0 else total_regions,
+                status=workflow_status,
+                total_comments_found=actually_saved_count,
                 processing_duration_seconds=duration,
                 annotation_result=annotation_result,
+                regions_detected=total_detected,
+                regions_kept=total_kept,
+                regions_dropped=total_dropped,
+                comments_saved=actually_saved_count,
             )
 
         except Exception as e:

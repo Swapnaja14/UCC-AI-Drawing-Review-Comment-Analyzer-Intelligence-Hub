@@ -515,9 +515,11 @@ class TextCleaningService:
     # 2. CORE TEXT CLEANING PIPELINE
     # =========================================================================
 
-    def clean_text(self, raw_text: str) -> CleanedCommentDTO:
+    def clean_text(self, raw_text: str, is_digital: bool = False) -> CleanedCommentDTO:
         """
         Clean, normalize, correct, and enrich a single reviewer comment string.
+        If is_digital is True, strictly preserves all original words, spelling,
+        and terminology without rewriting, only normalizing line breaks and whitespace.
         """
         if not raw_text:
             return CleanedCommentDTO(
@@ -530,6 +532,32 @@ class TextCleaningService:
                 action_verb=None,
                 priority_level="MEDIUM",
                 engineering_terms_found=[],
+                is_duplicate_of=None
+            )
+
+        # STRICT PASS-THROUGH FOR NATIVE DIGITAL STREAM:
+        # Do not rewrite, spell-correct, or replace ANY word. At most, normalize whitespace & line breaks.
+        if is_digital:
+            text = raw_text.replace('\ufffd', ' ').replace('\u00a0', ' ')
+            text = re.sub(r'[\r\n]+', ' ', text)
+            text = re.sub(r'\s+', ' ', text).strip()
+
+            reviewer_initials, _ = self._extract_reviewer_initials(text)
+            action_verb = self._detect_action_verb(text)
+            priority_level = self._detect_priority(text)
+            engineering_terms = self._detect_engineering_terms(raw_text)
+            similarity = difflib.SequenceMatcher(None, raw_text, text).ratio()
+
+            return CleanedCommentDTO(
+                original_text=raw_text,
+                cleaned_text=text,
+                corrections=[],
+                similarity_score=round(similarity, 3),
+                sub_actions=self._segment_actions(text),
+                reviewer_initials=reviewer_initials,
+                action_verb=action_verb,
+                priority_level=priority_level,
+                engineering_terms_found=engineering_terms,
                 is_duplicate_of=None
             )
 
@@ -932,7 +960,10 @@ class TextCleaningService:
 
         for comment in comments:
             raw = comment.get('text', '') or comment.get('raw_text', '')
-            res = self.clean_text(raw)
+            is_digital = comment.get('is_digital', False) or comment.get('ocr_engine', '') in (
+                "native_source_text", "native_annot", "pymupdf_native", "pymupdf_digital"
+            )
+            res = self.clean_text(raw, is_digital=is_digital)
             cleaned.append(res)
             texts.append(res.cleaned_text)
 

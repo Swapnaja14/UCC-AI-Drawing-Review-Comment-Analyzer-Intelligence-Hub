@@ -15,6 +15,12 @@ class KPISummaryDTO:
     avg_confidence: float
     high_confidence_pct: float
     low_confidence_pct: float
+    approval_rate: Optional[float] = None
+    review_progress: Optional[float] = None
+    reviewed_count: Optional[int] = None
+    auto_approved_count: Optional[int] = None
+    auto_approval_rate: Optional[float] = None
+    estimated_hours_saved: Optional[float] = None
 
 @dataclass
 class CategoryDistributionDTO:

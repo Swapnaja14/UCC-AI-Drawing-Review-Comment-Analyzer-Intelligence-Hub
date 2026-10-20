@@ -9,6 +9,7 @@ No seed / mock data is inserted anywhere in this module.
 
 from __future__ import annotations
 
+import re
 import uuid
 from datetime import datetime, timezone
 from pathlib import Path
@@ -953,6 +954,7 @@ class CommentRepository:
         status: str = "Pending",
         label: str = "comment_red",
         comment_id: Optional[str] = None,
+        initial_category: Optional[str] = None,
     ) -> Dict[str, Any]:
         """Persist a single extracted comment with separated confidence scores and model provenance."""
         # Backward-compatible fallbacks if specific confidences not supplied
@@ -993,6 +995,7 @@ class CommentRepository:
                 raw_text=raw_text,
                 cleaned_text=cleaned_text,
                 category_name=category_name,
+                initial_category=initial_category or category_name,
                 confidence=confidence,
                 detection_confidence=detection_confidence,
                 ocr_confidence=ocr_confidence,
@@ -1011,10 +1014,16 @@ class CommentRepository:
             session.commit()
             return {"id": comment.id, "status": comment.status}
 
-    def delete_comments_for_drawing(self, drawing_id: str) -> int:
-        """Delete all existing comments for a drawing before re-processing."""
+    def delete_comments_for_drawing(self, drawing_id: str, preserve_verified: bool = False) -> int:
+        """Delete existing comments for a drawing before re-processing, optionally preserving human-verified comments."""
         with self._db.get_session() as session:
-            count = session.query(CommentModel).filter(CommentModel.drawing_id == drawing_id).delete()
+            query = session.query(CommentModel).filter(CommentModel.drawing_id == drawing_id)
+            if preserve_verified:
+                query = query.filter(CommentModel.is_verified_by_human == False)
+            rows = query.all()
+            count = len(rows)
+            for row in rows:
+                session.delete(row)
             session.commit()
             return count
 
@@ -1211,6 +1220,10 @@ class CommentRepository:
             if cat_row:
                 row.category_id = cat_row.id
 
+            # Preserve initial_category if not already set
+            if not getattr(row, "initial_category", None):
+                row.initial_category = old_category
+
             row.category_name = new_category
             row.is_verified_by_human = True
             row.classification_method = "manual"
@@ -1231,6 +1244,40 @@ class CommentRepository:
             session.commit()
             logger.info(f"Comment '{comment_id}' category → '{new_category}' by {changed_by_user_id}")
             return True
+
+    def get_verified_examples(
+        self,
+        department_id: Optional[str] = None,
+    ) -> Dict[str, str]:
+        """
+        Retrieve human-verified category decisions mapped by normalized text.
+        Guarantees strict department isolation when department_id or department_name is supplied.
+        """
+        with self._db.get_session() as session:
+            query = (
+                session.query(CommentModel)
+                .filter(CommentModel.is_verified_by_human == True)
+            )
+            if department_id:
+                matching_dept_ids = [
+                    d.id for d in session.query(EngineeringDepartmentModel).filter(
+                        (EngineeringDepartmentModel.id == department_id) |
+                        (EngineeringDepartmentModel.name == department_id)
+                    ).all()
+                ]
+                if matching_dept_ids:
+                    query = query.filter(CommentModel.department_id.in_(matching_dept_ids))
+                else:
+                    query = query.filter(CommentModel.department_id == department_id)
+
+            rows = query.order_by(CommentModel.updated_at.asc()).all()
+            verified_map: Dict[str, str] = {}
+            for row in rows:
+                txt = row.cleaned_text or row.raw_text or ""
+                norm = " ".join(re.sub(r'[^\w\s]', ' ', txt).lower().split())
+                if norm and row.category_name:
+                    verified_map[norm] = row.category_name
+            return verified_map
 
     def update_comment_department(
         self,
@@ -1785,6 +1832,7 @@ def _comment_to_dict(c: CommentModel) -> Dict[str, Any]:
         "cleaned_text":         c.cleaned_text,
         "category_id":          c.category_id,
         "category_name":        c.category_name,
+        "initial_category":     getattr(c, "initial_category", c.category_name) or c.category_name,
         "department_id":        c.department_id,
         "department_name":      c.department_name,
         "user_id":              c.user_id,

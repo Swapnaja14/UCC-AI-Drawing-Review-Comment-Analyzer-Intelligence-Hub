@@ -54,6 +54,12 @@ class WorkflowResultDTO:
     total_comments_found: int = 0
     processing_duration_seconds: float = 0.0
     annotation_result: Optional[Any] = None
+    regions_detected: int = 0
+    regions_kept: int = 0
+    regions_dropped: int = 0
+    drop_reasons: Dict[str, int] = field(default_factory=dict)
+    comments_saved: int = 0
+
 
 
 @dataclass(frozen=True)

@@ -9,7 +9,7 @@ Unit test suite verifying OCR to NLP Pipeline Integration:
 import pytest
 from pathlib import Path
 from unittest.mock import MagicMock, patch
-import torch
+torch = pytest.importorskip("torch")
 
 from src.services.classification_service import ClassificationService
 from src.services.text_cleaning_service import TextCleaningService

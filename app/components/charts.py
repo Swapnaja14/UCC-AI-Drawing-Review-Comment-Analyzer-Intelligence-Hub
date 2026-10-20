@@ -12,7 +12,7 @@ When ``PySide6.QtCharts`` is not installed, each chart function falls back
 to ``no_chart_label()`` so the rest of the UI remains functional.
 """
 from __future__ import annotations
-from PySide6.QtWidgets import QFrame, QVBoxLayout, QLabel
+from PySide6.QtWidgets import QFrame, QVBoxLayout, QLabel, QApplication
 from PySide6.QtCore import Qt
 from PySide6.QtGui import QFont, QColor, QPainter
 
@@ -35,6 +35,8 @@ __all__ = [
     "build_monthly_chart",
     "build_status_trend_chart",
     "build_category_pie",
+    "build_confidence_distribution_chart",
+    "build_status_distribution_chart",
     "no_chart_label",
 ]
 
@@ -59,17 +61,36 @@ _CAT_COLORS: dict[str, str] = {
 
 # ── Internal helpers ──────────────────────────────────────────────────────────
 
+def _is_dark_theme() -> bool:
+    """Detect whether dark theme is currently active in the application."""
+    app = QApplication.instance()
+    if not app:
+        return True
+    ss = getattr(app, "styleSheet", lambda: "")() or ""
+    if "background-color: #FFFFFF" in ss or "background-color: #ffffff" in ss:
+        return False
+    pal = app.palette()
+    win_col = pal.color(pal.ColorRole.Window)
+    return win_col.lightness() < 128
+
+
 def _styled_chart(title: str = "") -> "QChart":
-    """Return a QChart pre-styled for the dark theme."""
+    """Return a QChart dynamically styled for the active dark or light theme."""
     chart = QChart()
     chart.setTitle(title)
-    chart.setBackgroundBrush(QColor("#2D2F34"))
-    chart.setPlotAreaBackgroundBrush(QColor("#26272B"))
+    dark = _is_dark_theme()
+    bg_chart = QColor("#2D2F34") if dark else QColor("#FFFFFF")
+    bg_plot  = QColor("#26272B") if dark else QColor("#F5F6F8")
+    fg_title = QColor("#F2F3F5") if dark else QColor("#1B1D21")
+    fg_text  = QColor("#A6A9B1") if dark else QColor("#5B5F6A")
+
+    chart.setBackgroundBrush(bg_chart)
+    chart.setPlotAreaBackgroundBrush(bg_plot)
     chart.setPlotAreaBackgroundVisible(True)
-    chart.legend().setLabelColor(QColor("#A6A9B1"))
+    chart.legend().setLabelColor(fg_text)
     chart.legend().setAlignment(Qt.AlignmentFlag.AlignBottom)
     if title:
-        chart.setTitleBrush(QColor("#F2F3F5"))
+        chart.setTitleBrush(fg_title)
         chart.setTitleFont(
             QFont("Segoe UI Variable", 13, QFont.Weight.DemiBold)
         )
@@ -86,10 +107,13 @@ def _chart_view(chart: "QChart") -> "QChartView":
     return view
 
 
-def _axis_style(axis, color: str = "#A6A9B1") -> None:
-    """Apply consistent axis label and grid-line styling."""
-    axis.setLabelsColor(QColor(color))
-    axis.setGridLineColor(QColor("#3A3C42"))
+def _axis_style(axis, color: Optional[str] = None) -> None:
+    """Apply consistent axis label and grid-line styling adhering to theme."""
+    dark = _is_dark_theme()
+    lbl_color = color or ("#A6A9B1" if dark else "#5B5F6A")
+    grid_color = "#3A3C42" if dark else "#E2E4E8"
+    axis.setLabelsColor(QColor(lbl_color))
+    axis.setGridLineColor(QColor(grid_color))
     axis.setLabelsFont(QFont("Segoe UI", 10))
 
 
@@ -225,16 +249,19 @@ def build_pareto_chart(
     line_series = QLineSeries()
     line_series.setName("Cumulative %")
     line_series.setColor(QColor("#FBBF24"))
+    line_series.setPointsVisible(True)
     pen = line_series.pen()
     pen.setWidth(2)
     line_series.setPen(pen)
     for i, pct in enumerate(cumuls):
-        line_series.append(i + 0.5, pct * ax_val.max() / 100.0)
+        line_series.append(i, pct * ax_val.max() / 100.0)
     chart.addSeries(line_series)
 
     ax_cat = QBarCategoryAxis()
     ax_cat.append(cats)
     _axis_style(ax_cat)
+    if any(len(c) > 10 for c in cats) or len(cats) > 5:
+        ax_cat.setLabelsAngle(-25)
     chart.addAxis(ax_cat, Qt.AlignmentFlag.AlignBottom)
     bar_series.attachAxis(ax_cat)
 
@@ -247,10 +274,11 @@ def build_pareto_chart(
 
 
 def build_monthly_chart(
-    data: Optional[Union[List[Any], Dict[str, Any]]] = None
+    data: Optional[Union[List[Any], Dict[str, Any]]] = None,
+    title: str = "Comment Timeline (by Creation Date)",
 ) -> "QChartView | QFrame":
     """
-    Build a comment trend line chart.
+    Build a comment creation timeline chart.
 
     Parameters
     ----------
@@ -258,15 +286,17 @@ def build_monthly_chart(
         Either a list of TrendDataPointDTO objects (period_label, count),
         a dictionary with 'months', 'comments', 'approved' lists,
         or a date/label to count dict.
+    title:
+        Custom title for the timeline chart.
 
     Returns
     -------
     QChartView | QFrame
     """
     if not _HAS_CHARTS:
-        return no_chart_label("Comment Trend")
+        return no_chart_label(title)
 
-    chart = _styled_chart("Comment Trend Over Time")
+    chart = _styled_chart(title)
 
     if isinstance(data, list) and data:
         labels = [
@@ -284,6 +314,7 @@ def build_monthly_chart(
         series = QLineSeries()
         series.setName("Comments")
         series.setColor(QColor("#3E9BFF"))
+        series.setPointsVisible(True)
         pen = series.pen()
         pen.setWidth(2)
         series.setPen(pen)
@@ -394,7 +425,8 @@ build_status_trend_chart = build_monthly_chart
 
 
 def build_category_pie(
-    data: Optional[Union[List[Any], Dict[str, Any]]] = None
+    data: Optional[Union[List[Any], Dict[str, Any]]] = None,
+    title: str = "Category Distribution",
 ) -> "QChartView | QFrame":
     """
     Build a category distribution donut chart.
@@ -404,22 +436,26 @@ def build_category_pie(
     data:
         Either a list of CategoryDistributionDTO objects (category_name, count, color_hex),
         or a dict mapping category name to count.
+    title:
+        Custom title for the category donut chart.
 
     Returns
     -------
     QChartView | QFrame
     """
     if not _HAS_CHARTS:
-        return no_chart_label("Category Distribution")
+        return no_chart_label(title)
 
-    chart = _styled_chart("Category Distribution")
+    chart = _styled_chart(title)
     chart.legend().setAlignment(Qt.AlignmentFlag.AlignRight)
+    chart.legend().setFont(QFont("Segoe UI", 9))
 
     series = QPieSeries()
     series.setHoleSize(0.45)   # donut style
 
     has_slices = False
 
+    raw_items: List[tuple[str, int, str]] = []
     if isinstance(data, list) and data:
         for item in data:
             cat_name = (
@@ -437,25 +473,138 @@ def build_category_pie(
                 or _CAT_COLORS.get(cat_name, "#A6A9B1")
             )
             if count > 0:
-                has_slices = True
-                slice_ = series.append(f"{cat_name} ({count})", count)
-                slice_.setColor(QColor(color))
-                slice_.setLabelColor(QColor("#F2F3F5"))
-                slice_.setLabelFont(QFont("Segoe UI", 10))
-
+                raw_items.append((str(cat_name), int(count), str(color)))
     elif isinstance(data, dict) and data:
         for cat, count in data.items():
             if count > 0:
-                has_slices = True
-                slice_ = series.append(f"{cat} ({count})", count)
-                slice_.setColor(QColor(_CAT_COLORS.get(cat, "#A6A9B1")))
-                slice_.setLabelColor(QColor("#F2F3F5"))
-                slice_.setLabelFont(QFont("Segoe UI", 10))
+                raw_items.append((str(cat), int(count), _CAT_COLORS.get(cat, "#A6A9B1")))
+
+    total_count = sum(cnt for _, cnt, _ in raw_items)
+
+    for cat_name, count, color in raw_items:
+        has_slices = True
+        pct = (count / total_count * 100.0) if total_count > 0 else 0.0
+        slice_ = series.append(f"{cat_name}: {count} ({pct:.1f}%)", count)
+        slice_.setColor(QColor(color))
+        slice_.setLabelColor(QColor("#F2F3F5") if _is_dark_theme() else QColor("#1B1D21"))
+        slice_.setLabelFont(QFont("Segoe UI", 10))
 
     if not has_slices:
         slice_ = series.append("No Data", 1)
-        slice_.setColor(QColor("#4A4D55"))
-        slice_.setLabelColor(QColor("#A6A9B1"))
+        slice_.setColor(QColor("#4A4D55") if _is_dark_theme() else QColor("#E2E4E8"))
+        slice_.setLabelColor(QColor("#A6A9B1") if _is_dark_theme() else QColor("#5B5F6A"))
+        slice_.setLabelFont(QFont("Segoe UI", 10))
+
+    chart.addSeries(series)
+    return _chart_view(chart)
+
+
+def build_confidence_distribution_chart(
+    data: Optional[Union[List[Any], Dict[str, Any]]] = None,
+    title: str = "Confidence Distribution",
+) -> "QChartView | QFrame":
+    """
+    Build a confidence distribution bar chart (0.0-0.2, 0.2-0.4, ..., 0.8-1.0).
+    """
+    if not _HAS_CHARTS:
+        return no_chart_label(title)
+
+    chart = _styled_chart(title)
+    chart.legend().hide()
+
+    labels = ["0.0-0.2", "0.2-0.4", "0.4-0.6", "0.6-0.8", "0.8-1.0"]
+    counts = [0, 0, 0, 0, 0]
+
+    if isinstance(data, list) and data:
+        for item in data:
+            lbl = getattr(item, "range_label", None) or (item.get("range_label") if isinstance(item, dict) else "")
+            cnt = getattr(item, "count", 0) if hasattr(item, "count") else (item.get("count", 0) if isinstance(item, dict) else 0)
+            if lbl in labels:
+                counts[labels.index(lbl)] = int(cnt)
+    elif isinstance(data, dict) and data:
+        for lbl, cnt in data.items():
+            if lbl in labels:
+                counts[labels.index(lbl)] = int(cnt)
+
+    bar_set = QBarSet("Comments")
+    bar_set.setColor(QColor("#8B5CF6"))
+    bar_set.setBorderColor(QColor("#A78BFA"))
+    for v in counts:
+        bar_set.append(v)
+
+    bar_series = QBarSeries()
+    bar_series.append(bar_set)
+    chart.addSeries(bar_series)
+
+    ax_cat = QBarCategoryAxis()
+    ax_cat.append(labels)
+    _axis_style(ax_cat)
+    chart.addAxis(ax_cat, Qt.AlignmentFlag.AlignBottom)
+    bar_series.attachAxis(ax_cat)
+
+    max_count = max(counts) if max(counts) > 0 else 10
+    ax_val = _make_integer_value_axis(max_count)
+    chart.addAxis(ax_val, Qt.AlignmentFlag.AlignLeft)
+    bar_series.attachAxis(ax_val)
+
+    return _chart_view(chart)
+
+
+def build_status_distribution_chart(
+    data: Optional[Union[List[Any], Dict[str, Any]]] = None,
+    title: str = "Status Distribution",
+) -> "QChartView | QFrame":
+    """
+    Build a status distribution donut chart (Pending, Approved, Rejected, Flagged).
+    """
+    if not _HAS_CHARTS:
+        return no_chart_label(title)
+
+    chart = _styled_chart(title)
+    chart.legend().setAlignment(Qt.AlignmentFlag.AlignRight)
+    chart.legend().setFont(QFont("Segoe UI", 9))
+
+    series = QPieSeries()
+    series.setHoleSize(0.45)
+
+    status_colors = {
+        "Pending": "#60A5FA",
+        "Approved": "#4ADE80",
+        "Rejected": "#F87171",
+        "Flagged": "#FBBF24",
+    }
+
+    counts: Dict[str, int] = {"Pending": 0, "Approved": 0, "Rejected": 0, "Flagged": 0}
+    if isinstance(data, dict):
+        for k, v in data.items():
+            cap_k = k.capitalize() if isinstance(k, str) else str(k)
+            if cap_k in counts:
+                counts[cap_k] = int(v)
+    elif isinstance(data, list):
+        for item in data:
+            st = getattr(item, "status", None) or (item.get("status") if isinstance(item, dict) else str(item))
+            cnt = getattr(item, "count", 0) if hasattr(item, "count") else (item.get("count", 0) if isinstance(item, dict) else 0)
+            cap_st = str(st).capitalize()
+            if cap_st in counts:
+                counts[cap_st] = int(cnt)
+
+    total = sum(counts.values())
+    has_slices = False
+
+    for st_name in ["Pending", "Approved", "Rejected", "Flagged"]:
+        cnt = counts[st_name]
+        if cnt > 0:
+            has_slices = True
+            pct = (cnt / total * 100.0) if total > 0 else 0.0
+            slice_ = series.append(f"{st_name}: {cnt} ({pct:.1f}%)", cnt)
+            slice_.setColor(QColor(status_colors.get(st_name, "#9CA3AF")))
+            slice_.setLabelColor(QColor("#F2F3F5") if _is_dark_theme() else QColor("#1B1D21"))
+            slice_.setLabelFont(QFont("Segoe UI", 10))
+
+    if not has_slices:
+        slice_ = series.append("No Data", 1)
+        slice_.setColor(QColor("#4A4D55") if _is_dark_theme() else QColor("#E2E4E8"))
+        slice_.setLabelColor(QColor("#A6A9B1") if _is_dark_theme() else QColor("#5B5F6A"))
         slice_.setLabelFont(QFont("Segoe UI", 10))
 
     chart.addSeries(series)

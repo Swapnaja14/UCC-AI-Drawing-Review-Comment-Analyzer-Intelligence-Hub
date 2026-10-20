@@ -277,6 +277,7 @@ class CommentModel(Base):
     raw_text             = Column(Text,       nullable=False)
     cleaned_text         = Column(Text,       nullable=True, default="")
     category_name        = Column(String(100),nullable=True, default="Uncategorized")
+    initial_category     = Column(String(100),nullable=True, default=None)
     # Denormalised label for fast reads; canonical FK is category_id
     confidence                = Column(Float,      nullable=False, default=0.0)
     detection_confidence      = Column(Float,      nullable=False, default=0.0)

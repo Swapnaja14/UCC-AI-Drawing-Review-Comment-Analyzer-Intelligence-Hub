@@ -39,7 +39,7 @@ from PySide6.QtGui import QFont, QPainter, QKeyEvent, QPixmap, QPen, QBrush, QCo
 
 from app import mock_data as md
 from app.components.chips import StatusChip, CategoryBadge
-from app.components.pdf_canvas import make_page_pixmap, draw_bounding_boxes, BBoxItem
+from app.components.pdf_canvas import make_page_pixmap, draw_bounding_boxes, BBoxItem, get_extraction_color
 from app.screens.comment_viewer_screen import ZoomableGraphicsView
 
 # Agreed status vocabulary — do not use any other values
@@ -655,6 +655,15 @@ class HumanReviewPage(QWidget):
         self._auto_approved_badge.hide()
         status_row.addWidget(self._auto_approved_badge)
 
+        self._initial_cat_badge = QLabel("")
+        self._initial_cat_badge.setStyleSheet(
+            "background: rgba(148, 163, 184, 0.15); color: #94A3B8; border: 1px dashed rgba(148, 163, 184, 0.4); "
+            "border-radius: 4px; padding: 2px 8px; font-size: 11px; font-style: italic;"
+        )
+        self._initial_cat_badge.setToolTip("Original AI classification before human verification")
+        self._initial_cat_badge.hide()
+        status_row.addWidget(self._initial_cat_badge)
+
         status_row.addStretch()
         lay.addLayout(status_row)
 
@@ -763,6 +772,8 @@ class HumanReviewPage(QWidget):
             lbl, col, bg, border, tip = "⚠️ Needs Transc.", "#F87171", "#3D1A1A", "#7F1D1D", "Manual transcription required"
         elif "error" in low_val:
             lbl, col, bg, border, tip = "⚠️ Fallback", "#F87171", "#3D1A1A", "#7F1D1D", "Error fallback classification"
+        elif "human_verified" in low_val or "verified" in low_val:
+            lbl, col, bg, border, tip = "✅ Verified Example", "#10B981", "#064E3B", "#047857", "Authoritative human-verified decision reused for this department"
         elif "manual" in low_val or "human" in low_val:
             lbl, col, bg, border, tip = "✍️ Manual", "#34D399", "#064E3B", "#047857", "Manually classified / verified by reviewer"
         elif "fallback" in low_val or fallback_used:
@@ -796,20 +807,45 @@ class HumanReviewPage(QWidget):
                 setattr(c, "classification_method", "manual")
                 setattr(c, "fallback_used", False)
 
+            if not _get(c, "initial_category"):
+                if isinstance(c, dict):
+                    c["initial_category"] = old_cat or new_cat
+                else:
+                    setattr(c, "initial_category", old_cat or new_cat)
+
+            if isinstance(c, dict):
+                c["is_verified_by_human"] = True
+            else:
+                setattr(c, "is_verified_by_human", True)
+
             for ac in getattr(self, "_all_comments", []):
                 if _get(ac, "id") == cid:
+                    if not _get(ac, "initial_category"):
+                        if isinstance(ac, dict):
+                            ac["initial_category"] = old_cat or new_cat
+                        else:
+                            setattr(ac, "initial_category", old_cat or new_cat)
                     if isinstance(ac, dict):
                         ac["category"] = new_cat
                         ac["classification_method"] = "manual"
                         ac["fallback_used"] = False
+                        ac["is_verified_by_human"] = True
                     else:
                         setattr(ac, "category", new_cat)
                         setattr(ac, "classification_method", "manual")
                         setattr(ac, "fallback_used", False)
+                        setattr(ac, "is_verified_by_human", True)
                     break
 
             if hasattr(self, "_method_badge"):
                 self._update_method_badge("manual", False)
+
+            initial_cat = _get(c, "initial_category", None)
+            if initial_cat and initial_cat != new_cat and hasattr(self, "_initial_cat_badge"):
+                self._initial_cat_badge.setText(f"Original AI: {initial_cat}")
+                self._initial_cat_badge.show()
+            elif hasattr(self, "_initial_cat_badge"):
+                self._initial_cat_badge.hide()
 
             if self._controller and cid and not cid.startswith("C-") and old_cat != new_cat:
                 self._controller.update_comment_category(cid, new_cat)
@@ -953,25 +989,14 @@ class HumanReviewPage(QWidget):
                 item.setBrush(QBrush(fill_color))
                 item.setZValue(10)
             else:
-                # Inactive boxes: standard subtle styling
-                label = _get(item.comment, "label", "")
-                status = _get(item.comment, "status", "Pending")
-                if "blue" in str(label).lower() or str(label) in ("comment_blue", "native_blue_markup"):
-                    col_hex = "#3B82F6"
-                elif "yellow" in str(label).lower():
-                    col_hex = "#FBBF24"
-                elif "green" in str(label).lower():
-                    col_hex = "#10B981"
-                elif status == "Approved":
-                    col_hex = "#4ADE80"
-                else:
-                    col_hex = "#EF4444"
+                # Inactive boxes: unique extraction color matching its number badge
+                col_hex = getattr(item, "col_hex", None) or get_extraction_color(item.comment)
 
-                normal_pen = QPen(QColor(col_hex), 1.5)
+                normal_pen = QPen(QColor(col_hex), 2.0)
                 normal_pen.setStyle(Qt.PenStyle.SolidLine)
                 item.setPen(normal_pen)
                 fill_color = QColor(col_hex)
-                fill_color.setAlphaF(0.15)
+                fill_color.setAlphaF(0.18)
                 item.setBrush(QBrush(fill_color))
                 item.setZValue(1)
 
@@ -1020,7 +1045,9 @@ class HumanReviewPage(QWidget):
 
         drawing_ref = _get(c, "drawing_no", _get(c, "drawing_id", ""))
         page_ref    = _get(c, "page", 1)
+        ext_col     = get_extraction_color(c, index=self._idx)
         self._comment_id_lbl.setText(f"{cid}  ·  {drawing_ref}  ·  pg {page_ref}")
+        self._comment_id_lbl.setStyleSheet(f"color: {ext_col}; font-weight: bold;")
 
         self._ocr_edit.setPlainText(_get(c, "ocr_text", ""))
         category = _get(c, "category", "Dimensional")
@@ -1064,6 +1091,13 @@ class HumanReviewPage(QWidget):
             self._auto_approved_badge.show()
         elif hasattr(self, "_auto_approved_badge"):
             self._auto_approved_badge.hide()
+
+        initial_cat = _get(c, "initial_category", None)
+        if initial_cat and initial_cat != category and hasattr(self, "_initial_cat_badge"):
+            self._initial_cat_badge.setText(f"Original AI: {initial_cat}")
+            self._initial_cat_badge.show()
+        elif hasattr(self, "_initial_cat_badge"):
+            self._initial_cat_badge.hide()
 
         self._prev_btn.setEnabled(self._idx > 0)
         self._next_btn.setEnabled(self._idx < total - 1)

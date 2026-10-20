@@ -271,7 +271,7 @@ class DashboardPage(QWidget):
 
     # ── KPI Calculations ──────────────────────────────────────────
 
-    def _get_kpi_values(self) -> tuple[int, int, int, str, str]:
+    def _get_kpi_values(self) -> tuple[int, int, int, str, str, str]:
         """Query KPI aggregates from controller analytics service."""
         kpi_data = self._controller.get_dashboard_kpis() if self._controller else None
         if kpi_data is not None:
@@ -282,19 +282,22 @@ class DashboardPage(QWidget):
             acc_val = getattr(kpi_data, "accuracy_rate", None)
 
             if acc_val is not None and acc_val > 0.0:
-                accuracy_str = f"{acc_val:.1f}%"
+                metric_str = f"{acc_val:.1f}%"
+                metric_lbl = "Approval Rate"
                 trend_label = "Verified"
             elif avg_conf > 0.0:
-                accuracy_str = f"{(avg_conf * 100.0 if avg_conf <= 1.0 else avg_conf):.1f}%"
-                trend_label = "OCR Conf"
+                metric_str = f"{(avg_conf * 100.0 if avg_conf <= 1.0 else avg_conf):.1f}%"
+                metric_lbl = "Avg Confidence"
+                trend_label = "AI Confidence"
             else:
-                accuracy_str = "—"
+                metric_str = "—"
+                metric_lbl = "Avg Confidence"
                 trend_label = "Ready"
         else:
             total_projects, total_drawings, total_comments = 0, 0, 0
-            accuracy_str, trend_label = "—", "Ready"
+            metric_str, metric_lbl, trend_label = "—", "Avg Confidence", "Ready"
 
-        return total_projects, total_drawings, total_comments, accuracy_str, trend_label
+        return total_projects, total_drawings, total_comments, metric_str, metric_lbl, trend_label
 
     def _build_kpi_cards(self) -> None:
         """Build or refresh KPI cards with accurate live database metrics."""
@@ -305,13 +308,13 @@ class DashboardPage(QWidget):
                 widget.deleteLater()
         self._kpi_cards.clear()
 
-        total_projects, total_drawings, total_comments, accuracy_str, accuracy_trend = self._get_kpi_values()
+        total_projects, total_drawings, total_comments, metric_str, metric_lbl, metric_trend = self._get_kpi_values()
 
         kpis = [
             ("fa5s.folder-open",  str(total_projects), "Total Projects",     "Active",      "#3E9BFF"),
             ("fa5s.file-pdf",     str(total_drawings), "Drawings Processed", "In Database", "#8B9CFF"),
             ("fa5s.comments",     str(total_comments), "Comments Detected",  "Live Extracted", "#FBBF24"),
-            ("fa5s.check-circle", accuracy_str,        "OCR Accuracy",       accuracy_trend, "#4ADE80"),
+            ("fa5s.check-circle", metric_str,          metric_lbl,           metric_trend,  "#4ADE80"),
         ]
         for icon, val, lbl, trend, color in kpis:
             card = KpiCard(icon, val, lbl, trend, color)

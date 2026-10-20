@@ -318,7 +318,7 @@ class AppController(QObject):
         )
         self.verification_service   = VerificationService(self.comment_repo, self.audit_repo)
         self.text_cleaning_service  = TextCleaningService()
-        self.classification_service = ClassificationService(category_repo=self.category_repo)
+        self.classification_service = ClassificationService(category_repo=self.category_repo, comment_repo=self.comment_repo)
 
         # ── Annotation Detection Service ──────────────────────────
         self.annotation_service = AnnotationDetectionServiceEnhanced()
@@ -676,32 +676,6 @@ class AppController(QObject):
 
     # ── Project / dashboard operations ────────────────────────────
 
-    def get_dashboard_kpis(self) -> Any:
-        """Return live KPI aggregates from the database."""
-        return self.analytics_service.get_global_kpis()
-
-    def get_category_distribution(
-        self,
-        drawing_id: Optional[str] = None,
-        department_name: Optional[str] = None,
-    ) -> List[Any]:
-        return self.analytics_service.get_category_distribution(
-            drawing_id=drawing_id, department_name=department_name
-        )
-
-    def get_pareto_analysis(
-        self,
-        drawing_id: Optional[str] = None,
-        department_name: Optional[str] = None,
-        top_n: int = 5,
-    ) -> List[Any]:
-        return self.analytics_service.get_pareto_analysis(
-            drawing_id=drawing_id, department_name=department_name, top_n=top_n
-        )
-
-    def get_status_trend(self, drawing_id: str = None) -> List[Any]:
-        return self.analytics_service.get_status_trend(drawing_id=drawing_id)
-
     def get_all_departments(self) -> List[Dict[str, Any]]:
         """Return all engineering departments for UI dropdowns."""
         return self.department_repo.get_all_departments() if hasattr(self, 'department_repo') else []
@@ -873,21 +847,30 @@ class AppController(QObject):
             return user_override
         if self.current_user is not None:
             return self.current_user
-        if changed_by_user_id and hasattr(self, "db_engine") and self.db_engine:
-            try:
-                from src.infrastructure.storage.models import UserModel
-                with self.db_engine.get_session() as session:
-                    u_row = session.get(UserModel, changed_by_user_id)
-                    if u_row:
-                        return UserDTO(
-                            user_id=u_row.id,
-                            username=u_row.username,
-                            email=u_row.email,
-                            role=u_row.role or "User",
-                            department_id=u_row.department_id,
-                        )
-            except Exception:
-                pass
+        if changed_by_user_id:
+            if hasattr(self, "db_engine") and self.db_engine:
+                try:
+                    from src.infrastructure.storage.models import UserModel
+                    with self.db_engine.get_session() as session:
+                        u_row = session.get(UserModel, changed_by_user_id)
+                        if u_row:
+                            return UserDTO(
+                                user_id=u_row.id,
+                                username=u_row.username,
+                                email=u_row.email,
+                                role=u_row.role or "User",
+                                department_id=u_row.department_id,
+                            )
+                except Exception:
+                    pass
+            # Programmatic or CLI identifier fallback with lead engineer permissions
+            return UserDTO(
+                user_id=changed_by_user_id,
+                username=changed_by_user_id,
+                email=f"{changed_by_user_id}@ucc.local",
+                role="Lead Engineer",
+                department_id=None,
+            )
         return None
 
     def can_user_modify_comment(
@@ -1448,10 +1431,11 @@ class AppController(QObject):
         drawing_ids: Optional[List[str]] = None,
     ):
         """Proxy to analytics_service.get_global_kpis with full multi-criteria filtering."""
+        eff_dept = self.current_department_name if self.current_department_name else department_name
         return self.analytics_service.get_global_kpis(
             project_id=project_id,
             drawing_id=drawing_id,
-            department_name=department_name or self.current_department_name,
+            department_name=eff_dept,
             category_name=category_name,
             date_from=date_from,
             date_to=date_to,
@@ -1470,10 +1454,11 @@ class AppController(QObject):
         drawing_ids: Optional[List[str]] = None,
     ):
         """Proxy to analytics_service.get_category_distribution with full filtering."""
+        eff_dept = self.current_department_name if self.current_department_name else department_name
         return self.analytics_service.get_category_distribution(
             project_id=project_id,
             drawing_id=drawing_id,
-            department_name=department_name or self.current_department_name,
+            department_name=eff_dept,
             category_name=category_name,
             date_from=date_from,
             date_to=date_to,
@@ -1489,15 +1474,16 @@ class AppController(QObject):
         category_name: Optional[str] = None,
         date_from: Optional[Any] = None,
         date_to: Optional[Any] = None,
-        top_n: int = 10,
-        include_rejected: bool = False,
+        top_n: int = 20,
+        include_rejected: bool = True,
         drawing_ids: Optional[List[str]] = None,
     ):
         """Proxy to analytics_service.get_pareto_analysis with full filtering."""
+        eff_dept = self.current_department_name if self.current_department_name else department_name
         return self.analytics_service.get_pareto_analysis(
             project_id=project_id,
             drawing_id=drawing_id,
-            department_name=department_name or self.current_department_name,
+            department_name=eff_dept,
             category_name=category_name,
             date_from=date_from,
             date_to=date_to,
@@ -1517,10 +1503,55 @@ class AppController(QObject):
         drawing_ids: Optional[List[str]] = None,
     ):
         """Proxy to analytics_service.get_status_trend with full filtering."""
+        eff_dept = self.current_department_name if self.current_department_name else department_name
         return self.analytics_service.get_status_trend(
             project_id=project_id,
             drawing_id=drawing_id,
-            department_name=department_name or self.current_department_name,
+            department_name=eff_dept,
+            category_name=category_name,
+            date_from=date_from,
+            date_to=date_to,
+            drawing_ids=drawing_ids,
+        )
+
+    def get_confidence_distribution(
+        self,
+        project_id: Optional[str] = None,
+        drawing_id: Optional[str] = None,
+        department_name: Optional[str] = None,
+        category_name: Optional[str] = None,
+        date_from: Optional[Any] = None,
+        date_to: Optional[Any] = None,
+        drawing_ids: Optional[List[str]] = None,
+    ):
+        """Proxy to analytics_service.get_confidence_distribution with full filtering."""
+        eff_dept = self.current_department_name if self.current_department_name else department_name
+        return self.analytics_service.get_confidence_distribution(
+            project_id=project_id,
+            drawing_id=drawing_id,
+            department_name=eff_dept,
+            category_name=category_name,
+            date_from=date_from,
+            date_to=date_to,
+            drawing_ids=drawing_ids,
+        )
+
+    def get_status_distribution(
+        self,
+        project_id: Optional[str] = None,
+        drawing_id: Optional[str] = None,
+        department_name: Optional[str] = None,
+        category_name: Optional[str] = None,
+        date_from: Optional[Any] = None,
+        date_to: Optional[Any] = None,
+        drawing_ids: Optional[List[str]] = None,
+    ):
+        """Proxy to analytics_service.get_status_distribution with full filtering."""
+        eff_dept = self.current_department_name if self.current_department_name else department_name
+        return self.analytics_service.get_status_distribution(
+            project_id=project_id,
+            drawing_id=drawing_id,
+            department_name=eff_dept,
             category_name=category_name,
             date_from=date_from,
             date_to=date_to,

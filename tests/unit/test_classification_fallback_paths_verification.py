@@ -25,6 +25,8 @@ def service():
 
 def test_1_ai_model_successfully_executed(service):
     """Verify state when DistilBERT model executes successfully."""
+    if not (service.model_dir / "model.safetensors").exists():
+        pytest.skip("DistilBERT model weights not present on disk (deferred future asset)")
     # Test valid engineering prompt
     text = "REVISE BEAM SIZE TO W24X68 AND VERIFY MOMENT CONNECTION"
     res = service.classify_comment(text)
@@ -74,6 +76,8 @@ def test_4_inference_failed_runtime_exception(service):
 
 def test_5_batched_fallback_attribution(service):
     """Verify batch classification correctly attributes AI vs. Fallback per item."""
+    if not (service.model_dir / "model.safetensors").exists():
+        pytest.skip("DistilBERT model weights not present on disk (deferred future asset)")
     texts = [
         "MOMENT CONNECTION SHEAR TAB DEFICIENT",
         "",  # Empty text

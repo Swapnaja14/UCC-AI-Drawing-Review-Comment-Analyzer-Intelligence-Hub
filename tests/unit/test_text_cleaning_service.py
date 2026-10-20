@@ -119,3 +119,31 @@ def test_multi_discipline_terms_found():
     assert "P&ID" in res.engineering_terms_found
     assert "HSS" in res.engineering_terms_found
     assert "BOM" in res.engineering_terms_found
+
+
+def test_native_digital_stream_strictly_preserves_words():
+    """
+    Ensure the native digital stream NEVER modifies, rewrites, or spell-corrects any words,
+    only normalizing whitespace and line breaks.
+    """
+    service = TextCleaningService(expand_acronyms=True)
+    raw_digital = "VERIFY TANK WASH POINTS\r\nAND SPARES MONITOR\nFEEDS FILTER WARNING"
+    res = service.clean_text(raw_digital, is_digital=True)
+
+    # All words must be exactly preserved (no TANK -> THANK, WASH -> WAS, SPARES -> SPACES, etc.)
+    expected = "VERIFY TANK WASH POINTS AND SPARES MONITOR FEEDS FILTER WARNING"
+    assert res.cleaned_text == expected
+    assert res.corrections == []
+    assert res.similarity_score > 0.95
+
+
+def test_clean_batch_respects_is_digital():
+    service = TextCleaningService(expand_acronyms=True)
+    batch = [
+        {"raw_text": "CHECK TANK LEVEL\r\nTODAY", "is_digital": True},
+        {"raw_text": "AIN ACUEIVERN A IOULATIUN VALVE OULENVID", "is_digital": False},
+    ]
+    res = service.clean_batch(batch)
+    assert res.cleaned_comments[0].cleaned_text == "CHECK TANK LEVEL TODAY"
+    assert "AIR RECEIVER" in res.cleaned_comments[1].cleaned_text
+

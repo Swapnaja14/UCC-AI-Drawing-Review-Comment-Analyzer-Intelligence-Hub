@@ -19,7 +19,7 @@ from PySide6.QtGui import QFont, QPainter, QPixmap, QWheelEvent, QKeyEvent
 
 from app import mock_data as md
 from app.components.pdf_toolbar import PdfToolbar
-from app.components.pdf_canvas import make_page_pixmap, BBoxItem
+from app.components.pdf_canvas import make_page_pixmap, BBoxItem, get_extraction_color
 from app.components.chips import StatusChip, CategoryBadge
 from src.infrastructure.logging.logger import get_logger
 
@@ -410,9 +410,10 @@ class CommentHighlightPage(QWidget):
         confidence = _get(c, "confidence", 0.0)
 
         id_row = QHBoxLayout()
+        ext_col = get_extraction_color(c)
         id_lbl = QLabel(str(cid))
-        id_lbl.setFont(QFont("Cascadia Code", 11))
-        id_lbl.setStyleSheet("color: #A6A9B1;")
+        id_lbl.setFont(QFont("Cascadia Code", 11, QFont.Weight.Bold))
+        id_lbl.setStyleSheet(f"color: {ext_col};")
         id_row.addWidget(id_lbl)
         id_row.addStretch()
 

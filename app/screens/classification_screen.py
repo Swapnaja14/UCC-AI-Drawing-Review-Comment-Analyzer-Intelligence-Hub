@@ -439,7 +439,11 @@ class ClassificationPage(QWidget):
         method_lay.setContentsMargins(0, 2, 0, 4)
         method_lay.setSpacing(8)
 
-        if "manual" in str(method_str).lower():
+        if "human_verified" in str(method_str).lower() or "verified" in str(method_str).lower():
+            m_badge = QLabel("✅ Verified Example")
+            m_badge.setStyleSheet("color: #10B981; font-size: 11px; font-weight: bold; background: #064E3B; padding: 3px 8px; border-radius: 4px; border: 1px solid #047857;")
+            m_badge.setToolTip("Reused authoritative human-verified classification for this department")
+        elif "manual" in str(method_str).lower():
             m_badge = QLabel("✍️ Manual Override")
             m_badge.setStyleSheet("color: #34D399; font-size: 11px; font-weight: bold; background: #064E3B; padding: 3px 8px; border-radius: 4px; border: 1px solid #047857;")
             m_badge.setToolTip("Classified or verified manually by a reviewer")
@@ -463,6 +467,13 @@ class ClassificationPage(QWidget):
             fb_badge.setStyleSheet("color: #F87171; font-size: 11px; font-weight: bold; background: #3D1A1A; padding: 3px 8px; border-radius: 4px; border: 1px solid #7F1D1D;")
             fb_badge.setToolTip("AI model was bypassed; fallback heuristics selected this category")
             method_lay.addWidget(fb_badge)
+
+        initial_cat = _get(c, "initial_category", None)
+        if initial_cat and str(initial_cat) != str(category):
+            orig_lbl = QLabel(f"Initial: {initial_cat}")
+            orig_lbl.setStyleSheet("color: #94A3B8; font-size: 11px; font-style: italic; background: rgba(148, 163, 184, 0.12); padding: 2px 6px; border-radius: 3px;")
+            orig_lbl.setToolTip("Original AI classification before human correction")
+            method_lay.addWidget(orig_lbl)
 
         method_lay.addStretch()
         lay.addWidget(method_container)

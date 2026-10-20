@@ -468,6 +468,9 @@ QLabel#SubCaption {{
     color: {t['text_secondary']};
     font-size: 12px;
 }}
+QLabel#KpiValue {{
+    color: {t['text_primary']};
+}}
 """
 
 class ThemeManager(QObject):

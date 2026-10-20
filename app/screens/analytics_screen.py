@@ -64,17 +64,12 @@ class AnalyticsPage(QWidget):
         filter_layout.setContentsMargins(16, 12, 16, 12)
         filter_layout.setSpacing(10)
 
-        # Row 1: Primary Entity Filters (Project, Batch, Drawing, Category)
+        # Row 1: Primary Entity Filters (Project, Batch, Drawing, Department, Category)
         fb1 = QHBoxLayout()
         fb1.setSpacing(12)
 
-        p_lbl = QLabel("Project:")
-        p_lbl.setObjectName("SubCaption")
-        fb1.addWidget(p_lbl)
         self._proj_cb = QComboBox()
-        self._proj_cb.setFixedHeight(36)
-        self._proj_cb.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Fixed)
-        fb1.addWidget(self._proj_cb)
+        self._proj_cb.hide()
 
         b_lbl = QLabel("Batch:")
         b_lbl.setObjectName("SubCaption")
@@ -92,6 +87,14 @@ class AnalyticsPage(QWidget):
         self._dwg_cb.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Fixed)
         fb1.addWidget(self._dwg_cb)
 
+        dept_lbl = QLabel("Department:")
+        dept_lbl.setObjectName("SubCaption")
+        fb1.addWidget(dept_lbl)
+        self._dept_cb = QComboBox()
+        self._dept_cb.setFixedHeight(36)
+        self._dept_cb.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Fixed)
+        fb1.addWidget(self._dept_cb)
+
         c_lbl = QLabel("Category:")
         c_lbl.setObjectName("SubCaption")
         fb1.addWidget(c_lbl)
@@ -102,12 +105,7 @@ class AnalyticsPage(QWidget):
 
         filter_layout.addLayout(fb1)
 
-        # Department combobox (hidden - auto-scoped to authenticated user)
-        self._dept_cb = QComboBox()
-        self._dept_cb.setFixedHeight(36)
-        self._dept_cb.hide()
-
-        # Row 2: Date Filters & Action Button
+        # Row 2: Date Filters & Action Buttons
         fb2 = QHBoxLayout()
         fb2.setSpacing(12)
 
@@ -133,10 +131,17 @@ class AnalyticsPage(QWidget):
 
         fb2.addStretch()
 
+        reset_btn = QPushButton("Reset Filters")
+        reset_btn.setObjectName("SecondaryBtn")
+        reset_btn.setFixedHeight(36)
+        reset_btn.setMinimumWidth(110)
+        reset_btn.clicked.connect(self._reset_filters)
+        fb2.addWidget(reset_btn)
+
         apply_btn = QPushButton("Apply Filters")
         apply_btn.setObjectName("PrimaryBtn")
         apply_btn.setFixedHeight(36)
-        apply_btn.setMinimumWidth(130)
+        apply_btn.setMinimumWidth(110)
         apply_btn.clicked.connect(self._apply_filters)
         fb2.addWidget(apply_btn)
 
@@ -149,7 +154,7 @@ class AnalyticsPage(QWidget):
         self._proj_cb.currentIndexChanged.connect(self._on_project_changed)
         self._batch_cb.currentIndexChanged.connect(self._on_batch_changed)
         self._dwg_cb.currentIndexChanged.connect(self._apply_filters)
-        self._dept_cb.currentIndexChanged.connect(self._apply_filters)
+        self._dept_cb.currentIndexChanged.connect(self._on_department_changed)
         self._cat_cb.currentIndexChanged.connect(self._apply_filters)
 
         # ── KPI summary ───────────────────────────────────────────
@@ -216,6 +221,14 @@ class AnalyticsPage(QWidget):
                 "Unassigned",
             ])
         self._dept_cb.addItems(departments)
+        user_dept = self._controller.current_department_name if self._controller and getattr(self._controller, "current_department_name", None) else None
+        if user_dept:
+            idx = self._dept_cb.findText(user_dept)
+            if idx >= 0:
+                self._dept_cb.setCurrentIndex(idx)
+            self._dept_cb.setEnabled(False)
+        else:
+            self._dept_cb.setEnabled(True)
         self._dept_cb.blockSignals(False)
 
         self._cat_cb.blockSignals(True)
@@ -236,9 +249,14 @@ class AnalyticsPage(QWidget):
         self._cat_cb.blockSignals(False)
 
     def _populate_drawings_for_selected_project(self) -> None:
-        """Populate drawing dropdown filtered by current project and/or batch selection."""
+        """Populate drawing dropdown filtered by current project, department, and/or batch selection."""
         proj_id = self._proj_cb.currentData() if hasattr(self, "_proj_cb") else ""
         batch_selection = self._batch_cb.currentData() if hasattr(self, "_batch_cb") else ""
+        dept_text = self._dept_cb.currentText() if hasattr(self, "_dept_cb") else "All Departments"
+        user_dept = self._controller.current_department_name if self._controller and getattr(self._controller, "current_department_name", None) else None
+        active_dept = user_dept or (None if dept_text in ("All Departments", "", "Unassigned") else dept_text)
+
+        prev_dwg_id = self._dwg_cb.currentData() if hasattr(self, "_dwg_cb") else None
 
         self._dwg_cb.blockSignals(True)
         self._dwg_cb.clear()
@@ -258,14 +276,32 @@ class AnalyticsPage(QWidget):
             self._dwg_cb.addItem("All Drawings", "")
             if self._controller:
                 try:
-                    drawings = self._controller.get_all_drawings(project_id=proj_id if proj_id else None)
+                    drawings = self._controller.get_all_drawings(
+                        project_id=proj_id if proj_id else None,
+                        department_id=active_dept
+                    )
                     for d in drawings:
                         did = d.get("id", "")
                         fname = d.get("file_name", "Drawing")
                         self._dwg_cb.addItem(fname, did)
                 except Exception:
                     pass
+
+        # Restore previous selection if still in list
+        if prev_dwg_id:
+            idx = self._dwg_cb.findData(prev_dwg_id)
+            if idx >= 0:
+                self._dwg_cb.setCurrentIndex(idx)
+            else:
+                self._dwg_cb.setCurrentIndex(0)
+        else:
+            self._dwg_cb.setCurrentIndex(0)
         self._dwg_cb.blockSignals(False)
+
+    def _on_department_changed(self, index: int) -> None:
+        """Cascade department filter to available drawings and refresh."""
+        self._populate_drawings_for_selected_project()
+        self._apply_filters()
 
     def _on_project_changed(self, index: int) -> None:
         """Update drawing combobox options when selected project changes and reload data."""
@@ -277,13 +313,54 @@ class AnalyticsPage(QWidget):
         self._populate_drawings_for_selected_project()
         self._apply_filters()
 
+    def _reset_filters(self) -> None:
+        """Reset all filter controls to their default initial state and refresh views."""
+        self._proj_cb.blockSignals(True)
+        self._proj_cb.setCurrentIndex(0)
+        self._proj_cb.blockSignals(False)
+
+        self._batch_cb.blockSignals(True)
+        self._batch_cb.setCurrentIndex(0)
+        self._batch_cb.blockSignals(False)
+
+        self._populate_drawings_for_selected_project()
+
+        self._dwg_cb.blockSignals(True)
+        self._dwg_cb.setCurrentIndex(0)
+        self._dwg_cb.blockSignals(False)
+
+        self._cat_cb.blockSignals(True)
+        self._cat_cb.setCurrentIndex(0)
+        self._cat_cb.blockSignals(False)
+
+        user_dept = self._controller.current_department_name if self._controller and getattr(self._controller, "current_department_name", None) else None
+        self._dept_cb.blockSignals(True)
+        if user_dept:
+            idx = self._dept_cb.findText(user_dept)
+            if idx >= 0:
+                self._dept_cb.setCurrentIndex(idx)
+        else:
+            self._dept_cb.setCurrentIndex(0)
+        self._dept_cb.blockSignals(False)
+
+        self._date_from.blockSignals(True)
+        self._date_from.setDate(QDate.currentDate().addYears(-1))
+        self._date_from.blockSignals(False)
+
+        self._date_to.blockSignals(True)
+        self._date_to.setDate(QDate.currentDate())
+        self._date_to.blockSignals(False)
+
+        self.reload_data()
+
     def _get_active_filters(self) -> dict:
         """Read current filter state from all widgets."""
         proj_id = self._proj_cb.currentData() if hasattr(self, "_proj_cb") else ""
         batch_selection = self._batch_cb.currentData() if hasattr(self, "_batch_cb") else ""
         dwg_id  = self._dwg_cb.currentData() if hasattr(self, "_dwg_cb") else ""
         user_dept = self._controller.current_department_name if self._controller and getattr(self._controller, "current_department_name", None) else None
-        dept    = user_dept or (self._dept_cb.currentText() if hasattr(self, "_dept_cb") else "All Departments")
+        dept_text = self._dept_cb.currentText() if hasattr(self, "_dept_cb") else "All Departments"
+        dept    = user_dept or dept_text
         cat     = self._cat_cb.currentText() if hasattr(self, "_cat_cb") else "All Categories"
 
         # Read date limits from QDateEdit
@@ -303,7 +380,7 @@ class AnalyticsPage(QWidget):
         return {
             "project_id": proj_id if proj_id else None,
             "drawing_id": dwg_id if dwg_id else None,
-            "drawing_ids": batch_drawing_ids if (batch_drawing_ids and not dwg_id) else None,
+            "drawing_ids": (batch_drawing_ids if not dwg_id else None) if is_current_batch else None,
             "is_current_batch": is_current_batch,
             "department_name": None if dept in ("All Departments", "", "Unassigned") else dept,
             "category_name": None if cat in ("All Categories", "") else cat,
@@ -334,33 +411,76 @@ class AnalyticsPage(QWidget):
         if kpi_data is not None:
             if hasattr(kpi_data, "total_comments"):
                 total_comments = kpi_data.total_comments
+                pending_count  = kpi_data.pending_count
                 approved_count = kpi_data.approved_count
                 rejected_count = kpi_data.rejected_count
                 flagged_count  = kpi_data.flagged_count
+                avg_confidence = getattr(kpi_data, "avg_confidence", 0.0) or 0.0
+                reviewed_count = getattr(kpi_data, "reviewed_count", None)
+                if reviewed_count is None:
+                    reviewed_count = approved_count + rejected_count
+                review_progress = getattr(kpi_data, "review_progress", 0.0) or 0.0
+                approval_rate = getattr(kpi_data, "approval_rate", 0.0) or 0.0
+                auto_approved_count = getattr(kpi_data, "auto_approved_count", 0) or 0
+                auto_approval_rate = getattr(kpi_data, "auto_approval_rate", 0.0) or 0.0
+                est_hours_saved = getattr(kpi_data, "estimated_hours_saved", 0.0) or 0.0
+                high_conf_pct = getattr(kpi_data, "high_confidence_pct", 0.0) or 0.0
+                low_conf_pct = getattr(kpi_data, "low_confidence_pct", 0.0) or 0.0
             elif isinstance(kpi_data, dict):
                 total_comments = kpi_data.get("total_comments", 0)
+                pending_count  = kpi_data.get("pending_count", 0)
                 approved_count = kpi_data.get("approved_count", 0)
                 rejected_count = kpi_data.get("rejected_count", 0)
                 flagged_count  = kpi_data.get("flagged_count", 0)
+                avg_confidence = kpi_data.get("avg_confidence", 0.0) or 0.0
+                reviewed_count = kpi_data.get("reviewed_count", approved_count + rejected_count)
+                review_progress = kpi_data.get("review_progress", 0.0) or 0.0
+                approval_rate = kpi_data.get("approval_rate", 0.0) or 0.0
+                auto_approved_count = kpi_data.get("auto_approved_count", 0) or 0
+                auto_approval_rate = kpi_data.get("auto_approval_rate", 0.0) or 0.0
+                est_hours_saved = kpi_data.get("estimated_hours_saved", 0.0) or 0.0
+                high_conf_pct = kpi_data.get("high_confidence_pct", 0.0) or 0.0
+                low_conf_pct = kpi_data.get("low_confidence_pct", 0.0) or 0.0
             else:
-                total_comments, approved_count, rejected_count, flagged_count = 0, 0, 0, 0
+                total_comments = pending_count = approved_count = rejected_count = flagged_count = 0
+                avg_confidence = review_progress = approval_rate = auto_approval_rate = est_hours_saved = 0.0
+                reviewed_count = auto_approved_count = 0
+                high_conf_pct = low_conf_pct = 0.0
         else:
-            total_comments, approved_count, rejected_count, flagged_count = 0, 0, 0, 0
+            total_comments = pending_count = approved_count = rejected_count = flagged_count = 0
+            avg_confidence = review_progress = approval_rate = auto_approval_rate = est_hours_saved = 0.0
+            reviewed_count = auto_approved_count = 0
+            high_conf_pct = low_conf_pct = 0.0
 
-        approved_pct = f"{(approved_count / total_comments * 100):.1f}%" if total_comments > 0 else "0%"
-        rejected_pct = f"{(rejected_count / total_comments * 100):.1f}%" if total_comments > 0 else "0%"
-        flagged_pct  = f"{(flagged_count / total_comments * 100):.1f}%" if total_comments > 0 else "0%"
+        pending_pct  = f"{(pending_count / total_comments * 100):.1f}%" if total_comments > 0 else "0.0%"
+        approved_pct = f"{(approved_count / total_comments * 100):.1f}%" if total_comments > 0 else "0.0%"
+        rejected_pct = f"{(rejected_count / total_comments * 100):.1f}%" if total_comments > 0 else "0.0%"
+        flagged_pct  = f"{(flagged_count / total_comments * 100):.1f}%" if total_comments > 0 else "0.0%"
+        conf_str     = f"{(avg_confidence * 100.0 if avg_confidence <= 1.0 else avg_confidence):.1f}%" if total_comments > 0 and avg_confidence > 0 else "—"
+        conf_trend   = f"~{est_hours_saved:.1f}h Est." if (total_comments > 0 and est_hours_saved > 0) else "AI Confidence"
 
         kpi_items = [
             ("fa5s.comments",     f"{total_comments:,}", "Total Comments", "Total in Query", "#3E9BFF"),
+            ("fa5s.clock",        f"{pending_count:,}",  "Pending Review", pending_pct,      "#60A5FA"),
             ("fa5s.check-circle", f"{approved_count:,}", "Approved",       approved_pct,     "#4ADE80"),
             ("fa5s.times-circle", f"{rejected_count:,}", "Rejected",       rejected_pct,     "#F87171"),
             ("fa5s.flag",         f"{flagged_count:,}",  "Flagged",        flagged_pct,      "#FBBF24"),
+            ("fa5s.robot",        conf_str,              "Avg Confidence", conf_trend,       "#A78BFA"),
         ]
 
-        for icon, val, lbl, trend, color in kpi_items:
+        tooltips = [
+            f"Total Comments: {total_comments:,}\nReviewed: {reviewed_count:,} ({review_progress:.1f}%)\nPending: {pending_count:,} ({pending_pct})\nPopulation matches all active charts",
+            f"Pending Review: {pending_count:,} ({pending_pct})\nAwaiting human engineering action",
+            f"Approved: {approved_count:,} ({approved_pct})\nAuto-Approved: {auto_approved_count:,} ({auto_approval_rate:.1f}%)\nHuman-Approved: {max(0, approved_count - auto_approved_count):,}\nApproval Rate: {approval_rate:.1f}%",
+            f"Rejected: {rejected_count:,} ({rejected_pct})\nMarked invalid or inapplicable",
+            f"Flagged: {flagged_count:,} ({flagged_pct})\nMarked for senior engineering escalation",
+            f"Average AI Confidence: {conf_str}\nHigh Confidence (≥85%): {high_conf_pct:.1f}%\nLow Confidence (<60%): {low_conf_pct:.1f}%\nEstimated Hours Saved: ~{est_hours_saved:.1f} hrs (Est.)\nNote: Confidence reflects AI model score, not ground-truth accuracy.",
+        ]
+
+        for i, (icon, val, lbl, trend, color) in enumerate(kpi_items):
             card = KpiCard(icon, val, lbl, trend, color)
             card.setMinimumHeight(120)
+            card.setToolTip(tooltips[i])
             self._kpi_cards.append(card)
             self._kpi_row.addWidget(card, 1)
 
@@ -390,6 +510,7 @@ class AnalyticsPage(QWidget):
             category_name=cat_name,
             date_from=d_from,
             date_to=d_to,
+            include_rejected=True,
         ) if self._controller else None
 
         category_data = self._controller.get_category_distribution(
@@ -400,6 +521,7 @@ class AnalyticsPage(QWidget):
             category_name=cat_name,
             date_from=d_from,
             date_to=d_to,
+            include_rejected=True,
         ) if self._controller else None
 
         trend_data = self._controller.get_status_trend(
@@ -412,10 +534,16 @@ class AnalyticsPage(QWidget):
             date_to=d_to,
         ) if self._controller else None
 
-        pareto_title = "Pareto — Current Batch Errors" if is_cur_b else "Pareto — Comments by Category"
+        if cat_name:
+            pareto_title = f"Pareto — Category: {cat_name}"
+            pie_title = f"Category Distribution ({cat_name})"
+        else:
+            pareto_title = "Pareto — Comments by Category"
+            pie_title = "Category Distribution"
+
         pareto_view  = build_pareto_chart(pareto_data, title=pareto_title)
-        monthly_view = build_monthly_chart(trend_data)
-        pie_view     = build_category_pie(category_data)
+        timeline_view = build_monthly_chart(trend_data, title="Comment Timeline (by Creation Date)")
+        pie_view     = build_category_pie(category_data, title=pie_title)
 
         def _wrap(view, min_h: int = 280) -> QFrame:
             f = QFrame()
@@ -426,9 +554,9 @@ class AnalyticsPage(QWidget):
             lay.addWidget(view)
             return f
 
-        self._grid.addWidget(_wrap(pareto_view,  320), 0, 0, 2, 1)
-        self._grid.addWidget(_wrap(monthly_view, 220), 0, 1)
-        self._grid.addWidget(_wrap(pie_view,     220), 1, 1)
+        self._grid.addWidget(_wrap(pareto_view,   320), 0, 0, 2, 1)
+        self._grid.addWidget(_wrap(timeline_view, 220), 0, 1)
+        self._grid.addWidget(_wrap(pie_view,      220), 1, 1)
 
     def _apply_filters(self, *args) -> None:
         """Trigger reload of KPIs and charts based on current filter state."""
@@ -449,6 +577,9 @@ class AnalyticsPage(QWidget):
             if idx >= 0:
                 self._batch_cb.setCurrentIndex(idx)
             self._batch_cb.blockSignals(False)
+
+        # Refresh drawings dropdown so newly processed drawings are never stale
+        self._populate_drawings_for_selected_project()
 
         self._build_kpi_cards()
         self._build_charts()

@@ -1,6 +1,7 @@
 import sys
 import threading
 import math
+import re
 from pathlib import Path
 from typing import List, Dict, Any, Optional
 
@@ -85,8 +86,14 @@ class ClassificationService:
 
         return dev_path
 
-    def __init__(self, model_dir: Optional[Path] = None, category_repo: Optional[Any] = None):
+    def __init__(
+        self,
+        model_dir: Optional[Path] = None,
+        category_repo: Optional[Any] = None,
+        comment_repo: Optional[Any] = None,
+    ):
         self.category_repo = category_repo
+        self.comment_repo = comment_repo
         self.keywords = self._build_category_keywords()
         self.keywords_tuples = {
             cat: [(kw, kw.lower()) for kw in kws]
@@ -614,8 +621,22 @@ class ClassificationService:
         comment_id: str = '',
         department_name: Optional[str] = None,
         force_method: Optional[str] = None,
+        is_verified_by_human: bool = False,
+        existing_category: Optional[str] = None,
     ) -> ClassificationResultDTO:
         """Classify a single comment into categories with AI inference, department scoping, and keyword-grounded calibration"""
+        if is_verified_by_human and existing_category:
+            return ClassificationResultDTO(
+                comment_id=comment_id,
+                text=comment_text,
+                primary_category=CategoryPredictionDTO(existing_category, 1.0, []),
+                alternative_categories=[],
+                classification_method='human_verified',
+                requires_human_review=False,
+                fallback_used=False,
+                fallback_reason="Human-verified category preserved"
+            )
+
         if not comment_text or not comment_text.strip():
             return ClassificationResultDTO(
                 comment_id=comment_id,
@@ -629,6 +650,27 @@ class ClassificationService:
             )
 
         clean_text = comment_text.strip()
+
+        # Priority 1: Check Human-Verified Ground Truth (authoritative human decision)
+        if self.comment_repo and clean_text:
+            norm_key = " ".join(re.sub(r'[^\w\s]', ' ', clean_text).lower().split())
+            try:
+                verified_map = self.comment_repo.get_verified_examples(department_id=department_name)
+                if norm_key in verified_map:
+                    verified_cat = verified_map[norm_key]
+                    return ClassificationResultDTO(
+                        comment_id=comment_id,
+                        text=comment_text,
+                        primary_category=CategoryPredictionDTO(verified_cat, 0.98, []),
+                        alternative_categories=[],
+                        classification_method='human_verified',
+                        requires_human_review=False,
+                        fallback_used=False,
+                        fallback_reason="Matched human-verified ground truth"
+                    )
+            except Exception as e:
+                logger.debug(f"Error checking verified ground truth: {e}")
+
         words = clean_text.lower().split()
 
         # 1. Rule-based keyword analysis (including department-scoped custom categories)
@@ -773,6 +815,14 @@ class ClassificationService:
         # Pre-load department keywords once for entire batch
         dept_kw_tuples = self.get_department_keywords(department_name)
 
+        # Pre-load human-verified ground truth for the department
+        verified_map: Dict[str, str] = {}
+        if self.comment_repo:
+            try:
+                verified_map = self.comment_repo.get_verified_examples(department_id=department_name)
+            except Exception as e:
+                logger.debug(f"Error loading verified examples for batch: {e}")
+
         # 1. Fast Batched AI predictions (1 forward pass) if not forcing rule-based
         if force_method == "rule_based":
             batch_ai_preds = [None] * len(texts)
@@ -812,6 +862,53 @@ class ClassificationService:
                 flagged += 1
                 low += 1
                 continue
+
+            # If item is already human-verified, preserve its category
+            item_raw = comments[i] if i < len(comments) else None
+            is_item_verified = False
+            item_category = None
+            if isinstance(item_raw, dict):
+                is_item_verified = bool(item_raw.get("is_verified_by_human", False))
+                item_category = item_raw.get("category_name")
+            elif hasattr(item_raw, "is_verified_by_human"):
+                is_item_verified = bool(getattr(item_raw, "is_verified_by_human", False))
+                item_category = getattr(item_raw, "category_name", None)
+
+            if is_item_verified and item_category:
+                res = ClassificationResultDTO(
+                    comment_id=comment_id,
+                    text=comment_text,
+                    primary_category=CategoryPredictionDTO(item_category, 1.0, []),
+                    alternative_categories=[],
+                    classification_method='human_verified',
+                    requires_human_review=False,
+                    fallback_used=False,
+                    fallback_reason="Human-verified category preserved"
+                )
+                results.append(res)
+                high += 1
+                ai_count += 1
+                continue
+
+            # Check human-verified ground truth for matching normalized text
+            if verified_map and clean_text:
+                norm_key = " ".join(re.sub(r'[^\w\s]', ' ', clean_text).lower().split())
+                if norm_key in verified_map:
+                    verified_cat = verified_map[norm_key]
+                    res = ClassificationResultDTO(
+                        comment_id=comment_id,
+                        text=comment_text,
+                        primary_category=CategoryPredictionDTO(verified_cat, 0.98, []),
+                        alternative_categories=[],
+                        classification_method='human_verified',
+                        requires_human_review=False,
+                        fallback_used=False,
+                        fallback_reason="Matched human-verified ground truth"
+                    )
+                    results.append(res)
+                    high += 1
+                    ai_count += 1
+                    continue
 
             words = clean_text.lower().split()
             rule_preds = self._rule_based_classify(clean_text, custom_kw_tuples=dept_kw_tuples)

@@ -23,12 +23,12 @@ class _IconBadge(QWidget):
         path = QPainterPath()
         path.addRoundedRect(0, 0, 44, 44, 10, 10)
         p.fillPath(path, bg)
-        p.end()
         try:
             icon = qta.icon(self._icon_name, color=self._color.name())
-            icon.paint(QPainter(self), 10, 10, 24, 24)
+            icon.paint(p, 10, 10, 24, 24)
         except Exception:
             pass
+        p.end()
 
 
 class KpiCard(QFrame):
@@ -54,7 +54,6 @@ class KpiCard(QFrame):
         # Value
         val_lbl = QLabel(value)
         val_lbl.setFont(QFont("Segoe UI Variable", 26, QFont.Weight.Bold))
-        val_lbl.setStyleSheet(f"color: {'#F2F3F5' if True else '#1B1D21'};")
         val_lbl.setObjectName("KpiValue")
         root.addWidget(val_lbl)
 

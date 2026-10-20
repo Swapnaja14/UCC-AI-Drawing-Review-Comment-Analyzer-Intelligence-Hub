@@ -60,10 +60,17 @@ _ANNOTATION_COLORS: dict[str, tuple[str, float]] = {
     "comment_red": ("#EF4444", 0.25),        # Red
     "native_redline": ("#EF4444", 0.25),     # Red
     "redline": ("#EF4444", 0.25),            # Red
+    "comment_orange": ("#F97316", 0.25),     # Orange
     "comment_yellow": ("#FBBF24", 0.20),     # Yellow
+    "comment_green": ("#10B981", 0.20),      # Green
+    "comment_cyan": ("#06B6D4", 0.25),       # Cyan
     "comment_blue": ("#3B82F6", 0.25),       # Blue
     "native_blue_markup": ("#3B82F6", 0.25), # Blue
-    "comment_green": ("#10B981", 0.20),      # Green
+    "comment_purple": ("#8B5CF6", 0.25),     # Purple
+    "comment_magenta": ("#D946EF", 0.25),    # Magenta
+    "highlight": ("#FEF08A", 0.35),          # Semi-transparent yellow
+    "marker": ("#F59E0B", 0.25),             # Amber marker
+    "markup_without_text": ("#94A3B8", 0.20),# Slate / Gray
     
     # Native methods (high confidence)
     "native_annotation": ("#3B82F6", 0.15),  # Blue
@@ -76,9 +83,70 @@ _ANNOTATION_COLORS: dict[str, tuple[str, float]] = {
     "edge_region": ("#06B6D4", 0.12),        # Cyan
     "blob": ("#6366F1", 0.12),               # Indigo
     
+    # Cross marks and plain strikeout lines
+    "cross_mark": ("#F59E0B", 0.25),         # Amber/Orange for cross mark
+    "plane_line": ("#EC4899", 0.25),         # Pink/Rose for plane/strikeout line
+    
     # Default
     "default": ("#EF4444", 0.20),            # Red default for comment markup
 }
+
+# ── Unique Extraction Color Palette ──────────────────────────────────────────
+# Distinct, accessible colors for individual comment extractions
+# so every extraction and its identifying number badge share a unique matching color
+EXTRACTION_PALETTE: list[str] = [
+    "#D81C60",  # 1. Vibrant Magenta / Crimson
+    "#1E87E5",  # 2. Azure / Cobalt Blue
+    "#19BC9B",  # 3. Turquoise / Emerald Teal
+    "#F29B11",  # 4. Bright Warm Amber / Gold
+    "#9938D8",  # 5. Vivid Purple / Violet
+    "#E54C19",  # 6. Deep Sunset Orange / Vermilion
+    "#0CA54C",  # 7. Forest Green
+    "#26ADE0",  # 8. Electric Cyan / Sky Blue
+    "#CC2699",  # 9. Fuchsia Pink
+    "#667FE5",  # 10. Cornflower / Royal Periwinkle
+    "#D8720C",  # 11. Bronze / Burnt Orange
+    "#198C8C",  # 12. Deep Sea Blue / Dark Cyan
+    "#E63946",  # 13. Coral Red
+    "#8338EC",  # 14. Deep Iris
+    "#3A86FF",  # 15. Bright Dodger Blue
+    "#FB5607",  # 16. International Orange
+    "#06D6A0",  # 17. Mint Green
+    "#FF006E",  # 18. Neon Hot Pink
+]
+
+
+def get_extraction_color(item: Any, index: Optional[int] = None) -> str:
+    """
+    Return a consistent, unique color hex for an extraction comment or annotation.
+    Ensures that an extraction box and its number badge share the exact same unique color.
+    """
+    if index is not None and index >= 0:
+        return EXTRACTION_PALETTE[index % len(EXTRACTION_PALETTE)]
+
+    cid = ""
+    if isinstance(item, dict):
+        cid = str(item.get("id") or "")
+    elif item is not None:
+        cid = str(getattr(item, "id", "") or "")
+
+    # If ID ends with or contains numbers, use that to index into palette
+    digits = "".join(ch for ch in cid if ch.isdigit())
+    if digits:
+        try:
+            num = int(digits)
+            # 1-indexed to 0-indexed
+            return EXTRACTION_PALETTE[(num - 1) % len(EXTRACTION_PALETTE)]
+        except Exception:
+            pass
+
+    if cid:
+        import hashlib
+        idx = int(hashlib.md5(cid.encode("utf-8")).hexdigest(), 16) % len(EXTRACTION_PALETTE)
+        return EXTRACTION_PALETTE[idx]
+
+    return EXTRACTION_PALETTE[0]
+
 
 
 # ── Bounding box painter ───────────────────────────────────────────────────
@@ -110,43 +178,55 @@ def draw_bounding_boxes(
     width = pixmap.width()
     height = pixmap.height()
 
-    for c in comments:
+    for i, c in enumerate(comments):
         if isinstance(c, dict):
             status = c.get("status", "Pending")
             bbox   = c.get("bbox", (0, 0, 0, 0))
             label  = c.get("label", "")
+            cid    = c.get("id", "")
         else:
             status = getattr(c, "status", "Pending")
             bbox   = getattr(c, "bbox", (0, 0, 0, 0))
             label  = getattr(c, "label", "")
+            cid    = getattr(c, "id", "")
 
         x     = int(bbox[0] * width)
         y     = int(bbox[1] * height)
         w     = int(bbox[2] * width)
         h_box = int(bbox[3] * height)
 
-        if "blue" in label.lower() or label in ("comment_blue", "native_blue_markup"):
-            color = QColor("#3B82F6")
-        elif "red" in label.lower() or label in ("redline", "comment_red", "native_redline") or status in ("Flagged", "Rejected"):
-            color = QColor("#EF4444")
-        elif status == "Approved":
-            color = QColor("#4ADE80")
-        elif "yellow" in label.lower():
-            color = QColor("#FBBF24")
-        elif "green" in label.lower():
-            color = QColor("#10B981")
-        else:
-            color = QColor("#EF4444")
+        if w <= 0 or h_box <= 0:
+            continue
 
-        fill_color = QColor(color)
+        # Use distinct unique color for each extraction matching its badge number
+        col_hex = get_extraction_color(c, index=i)
+
+        fill_color = QColor(col_hex)
         fill_color.setAlphaF(0.25)
         p.setBrush(QBrush(fill_color))
 
-        border_color = QColor(color)
+        border_color = QColor(col_hex)
         border_color.setAlphaF(0.9)
-        p.setPen(QPen(border_color, 1.5))
+        p.setPen(QPen(border_color, 2.0))
 
         p.drawRect(x, y, w, h_box)
+
+        # Draw matching numbered badge for this extraction in the exact same unique color
+        digits = "".join(ch for ch in str(cid) if ch.isdigit())
+        num_str = f"#{digits}" if digits else f"#{i + 1}"
+
+        badge_w = 32 if len(num_str) <= 3 else 42
+        badge_h = 18
+        badge_x = x
+        badge_y = max(0, y - badge_h)
+
+        p.setPen(Qt.PenStyle.NoPen)
+        p.setBrush(QBrush(QColor(col_hex)))
+        p.drawRoundedRect(badge_x, badge_y, badge_w, badge_h, 3, 3)
+
+        p.setPen(QPen(QColor("#FFFFFF"), 1))
+        p.setFont(QFont("Cascadia Code", 8, QFont.Weight.Bold))
+        p.drawText(QRect(badge_x, badge_y, badge_w, badge_h), Qt.AlignmentFlag.AlignCenter, num_str)
 
     p.end()
     return pixmap
@@ -334,44 +414,56 @@ def make_page_pixmap(
     # Normalised bbox format: (x_norm, y_norm, w_norm, h_norm) in range 0-1.
     render_comments = comments if comments is not None else []
 
-    for c in render_comments:
+    for i, c in enumerate(render_comments):
         # Support both mock dataclass objects and normalised display dicts
         if isinstance(c, dict):
             status = c.get("status", "Pending")
             bbox   = c.get("bbox", (0, 0, 0, 0))
             label  = c.get("label", "")
+            cid    = c.get("id", "")
         else:
             status = getattr(c, "status", "Pending")
             bbox   = getattr(c, "bbox", (0, 0, 0, 0))
             label  = getattr(c, "label", "")
+            cid    = getattr(c, "id", "")
 
         x     = int(bbox[0] * width)
         y     = int(bbox[1] * height)
         w     = int(bbox[2] * width)
         h_box = int(bbox[3] * height)
 
-        if "blue" in label.lower() or label in ("comment_blue", "native_blue_markup"):
-            color = QColor("#3B82F6")
-        elif "red" in label.lower() or label in ("redline", "comment_red", "native_redline") or status in ("Flagged", "Rejected"):
-            color = QColor("#EF4444")
-        elif status == "Approved":
-            color = QColor("#4ADE80")
-        elif "yellow" in label.lower():
-            color = QColor("#FBBF24")
-        elif "green" in label.lower():
-            color = QColor("#10B981")
-        else:
-            color = QColor("#EF4444")
+        if w <= 0 or h_box <= 0:
+            continue
 
-        fill_color = QColor(color)
+        # Use unique color for each extraction matching its badge number
+        col_hex = get_extraction_color(c, index=i)
+
+        fill_color = QColor(col_hex)
         fill_color.setAlphaF(0.25)
         p.setBrush(QBrush(fill_color))
 
-        border_color = QColor(color)
+        border_color = QColor(col_hex)
         border_color.setAlphaF(0.9)
-        p.setPen(QPen(border_color, 1.5))
+        p.setPen(QPen(border_color, 2.0))
 
         p.drawRect(x, y, w, h_box)
+
+        # Draw matching numbered badge for this extraction
+        digits = "".join(ch for ch in str(cid) if ch.isdigit())
+        num_str = f"#{digits}" if digits else f"#{i + 1}"
+
+        badge_w = 32 if len(num_str) <= 3 else 42
+        badge_h = 18
+        badge_x = x
+        badge_y = max(0, y - badge_h)
+
+        p.setPen(Qt.PenStyle.NoPen)
+        p.setBrush(QBrush(QColor(col_hex)))
+        p.drawRoundedRect(badge_x, badge_y, badge_w, badge_h, 3, 3)
+
+        p.setPen(QPen(QColor("#FFFFFF"), 1))
+        p.setFont(QFont("Cascadia Code", 8, QFont.Weight.Bold))
+        p.drawText(QRect(badge_x, badge_y, badge_w, badge_h), Qt.AlignmentFlag.AlignCenter, num_str)
 
     # Title block text
     p.setPen(QPen(QColor("#333333"), 1))
@@ -418,30 +510,46 @@ class BBoxItem(QGraphicsRectItem):
             ocr_text = getattr(comment, 'ocr_text', '')
             cid = getattr(comment, 'id', '')
 
-        if "blue" in str(label).lower() or str(label) in ("comment_blue", "native_blue_markup"):
-            col_hex, alpha = ("#3B82F6", 0.25)
-        elif "red" in str(label).lower() or str(label) in ("redline", "comment_red", "native_redline") or status in ("Flagged", "Rejected"):
-            col_hex, alpha = ("#EF4444", 0.25)
-        elif status == "Approved":
-            col_hex, alpha = ("#4ADE80", 0.25)
-        elif "yellow" in str(label).lower():
-            col_hex, alpha = ("#FBBF24", 0.25)
-        elif "green" in str(label).lower():
-            col_hex, alpha = ("#10B981", 0.25)
-        else:
-            col_hex, alpha = _BOX_COLORS.get(status, ("#EF4444", 0.25))
+        # Use unique color for each extraction matching its badge number
+        col_hex = get_extraction_color(comment)
+        self.col_hex = col_hex
 
         fill = QColor(col_hex)
-        fill.setAlphaF(alpha)
+        fill.setAlphaF(0.20)
         border = QColor(col_hex)
         border.setAlphaF(0.9)
 
         self.setData(0, cid)
         self.setBrush(QBrush(fill))
-        self.setPen(QPen(border, 1.5))
+        self.setPen(QPen(border, 2.0))
         self.setToolTip(f"{cid}: {str(ocr_text)[:60]}")
         self.setCursor(Qt.CursorShape.PointingHandCursor)
         self.setAcceptHoverEvents(True)
+
+    def paint(self, painter: QPainter, option, widget=None) -> None:
+        super().paint(painter, option, widget)
+        # Draw matching numbered badge for this extraction in the exact same color
+        cid = str(self.data(0) or "")
+        digits = "".join(ch for ch in cid if ch.isdigit())
+        num_str = f"#{digits}" if digits else "#"
+
+        rect = self.rect()
+        badge_w = 30 if len(num_str) <= 3 else 40
+        badge_h = 16
+        badge_x = rect.x()
+        badge_y = max(0.0, rect.y() - badge_h)
+
+        painter.save()
+        painter.setRenderHint(QPainter.RenderHint.Antialiasing)
+        painter.setPen(Qt.PenStyle.NoPen)
+        badge_col = QColor(getattr(self, "col_hex", "#3B82F6"))
+        painter.setBrush(QBrush(badge_col))
+        painter.drawRoundedRect(QRectF(badge_x, badge_y, badge_w, badge_h), 3, 3)
+
+        painter.setPen(QPen(QColor("#FFFFFF"), 1))
+        painter.setFont(QFont("Cascadia Code", 8, QFont.Weight.Bold))
+        painter.drawText(QRectF(badge_x, badge_y, badge_w, badge_h), Qt.AlignmentFlag.AlignCenter, num_str)
+        painter.restore()
 
     def mousePressEvent(self, e) -> None:
         if self.on_click and self.data(0):
@@ -457,6 +565,6 @@ class BBoxItem(QGraphicsRectItem):
     def hoverLeaveEvent(self, e) -> None:
         pen = self.pen()
         if self.zValue() < 5:
-            pen.setWidth(1.5)
+            pen.setWidth(2.0)
         self.setPen(pen)
         super().hoverLeaveEvent(e)

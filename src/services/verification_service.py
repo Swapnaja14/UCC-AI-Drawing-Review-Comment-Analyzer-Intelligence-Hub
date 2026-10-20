@@ -202,7 +202,7 @@ class VerificationService:
             elif status == 'Pending':
                 pending += 1
             
-            if comment.get('verified_by_human', False):
+            if comment.get('is_verified_by_human') or comment.get('verified_by_human', False):
                 verified += 1
                 
         approval_rate = approved / total if total > 0 else 0.0

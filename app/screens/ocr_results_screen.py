@@ -38,6 +38,7 @@ from app.components.comment_table import (
     EngineDelegate,
     PageDelegate,
 )
+from app.components.pdf_canvas import get_extraction_color
 from app.components.search_bar import SearchBar
 from src.services.text_cleaning_service import TextCleaningService
 from src.core.dtos.comment_processing_dtos import CleanedCommentDTO, CorrectionDTO
@@ -480,8 +481,9 @@ class OcrResultsPage(QWidget):
 
         # 0. Comment ID
         id_item = QStandardItem(cid)
-        id_item.setFont(QFont("Cascadia Code", 12))
-        id_item.setForeground(QColor("#38BDF8"))
+        id_item.setFont(QFont("Cascadia Code", 12, QFont.Weight.Bold))
+        ext_col = get_extraction_color(c)
+        id_item.setForeground(QColor(ext_col))
         id_item.setData(c, Qt.ItemDataRole.UserRole)
         tooltip = f"Drawing: {drawing_no or drawing_id}\nClick to view and edit in Human Review"
         id_item.setToolTip(tooltip)

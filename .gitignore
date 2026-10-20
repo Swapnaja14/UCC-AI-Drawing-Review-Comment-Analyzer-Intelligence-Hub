@@ -179,3 +179,19 @@ cython_debug/
 .ropeproject
 .spyderproject
 .spyproject
+
+# Confidential Evaluation Datasets
+data/evaluation_dataset/real/
+data/evaluation_dataset/55141-32_combined RJY.pdf
+data/evaluation_dataset/E-55141-32-002_A_RJY redlines.pdf
+data/evaluation_dataset/M-70086-01-007_B_.pdf
+
+# Scratch, reports, and backups
+scratch_*
+scratch/
+test.db
+backups/
+reports/
+
+# PyInstaller spec
+!UCC_Drawing_Review_Intelligence.spec

@@ -12,9 +12,14 @@ import time
 import gc
 import tracemalloc
 from concurrent.futures import ThreadPoolExecutor
+from pathlib import Path
 import pytest
 
 from src.services.classification_service import ClassificationService
+
+MODEL_DIR = Path(__file__).resolve().parent.parent.parent / "models" / "distilbert_engineering_classifier"
+if not (MODEL_DIR / "model.safetensors").exists():
+    pytest.skip("DistilBERT model weights not present on disk (deferred future asset)", allow_module_level=True)
 
 
 def test_1_singleton_model_reuse_across_instances():

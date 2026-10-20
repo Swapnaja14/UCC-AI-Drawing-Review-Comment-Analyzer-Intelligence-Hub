@@ -78,6 +78,9 @@ class OCRConfig:
     micro_upscaling_target_px: int = 80
     parallel_region_ocr: bool = True
     max_region_workers: int = 4
+    detect_markers_as_items: bool = True
+    detect_black_handwriting: bool = False
+
 
 
 @dataclass

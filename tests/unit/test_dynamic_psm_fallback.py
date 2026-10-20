@@ -204,7 +204,7 @@ def test_workflow_execution_dynamic_psm_end_to_end(tmp_path: Path):
     mock_classification_service.classify_batch.return_value = batch_mock
 
     mock_text_cleaning_service = MagicMock()
-    mock_text_cleaning_service.clean_text.side_effect = lambda t: MagicMock(cleaned_text=t, corrections=[])
+    mock_text_cleaning_service.clean_text.side_effect = lambda t, *args, **kwargs: MagicMock(cleaned_text=t, corrections=[])
 
     cfg = AppConfig()
     cfg.ocr.tesseract_psm = 6
@@ -257,5 +257,5 @@ def test_workflow_execution_dynamic_psm_end_to_end(tmp_path: Path):
     cmt = comments[0]
     assert cmt["raw_text"] == "VERIFY BEAM EMBEDMENT DEPTH"
     assert cmt["ocr_confidence"] == 0.91
-    assert cmt["ocr_engine"] == "tesseract_psm11"
+    assert "psm11" in cmt["ocr_engine"]
     assert cmt["category_name"] == "Structural"

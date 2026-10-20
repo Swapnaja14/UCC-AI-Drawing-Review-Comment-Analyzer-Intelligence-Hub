@@ -73,13 +73,30 @@ def _apply_comment_filters(
             ).filter(EngineeringDepartmentModel.name == department_name)
 
     if category_name and category_name != "All Categories":
-        query = query.filter(CommentModel.category_name == category_name)
+        if category_name == "Uncategorized":
+            query = query.filter(
+                (CommentModel.category_name == "Uncategorized") |
+                (CommentModel.category_name.is_(None)) |
+                (CommentModel.category_name == "")
+            )
+        else:
+            query = query.filter(CommentModel.category_name == category_name)
 
+    from datetime import date as date_type, time as time_type
     if date_from:
-        query = query.filter(CommentModel.created_at >= date_from)
+        if isinstance(date_from, date_type) and not isinstance(date_from, datetime):
+            date_from_start = datetime.combine(date_from, time_type.min)
+        else:
+            date_from_start = date_from
+        query = query.filter(CommentModel.created_at >= date_from_start)
     if date_to:
-        if isinstance(date_to, datetime) and date_to.hour == 0 and date_to.minute == 0:
-            date_to_end = date_to.replace(hour=23, minute=59, second=59, microsecond=999999)
+        if isinstance(date_to, datetime):
+            if date_to.hour == 0 and date_to.minute == 0 and date_to.second == 0:
+                date_to_end = date_to.replace(hour=23, minute=59, second=59, microsecond=999999)
+            else:
+                date_to_end = date_to
+        elif isinstance(date_to, date_type):
+            date_to_end = datetime.combine(date_to, time_type(23, 59, 59, 999999))
         else:
             date_to_end = date_to
         query = query.filter(CommentModel.created_at <= date_to_end)
@@ -114,6 +131,14 @@ class AnalyticsService:
                 d_query = d_query.filter(DrawingModel.id.in_(drawing_ids)) if drawing_ids else d_query.filter(False)
             elif project_id:
                 d_query = d_query.filter(DrawingModel.project_id == project_id)
+            if department_name:
+                if department_name == "Unassigned":
+                    d_query = d_query.filter(DrawingModel.department_id.is_(None))
+                else:
+                    d_query = d_query.join(
+                        EngineeringDepartmentModel,
+                        DrawingModel.department_id == EngineeringDepartmentModel.id
+                    ).filter(EngineeringDepartmentModel.name == department_name)
             total_drawings = d_query.scalar() or 0
 
             pg_query = session.query(func.count(PageModel.id))
@@ -124,19 +149,30 @@ class AnalyticsService:
             elif project_id:
                 dwg_sub = session.query(DrawingModel.id).filter(DrawingModel.project_id == project_id)
                 pg_query = pg_query.filter(PageModel.drawing_id.in_(dwg_sub))
+            if department_name:
+                if department_name == "Unassigned":
+                    pg_query = pg_query.join(DrawingModel, PageModel.drawing_id == DrawingModel.id).filter(DrawingModel.department_id.is_(None))
+                else:
+                    pg_query = pg_query.join(DrawingModel, PageModel.drawing_id == DrawingModel.id).join(
+                        EngineeringDepartmentModel,
+                        DrawingModel.department_id == EngineeringDepartmentModel.id
+                    ).filter(EngineeringDepartmentModel.name == department_name)
             total_pages = pg_query.scalar() or 0
             
             # Single SQL aggregation query with comment filters
+            # Status normalization ensures Total == Pending + Approved + Rejected + Flagged unconditionally
+            status_clean = func.upper(func.trim(func.coalesce(CommentModel.status, "PENDING")))
             stats_query = session.query(
                 func.count(CommentModel.id),
-                func.sum(case((CommentModel.status == "Approved", 1), else_=0)),
-                func.sum(case((CommentModel.status == "Rejected", 1), else_=0)),
-                func.sum(case((CommentModel.status == "Pending", 1), else_=0)),
-                func.sum(case((CommentModel.status == "Flagged", 1), else_=0)),
+                func.sum(case((status_clean == "APPROVED", 1), else_=0)),
+                func.sum(case((status_clean == "REJECTED", 1), else_=0)),
+                func.sum(case((status_clean.notin_(["APPROVED", "REJECTED", "FLAGGED"]), 1), else_=0)),
+                func.sum(case((status_clean == "FLAGGED", 1), else_=0)),
                 func.avg(CommentModel.confidence),
                 func.sum(case((CommentModel.confidence >= 0.85, 1), else_=0)),
                 func.sum(case((CommentModel.confidence < 0.60, 1), else_=0)),
-                func.sum(case(((CommentModel.status == "Approved") & (CommentModel.is_verified_by_human == True), 1), else_=0))
+                func.sum(case(((status_clean == "APPROVED") & (CommentModel.is_verified_by_human == True), 1), else_=0)),
+                func.sum(case(((status_clean == "APPROVED") & (CommentModel.is_verified_by_human == False), 1), else_=0))
             )
             stats_query = _apply_comment_filters(
                 stats_query, session, project_id, drawing_id, department_name, category_name, date_from, date_to, drawing_ids=drawing_ids
@@ -153,14 +189,23 @@ class AnalyticsService:
                 high_conf = stats[6] or 0
                 low_conf = stats[7] or 0
                 approved_verified = stats[8] or 0
+                auto_approved_count = stats[9] or 0
             else:
                 total_comments = approved_count = rejected_count = pending_count = flagged_count = 0
                 avg_confidence = 0.0
-                high_conf = low_conf = approved_verified = 0
+                high_conf = low_conf = approved_verified = auto_approved_count = 0
 
+            # Verified Approval Rate vs Total Comments
             accuracy_rate = (approved_verified / total_comments * 100.0) if total_comments > 0 else None
+            approval_rate = (approved_count / total_comments * 100.0) if total_comments > 0 else 0.0
+            reviewed_count = approved_count + rejected_count
+            review_progress = (reviewed_count / total_comments * 100.0) if total_comments > 0 else 0.0
             high_confidence_pct = (high_conf / total_comments * 100.0) if total_comments > 0 else 0.0
             low_confidence_pct = (low_conf / total_comments * 100.0) if total_comments > 0 else 0.0
+            auto_approval_rate = (auto_approved_count / total_comments * 100.0) if total_comments > 0 else 0.0
+            
+            # Estimated engineering hours saved: ~15 mins per auto-approval, ~6 mins per reviewed comment
+            estimated_hours_saved = round((auto_approved_count * 0.25) + (reviewed_count * 0.10), 1) if total_comments > 0 else 0.0
             
             return KPISummaryDTO(
                 total_projects=total_projects,
@@ -174,7 +219,13 @@ class AnalyticsService:
                 flagged_count=flagged_count,
                 avg_confidence=avg_confidence,
                 high_confidence_pct=high_confidence_pct,
-                low_confidence_pct=low_confidence_pct
+                low_confidence_pct=low_confidence_pct,
+                approval_rate=approval_rate,
+                review_progress=review_progress,
+                reviewed_count=reviewed_count,
+                auto_approved_count=auto_approved_count,
+                auto_approval_rate=auto_approval_rate,
+                estimated_hours_saved=estimated_hours_saved,
             )
 
     def get_category_distribution(
@@ -189,9 +240,10 @@ class AnalyticsService:
         drawing_ids: Optional[List[str]] = None,
     ) -> List[CategoryDistributionDTO]:
         with self._db.get_session() as session:
+            status_clean = func.upper(func.trim(func.coalesce(CommentModel.status, "PENDING")))
             query = session.query(CommentModel.category_name, func.count(CommentModel.id))
             if not include_rejected:
-                query = query.filter(CommentModel.status != "Rejected")
+                query = query.filter(status_clean != "REJECTED")
             query = _apply_comment_filters(
                 query, session, project_id, drawing_id, department_name, category_name, date_from, date_to, drawing_ids=drawing_ids
             )
@@ -215,21 +267,30 @@ class AnalyticsService:
             distribution.sort(key=lambda x: x.count, reverse=True)
             return distribution
 
-    def get_confidence_distribution(self, drawing_id: Optional[str] = None) -> List[ConfidenceBucketDTO]:
+    def get_confidence_distribution(
+        self,
+        project_id: Optional[str] = None,
+        drawing_id: Optional[str] = None,
+        department_name: Optional[str] = None,
+        category_name: Optional[str] = None,
+        date_from: Optional[datetime] = None,
+        date_to: Optional[datetime] = None,
+        drawing_ids: Optional[List[str]] = None,
+    ) -> List[ConfidenceBucketDTO]:
         with self._db.get_session() as session:
             query = session.query(CommentModel.confidence)
-            if drawing_id:
-                query = query.filter(CommentModel.drawing_id == drawing_id)
-                
+            query = _apply_comment_filters(
+                query, session, project_id, drawing_id, department_name, category_name, date_from, date_to, drawing_ids=drawing_ids
+            )
             confidences = [r[0] or 0.0 for r in query.all()]
             total = len(confidences)
             
             buckets = [
-                {'label': '0.0-0.2', 'count': sum(1 for c in confidences if 0.0 <= c < 0.2)},
+                {'label': '0.0-0.2', 'count': sum(1 for c in confidences if c < 0.2)},
                 {'label': '0.2-0.4', 'count': sum(1 for c in confidences if 0.2 <= c < 0.4)},
                 {'label': '0.4-0.6', 'count': sum(1 for c in confidences if 0.4 <= c < 0.6)},
                 {'label': '0.6-0.8', 'count': sum(1 for c in confidences if 0.6 <= c < 0.8)},
-                {'label': '0.8-1.0', 'count': sum(1 for c in confidences if 0.8 <= c <= 1.0)},
+                {'label': '0.8-1.0', 'count': sum(1 for c in confidences if c >= 0.8)},
             ]
             
             return [
@@ -241,6 +302,33 @@ class AnalyticsService:
                 for b in buckets
             ]
 
+    def get_status_distribution(
+        self,
+        project_id: Optional[str] = None,
+        drawing_id: Optional[str] = None,
+        department_name: Optional[str] = None,
+        category_name: Optional[str] = None,
+        date_from: Optional[datetime] = None,
+        date_to: Optional[datetime] = None,
+        drawing_ids: Optional[List[str]] = None,
+    ) -> Dict[str, int]:
+        """Return status counts (Pending, Approved, Rejected, Flagged) for the exact filtered population."""
+        kpi = self.get_global_kpis(
+            project_id=project_id,
+            drawing_id=drawing_id,
+            department_name=department_name,
+            category_name=category_name,
+            date_from=date_from,
+            date_to=date_to,
+            drawing_ids=drawing_ids,
+        )
+        return {
+            "Pending": kpi.pending_count,
+            "Approved": kpi.approved_count,
+            "Rejected": kpi.rejected_count,
+            "Flagged": kpi.flagged_count,
+        }
+
     def get_pareto_analysis(
         self,
         project_id: Optional[str] = None,
@@ -249,8 +337,8 @@ class AnalyticsService:
         category_name: Optional[str] = None,
         date_from: Optional[datetime] = None,
         date_to: Optional[datetime] = None,
-        top_n: int = 10,
-        include_rejected: bool = False,
+        top_n: int = 20,
+        include_rejected: bool = True,
         drawing_ids: Optional[List[str]] = None,
     ) -> List[CategoryDistributionDTO]:
         distribution = self.get_category_distribution(
@@ -391,6 +479,10 @@ class AnalyticsService:
             accuracy_rate = (approved_verified / total_comments * 100.0) if total_comments > 0 else None
             high_confidence_pct = (high_conf / total_comments * 100.0) if total_comments > 0 else 0.0
             low_confidence_pct = (low_conf / total_comments * 100.0) if total_comments > 0 else 0.0
+            approval_rate = (approved_count / total_comments * 100.0) if total_comments > 0 else 0.0
+            reviewed_count = approved_count + rejected_count
+            review_progress = (reviewed_count / total_comments * 100.0) if total_comments > 0 else 0.0
+            estimated_hours_saved = round((approved_count * 0.15) + (rejected_count * 0.10), 1) if total_comments > 0 else 0.0
 
             kpi_summary = KPISummaryDTO(
                 total_projects=1,
@@ -404,7 +496,13 @@ class AnalyticsService:
                 flagged_count=flagged_count,
                 avg_confidence=avg_confidence,
                 high_confidence_pct=high_confidence_pct,
-                low_confidence_pct=low_confidence_pct
+                low_confidence_pct=low_confidence_pct,
+                approval_rate=approval_rate,
+                review_progress=review_progress,
+                reviewed_count=reviewed_count,
+                auto_approved_count=0,
+                auto_approval_rate=0.0,
+                estimated_hours_saved=estimated_hours_saved,
             )
 
             # Category distribution query

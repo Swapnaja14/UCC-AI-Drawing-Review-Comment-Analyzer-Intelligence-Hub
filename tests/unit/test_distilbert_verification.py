@@ -11,7 +11,7 @@ Unit test suite verifying DistilBERT Model Integration:
 import pytest
 import logging
 from pathlib import Path
-import torch
+torch = pytest.importorskip("torch")
 
 from src.services.classification_service import ClassificationService
 from src.services.text_cleaning_service import TextCleaningService
