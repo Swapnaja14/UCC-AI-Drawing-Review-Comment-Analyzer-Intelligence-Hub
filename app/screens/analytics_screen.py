@@ -15,6 +15,7 @@ from PySide6.QtCore import Qt, QDate
 from PySide6.QtGui import QFont
 
 from app.components.kpi_card import KpiCard
+from app.components.overlays import EmptyState
 from app.components.charts import (
     build_pareto_chart,
     build_monthly_chart,
@@ -51,6 +52,24 @@ _EMPTY_KPIS = KPISummaryDTO(
     approved_count=0, rejected_count=0, pending_count=0, flagged_count=0,
     avg_confidence=0.0, high_confidence_pct=0.0, low_confidence_pct=0.0,
 )
+
+#: Data value carried by the "current batch" entry in the Batch dropdown.
+CURRENT_BATCH = "CURRENT_BATCH"
+
+#: Shown instead of the charts when Current Batch is selected but the session has
+#: not processed any drawing. The KPIs stay at zero because the underlying query
+#: is restricted to an empty drawing list — never widened to "everything".
+EMPTY_BATCH_MESSAGE = "No drawings processed this session"
+EMPTY_BATCH_SUB = (
+    "Current Batch is selected, so nothing is counted. Process a drawing, or "
+    "switch the Batch filter to All Uploads / Batches."
+)
+
+
+def batch_option_label(count: int) -> str:
+    """Label for the Current Batch dropdown entry, with correct singular/plural."""
+    noun = "Drawing" if count == 1 else "Drawings"
+    return f"⚡ Current Batch ({count} {noun})"
 
 
 class AnalyticsPage(QWidget):
@@ -198,14 +217,7 @@ class AnalyticsPage(QWidget):
         self._proj_cb.blockSignals(False)
 
         # Populate batch combobox
-        self._batch_cb.blockSignals(True)
-        self._batch_cb.clear()
-        self._batch_cb.addItem("All Uploads / Batches", "")
-        if self._controller:
-            batch_ids = getattr(self._controller, "current_batch_drawing_ids", []) or []
-            if batch_ids:
-                self._batch_cb.addItem(f"⚡ Current Batch ({len(batch_ids)} Drawings)", "CURRENT_BATCH")
-        self._batch_cb.blockSignals(False)
+        self._refresh_batch_options()
 
         self._populate_drawings_for_selected_project()
 
@@ -260,6 +272,27 @@ class AnalyticsPage(QWidget):
         self._cat_cb.addItems(categories)
         self._cat_cb.blockSignals(False)
 
+    def _refresh_batch_options(self) -> None:
+        """
+        Rebuild the Batch dropdown without losing the user's selection.
+
+        The Current Batch entry always exists while a controller is attached, even
+        when the session has processed nothing, so the selection can never be
+        silently replaced by "All Uploads / Batches" — which would quietly widen
+        the population from zero drawings to every drawing in the database.
+        """
+        previous = self._batch_cb.currentData()
+        self._batch_cb.blockSignals(True)
+        self._batch_cb.clear()
+        self._batch_cb.addItem("All Uploads / Batches", "")
+        if self._controller:
+            count = len(getattr(self._controller, "current_batch_drawing_ids", None) or [])
+            self._batch_cb.addItem(batch_option_label(count), CURRENT_BATCH)
+            idx = self._batch_cb.findData(previous)
+            if idx >= 0:
+                self._batch_cb.setCurrentIndex(idx)
+        self._batch_cb.blockSignals(False)
+
     def _populate_drawings_for_selected_project(self) -> None:
         """Populate drawing dropdown filtered by current project, department, and/or batch selection."""
         proj_id = self._proj_cb.currentData() if hasattr(self, "_proj_cb") else ""
@@ -273,7 +306,7 @@ class AnalyticsPage(QWidget):
         self._dwg_cb.blockSignals(True)
         self._dwg_cb.clear()
 
-        if batch_selection == "CURRENT_BATCH":
+        if batch_selection == CURRENT_BATCH:
             self._dwg_cb.addItem("All Drawings in Batch", "")
             if self._controller:
                 try:
@@ -382,10 +415,12 @@ class AnalyticsPage(QWidget):
         from_dt = datetime(qfrom.year(), qfrom.month(), qfrom.day()) if qfrom and qfrom.isValid() else None
         to_dt   = datetime(qto.year(), qto.month(), qto.day(), 23, 59, 59) if qto and qto.isValid() else None
 
-        # Determine batch drawing IDs if Current Batch is selected
+        # Determine batch drawing IDs if Current Batch is selected. An empty
+        # batch stays an empty list — the service turns that into a zero-row
+        # filter rather than dropping the restriction entirely.
         batch_drawing_ids = None
         is_current_batch = False
-        if batch_selection == "CURRENT_BATCH" and self._controller:
+        if batch_selection == CURRENT_BATCH and self._controller:
             batch_drawing_ids = getattr(self._controller, "current_batch_drawing_ids", None) or []
             is_current_batch = True
 
@@ -534,6 +569,16 @@ class AnalyticsPage(QWidget):
         d_from    = filters["date_from"]
         d_to      = filters["date_to"]
 
+        # Current Batch selected with nothing in it: say so instead of drawing
+        # three blank charts that read like a failed query.
+        if is_cur_b and not dwg_ids and not dwg_id:
+            empty = EmptyState(icon="fa5s.inbox",
+                               message=EMPTY_BATCH_MESSAGE,
+                               sub=EMPTY_BATCH_SUB)
+            empty.setMinimumHeight(320)
+            self._grid.addWidget(empty, 0, 0, 2, 2)
+            return
+
         pareto_data = self._controller.get_pareto_analysis(
             project_id=proj_id,
             drawing_id=dwg_id,
@@ -596,19 +641,9 @@ class AnalyticsPage(QWidget):
 
     def reload_data(self) -> None:
         """Reload live KPI metrics, charts, and filter options from the controller."""
-        # Refresh batch dropdown in case a new batch was processed
-        if hasattr(self, "_batch_cb") and self._controller:
-            prev_batch = self._batch_cb.currentData()
-            self._batch_cb.blockSignals(True)
-            self._batch_cb.clear()
-            self._batch_cb.addItem("All Uploads / Batches", "")
-            batch_ids = getattr(self._controller, "current_batch_drawing_ids", []) or []
-            if batch_ids:
-                self._batch_cb.addItem(f"⚡ Current Batch ({len(batch_ids)} Drawings)", "CURRENT_BATCH")
-            idx = self._batch_cb.findData(prev_batch)
-            if idx >= 0:
-                self._batch_cb.setCurrentIndex(idx)
-            self._batch_cb.blockSignals(False)
+        # Refresh batch dropdown in case a new batch was processed, keeping the
+        # user's selection even when the batch is empty.
+        self._refresh_batch_options()
 
         # Refresh drawings dropdown so newly processed drawings are never stale
         self._populate_drawings_for_selected_project()
