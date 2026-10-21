@@ -1452,6 +1452,7 @@ class AppController(QObject):
         date_from: Optional[Any] = None,
         date_to: Optional[Any] = None,
         drawing_ids: Optional[List[str]] = None,
+        include_rejected: bool = True,
     ):
         """Proxy to analytics_service.get_global_kpis with full multi-criteria filtering."""
         eff_dept = self.current_department_name if self.current_department_name else department_name
@@ -1463,6 +1464,7 @@ class AppController(QObject):
             date_from=date_from,
             date_to=date_to,
             drawing_ids=drawing_ids,
+            include_rejected=include_rejected,
         )
 
     def get_category_distribution(

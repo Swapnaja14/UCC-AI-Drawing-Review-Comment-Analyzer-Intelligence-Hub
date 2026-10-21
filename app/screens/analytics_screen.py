@@ -10,7 +10,7 @@ from __future__ import annotations
 from typing import Any, Dict, List, Optional
 from PySide6.QtWidgets import (QWidget, QVBoxLayout, QHBoxLayout, QFrame,
                                 QLabel, QPushButton, QComboBox,
-                                QDateEdit, QGridLayout, QSizePolicy)
+                                QDateEdit, QGridLayout, QSizePolicy, QCheckBox)
 from PySide6.QtCore import Qt, QDate
 from PySide6.QtGui import QFont
 
@@ -164,6 +164,11 @@ class AnalyticsPage(QWidget):
         self._date_to.setCalendarPopup(True)
         self._date_to.dateChanged.connect(self._apply_filters)
         fb2.addWidget(self._date_to)
+
+        self._incl_rejected_cb = QCheckBox("Include rejected")
+        self._incl_rejected_cb.setChecked(True)
+        self._incl_rejected_cb.stateChanged.connect(self._apply_filters)
+        fb2.addWidget(self._incl_rejected_cb)
 
         fb2.addStretch()
 
@@ -395,6 +400,11 @@ class AnalyticsPage(QWidget):
         self._date_to.setDate(QDate.currentDate())
         self._date_to.blockSignals(False)
 
+        if hasattr(self, "_incl_rejected_cb"):
+            self._incl_rejected_cb.blockSignals(True)
+            self._incl_rejected_cb.setChecked(True)
+            self._incl_rejected_cb.blockSignals(False)
+
         self.reload_data()
 
     def _get_active_filters(self) -> dict:
@@ -423,6 +433,7 @@ class AnalyticsPage(QWidget):
             batch_drawing_ids = getattr(self._controller, "current_batch_drawing_ids", None) or []
             is_current_batch = True
 
+        incl_rej = self._incl_rejected_cb.isChecked() if hasattr(self, "_incl_rejected_cb") else True
         return {
             "project_id": proj_id if proj_id else None,
             "drawing_id": dwg_id if dwg_id else None,
@@ -432,6 +443,7 @@ class AnalyticsPage(QWidget):
             "category_name": None if cat in ("All Categories", "") else cat,
             "date_from": from_dt,
             "date_to": to_dt,
+            "include_rejected": incl_rej,
         }
 
     def _build_kpi_cards(self) -> None:
@@ -456,6 +468,7 @@ class AnalyticsPage(QWidget):
             category_name=filters["category_name"],
             date_from=filters["date_from"],
             date_to=filters["date_to"],
+            include_rejected=filters.get("include_rejected", True),
         ) if self._controller else None
         if kpi is None:
             kpi = _EMPTY_KPIS
@@ -578,6 +591,7 @@ class AnalyticsPage(QWidget):
             self._grid.addWidget(empty, 0, 0, 2, 2)
             return
 
+        incl_rej = filters.get("include_rejected", True)
         pareto_data = self._controller.get_pareto_analysis(
             project_id=proj_id,
             drawing_id=dwg_id,
@@ -586,7 +600,7 @@ class AnalyticsPage(QWidget):
             category_name=cat_name,
             date_from=d_from,
             date_to=d_to,
-            include_rejected=True,
+            include_rejected=incl_rej,
         ) if self._controller else None
 
         category_data = self._controller.get_category_distribution(
@@ -597,7 +611,7 @@ class AnalyticsPage(QWidget):
             category_name=cat_name,
             date_from=d_from,
             date_to=d_to,
-            include_rejected=True,
+            include_rejected=incl_rej,
         ) if self._controller else None
 
         trend_data = self._controller.get_status_trend(
@@ -610,12 +624,13 @@ class AnalyticsPage(QWidget):
             date_to=d_to,
         ) if self._controller else None
 
+        rej_suffix = "" if incl_rej else " (excl. rejected)"
         if cat_name:
-            pareto_title = f"Pareto — Category: {cat_name}"
-            pie_title = f"Category Distribution ({cat_name})"
+            pareto_title = f"Pareto — Category: {cat_name}{rej_suffix}"
+            pie_title = f"Category Distribution ({cat_name}){rej_suffix}"
         else:
-            pareto_title = "Pareto — Comments by Category"
-            pie_title = "Category Distribution"
+            pareto_title = f"Pareto — Comments by Category{rej_suffix}"
+            pie_title = f"Category Distribution{rej_suffix}"
 
         pareto_view  = build_pareto_chart(
             pareto_data,

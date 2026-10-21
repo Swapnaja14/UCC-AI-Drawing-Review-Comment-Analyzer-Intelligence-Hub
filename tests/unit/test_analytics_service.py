@@ -147,3 +147,32 @@ def test_department_pareto_analysis(tmp_path):
     assert pareto_pipe[0].count == 1
 
 
+
+
+def test_include_rejected_toggle(test_setup):
+    service = test_setup
+    # With include_rejected=True (default)
+    kpi_all = service.get_global_kpis(include_rejected=True)
+    assert kpi_all.total_comments == 10
+    assert kpi_all.rejected_count == 2
+    assert kpi_all.include_rejected is True
+
+    # With include_rejected=False
+    kpi_no_rej = service.get_global_kpis(include_rejected=False)
+    assert kpi_no_rej.total_comments == 8
+    assert kpi_no_rej.rejected_count == 0
+    assert kpi_no_rej.include_rejected is False
+
+    # Category distribution
+    cat_all = service.get_category_distribution(include_rejected=True)
+    assert sum(d.count for d in cat_all) == 10
+
+    cat_no_rej = service.get_category_distribution(include_rejected=False)
+    assert sum(d.count for d in cat_no_rej) == 8
+
+    # Pareto analysis
+    pareto_all = service.get_pareto_analysis(include_rejected=True)
+    assert sum(d.count for d in pareto_all) == 10
+
+    pareto_no_rej = service.get_pareto_analysis(include_rejected=False)
+    assert sum(d.count for d in pareto_no_rej) == 8
