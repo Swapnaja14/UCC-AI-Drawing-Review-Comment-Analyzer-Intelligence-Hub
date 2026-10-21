@@ -235,17 +235,26 @@ class HybridOCRService:
         
         return page_result
     
-    def _run_tesseract(self, img: Image.Image) -> Dict[str, any]:
-        """Run Tesseract OCR on image"""
+    def _run_tesseract(self, img: Image.Image, timeout: int = 45) -> Dict[str, any]:
+        """Run Tesseract OCR on image with safe timeout"""
         # Get detailed data
-        ocr_data = pytesseract.image_to_data(
-            img,
-            lang=self.lang,
-            output_type=pytesseract.Output.DICT
-        )
+        try:
+            ocr_data = pytesseract.image_to_data(
+                img,
+                lang=self.lang,
+                output_type=pytesseract.Output.DICT,
+                timeout=timeout,
+            )
+        except Exception as e:
+            logger.warning(f"Hybrid OCR image_to_data timed out or failed: {e}")
+            ocr_data = {'conf': [], 'text': []}
         
         # Get text
-        text = pytesseract.image_to_string(img, lang=self.lang)
+        try:
+            text = pytesseract.image_to_string(img, lang=self.lang, timeout=timeout)
+        except Exception as e:
+            logger.warning(f"Hybrid OCR image_to_string timed out or failed: {e}")
+            text = ""
         
         # Calculate confidence
         confidences = [

@@ -19,6 +19,20 @@ from app.screens.splash_screen import SplashScreen
 from app.main_window import MainWindow
 from app.screens.login_screen import LoginWindow
 from app.controllers.app_controller import AppController
+from src.infrastructure.logging.logger import get_logger
+
+logger = get_logger("Main")
+
+
+def _global_exception_handler(exc_type, exc_value, exc_traceback):
+    """Catch-all exception handler to log crashes and prevent silent desktop termination."""
+    import traceback
+    err_msg = "".join(traceback.format_exception(exc_type, exc_value, exc_traceback))
+    logger.critical(f"Unhandled application exception:\n{err_msg}")
+    sys.__excepthook__(exc_type, exc_value, exc_traceback)
+
+
+sys.excepthook = _global_exception_handler
 
 
 def main():

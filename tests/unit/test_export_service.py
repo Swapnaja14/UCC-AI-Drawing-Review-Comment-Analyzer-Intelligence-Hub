@@ -283,3 +283,34 @@ def test_unassigned_department_tab_creation(tmp_path):
     ws_unassigned = wb["Unassigned"]
     assert ws_unassigned.cell(row=5, column=8).value == "Unknown issue with no department assigned"
 
+
+@pytest.mark.skipif(not OPENPYXL_AVAILABLE, reason="openpyxl not installed")
+def test_single_department_only_excel_export(tmp_path):
+    repo = MockCommentRepo()
+    dwg_repo = MockDrawingRepo()
+    service = ExportService(repo, MockProjectRepo(), dwg_repo)
+    out_file = tmp_path / "single_dept_test.xlsx"
+
+    config = ExportConfigDTO(
+        output_path=out_file,
+        format=ExportFormat.EXCEL,
+        drawing_id="draw1",
+        department_name="Piping Engineering",
+        single_department_only=True,
+    )
+    res = service.export_drawing_comments(config)
+
+    assert res.success is True
+    assert out_file.exists()
+    assert res.total_sheets == 3  # Executive Summary + Drawing Error Tracker + Piping Engineering
+
+    wb = openpyxl.load_workbook(out_file)
+    expected_sheets = [
+        "Executive Summary",
+        "Drawing Error Tracker",
+        "Piping Engineering",
+    ]
+    assert wb.sheetnames == expected_sheets
+    assert "Electrical Engineering" not in wb.sheetnames
+    assert "Structural & Physical Design" not in wb.sheetnames
+

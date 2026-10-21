@@ -95,8 +95,7 @@ def test_ocr_results_screen_failure_badging_and_text_styling(qapp):
     row0_text_item = model.item(0, 2)
     row0_bbox = model.item(0, 3).text()
     row0_conf = model.item(0, 4).data(Qt.ItemDataRole.UserRole)
-    row0_engine = model.item(0, 5).text()
-    row0_status = model.item(0, 6).text()
+    row0_status = model.item(0, 5).text()
 
     assert row0_id == "CMT-TEST-01"
     assert row0_page == "1"
@@ -105,15 +104,13 @@ def test_ocr_results_screen_failure_badging_and_text_styling(qapp):
     assert "Double-click to manually transcribe" in row0_text_item.toolTip()
     assert row0_bbox == "[100, 150, 150, 50]"
     assert float(row0_conf) == 0.0
-    assert row0_engine == "OCR Failed"
     assert row0_status == "Flagged"
 
     # Verify Row 1 (Normal valid comment)
     row1_text_item = model.item(1, 2)
     assert row1_text_item.text() == "CHECK CLEARANCE 500MM"
     assert row1_text_item.foreground().color().name().upper() != "#F87171"
-    assert model.item(1, 5).text() == "Tesseract OCR"
-    assert model.item(1, 6).text() == "Approved"
+    assert model.item(1, 5).text() == "Approved"
 
 
 def test_workflow_engine_creates_placeholder_for_unreadable_high_conf_region(tmp_path):

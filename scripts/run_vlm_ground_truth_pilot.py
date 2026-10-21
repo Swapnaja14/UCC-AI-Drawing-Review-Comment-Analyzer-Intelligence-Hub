@@ -43,6 +43,24 @@ Do NOT extract standard printed CAD background text, title block boilerplate, or
 Ignore translucent yellow highlighter marks.
 Only extract genuine reviewer annotations.
 
+Leader Line & Overlapping Annotation Rule:
+If multiple text boxes or callouts share an overlapping bounding box or region, but each text box has its own distinct arrow or leader line pointing to a different target (e.g. separate rows, items, or locations), treat each text-arrow pair as an independent comment. Do not merge them into a single comment.
+
+Spatial Separation & Identical Text Rule:
+If two or more physically distinct markup boxes contain identical text (e.g. repeated labels like 'SPARE', 'DELETE', or 'TYP') but are separated by distance and target different physical locations, slots, or rows (even if enclosed within the same outer proposal or highlight boundary), treat each distinct box as an INDEPENDENT comment. Do not merge or deduplicate them into a single comment.
+
+Cross-Out / Strike-Through vs. Arrow Pointing Rule:
+When a cross/strike-through ('X') and a pointing arrow appear in proximity with a gap between them, treat them as two distinct comments with different intents:
+1. The cross/strike-through ('X') crossing out a box/component indicates a DELETE/REMOVE/DISCARD action for that specific box.
+2. The arrow pointing to another box/location indicates a separate ADD/UPDATE/CALLOUT action for that target box.
+Never merge a cross-out discard action with an adjacent pointing arrow markup into a single comment.
+
+Component Tag Box vs. Adjacent Arrow Callout Rule:
+When a component has an identifying label/tag in a box at the top (e.g. 'ES1') and an arrow pointing to the component from an adjacent callout note (e.g. 'The manufacturer documentation indicates 1" of space is needed...'), extract both as TWO separate comments:
+1. The component tag/box at the top (e.g. 'ES1').
+2. The descriptive callout note pointing via the arrow (e.g. 'The manufacturer documentation indicates...').
+Never merge the component label with the arrow's callout text into a single comment, even if both reside in the same parent proposal or highlight area.
+
 For each detected review note, return a JSON array of objects with:
 - 'box_2d': [ymin, xmin, ymax, xmax] normalized on scale 0 to 1000
 - 'ink_color': the color of the reviewer pen (e.g. 'red', 'blue', 'green')

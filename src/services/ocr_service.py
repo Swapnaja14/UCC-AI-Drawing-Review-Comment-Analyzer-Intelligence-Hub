@@ -144,15 +144,25 @@ class OCRService:
         img_data = pix.tobytes("png")
         img = Image.open(io.BytesIO(img_data))
         
-        # Perform OCR with detailed data
-        ocr_data = pytesseract.image_to_data(
-            img,
-            lang=self.lang,
-            output_type=pytesseract.Output.DICT
-        )
+        # Perform OCR with detailed data and safe timeout
+        timeout_sec = getattr(self, "timeout", 45)
+        try:
+            ocr_data = pytesseract.image_to_data(
+                img,
+                lang=self.lang,
+                output_type=pytesseract.Output.DICT,
+                timeout=timeout_sec,
+            )
+        except Exception as e:
+            logger.warning(f"OCR image_to_data timed out or failed on page {page_num + 1}: {e}")
+            ocr_data = {'text': [], 'conf': [], 'left': [], 'top': [], 'width': [], 'height': []}
         
-        # Extract text
-        text = pytesseract.image_to_string(img, lang=self.lang)
+        # Extract text with safe timeout
+        try:
+            text = pytesseract.image_to_string(img, lang=self.lang, timeout=timeout_sec)
+        except Exception as e:
+            logger.warning(f"OCR image_to_string timed out or failed on page {page_num + 1}: {e}")
+            text = ""
         
         # Parse results
         page_result = {
@@ -226,8 +236,12 @@ class OCRService:
         # Crop to title block region
         title_block = img.crop((region[0], region[1], region[0] + region[2], region[1] + region[3]))
         
-        # Perform OCR on title block
-        text = pytesseract.image_to_string(title_block, lang=self.lang)
+        # Perform OCR on title block with safe timeout
+        try:
+            text = pytesseract.image_to_string(title_block, lang=self.lang, timeout=20)
+        except Exception as e:
+            logger.warning(f"Title block OCR timed out or failed: {e}")
+            text = ""
         
         # Extract key information
         title_info = {

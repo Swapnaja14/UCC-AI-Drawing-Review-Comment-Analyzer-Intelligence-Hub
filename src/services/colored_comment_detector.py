@@ -499,7 +499,8 @@ class ColoredCommentDetector:
                 ocr_data = pytesseract.image_to_data(
                     pil_img,
                     lang='eng',
-                    output_type=pytesseract.Output.DICT
+                    output_type=pytesseract.Output.DICT,
+                    timeout=25,
                 )
                 
                 # Combine text and calculate average confidence

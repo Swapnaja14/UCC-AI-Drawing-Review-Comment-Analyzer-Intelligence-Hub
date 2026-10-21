@@ -682,7 +682,8 @@ class AnnotationDetectionServiceEnhanced:
                     y1=y1_vis,
                     page_number=page_num,
                     confidence=1.0,
-                    label=label
+                    label=label,
+                    source_text=content if content else None
                 )
             )
         return regions
@@ -1239,10 +1240,23 @@ class AnnotationDetectionServiceEnhanced:
         Remove duplicate regions and consolidate multi-line comment text + revision clouds.
         Strictly preserves distinct red, blue, and green comments while merging
         co-located text, leader lines, and cloud boundaries.
+        Distinct reviewer comments (different text or separate callout/box targets)
+        are never merged together.
         """
         if not regions:
             return []
         
+        def _are_texts_distinct(t1: Optional[str], t2: Optional[str]) -> bool:
+            if not t1 or not t2:
+                return False
+            s1 = t1.strip().lower()
+            s2 = t2.strip().lower()
+            if not s1 or not s2:
+                return False
+            if s1 == s2 or s1 in s2 or s2 in s1:
+                return False
+            return True
+
         def rank_confidence(r: BoundingBoxDTO) -> float:
             score = r.confidence
             lbl = r.label.lower()
@@ -1252,43 +1266,86 @@ class AnnotationDetectionServiceEnhanced:
                 score += 0.25
             elif "green" in lbl:
                 score += 0.25
+            if getattr(r, 'source_text', None) and r.source_text.strip():
+                score += 0.50
             return score
             
+        # Pre-identify all distinct text regions to protect against shared proposal envelopes
+        distinct_text_regions: List[BoundingBoxDTO] = []
+        for r in regions:
+            t = getattr(r, 'source_text', None)
+            if t and t.strip():
+                if not any(not _are_texts_distinct(t, getattr(existing, 'source_text', None)) for existing in distinct_text_regions):
+                    distinct_text_regions.append(r)
+
+        def _get_color(lbl: str) -> str:
+            lbl_low = lbl.lower()
+            return "red" if ("red" in lbl_low) else ("blue" if ("blue" in lbl_low) else ("green" if ("green" in lbl_low) else "other"))
+
         sorted_regions = sorted(regions, key=rank_confidence, reverse=True)
-        keep = []
+        keep: List[BoundingBoxDTO] = []
         
         for region in sorted_regions:
-            reg_lbl = region.label.lower()
-            reg_color = "red" if ("red" in reg_lbl) else ("blue" if ("blue" in reg_lbl) else ("green" if ("green" in reg_lbl) else "other"))
+            reg_color = _get_color(region.label)
+            reg_text = getattr(region, 'source_text', None)
+
+            # Check if this textless markup spans multiple distinct text comments OF THE SAME COLOR
+            same_color_texts = [dtr for dtr in distinct_text_regions if _get_color(dtr.label) == reg_color]
+            if not reg_text and len(same_color_texts) > 1:
+                overlapping_distinct_texts = 0
+                for dtr in same_color_texts:
+                    if (self._calculate_containment(dtr, region) > 0.20 or 
+                        self._calculate_containment(region, dtr) > 0.20 or 
+                        self._calculate_iou(region, dtr) > 0.15):
+                        overlapping_distinct_texts += 1
+                if overlapping_distinct_texts > 1:
+                    continue
             
             is_duplicate = False
             for kept_region in keep:
-                kept_lbl = kept_region.label.lower()
-                kept_color = "red" if ("red" in kept_lbl) else ("blue" if ("blue" in kept_lbl) else ("green" if ("green" in kept_lbl) else "other"))
+                kept_color = _get_color(kept_region.label)
+                kept_text = getattr(kept_region, 'source_text', None)
                 
+                # STRICT COLOR ISOLATION: Never merge different primary markup colors (red != blue != green)
+                # A red comment never swallows a blue cloud, and blue comments are preserved independently
+                if reg_color != kept_color and (reg_color in ("red", "blue", "green") and kept_color in ("red", "blue", "green")):
+                    continue
+
+                # CRITICAL RULE: Never merge regions that have distinctly different comments
+                if _are_texts_distinct(reg_text, kept_text):
+                    continue
+
                 # Check spatial containment and overlap
                 c_reg_in_kept = self._calculate_containment(region, kept_region)
                 c_kept_in_reg = self._calculate_containment(kept_region, region)
                 iou = self._calculate_iou(region, kept_region)
                 
-                # Different primary colors are only merged if one completely encapsulates the other (> 85%)
-                if reg_color != kept_color and (reg_color in ("red", "blue", "green") and kept_color in ("red", "blue", "green")):
-                    if c_reg_in_kept > 0.85 or c_kept_in_reg > 0.85:
-                        kept_region.x0 = min(kept_region.x0, region.x0)
-                        kept_region.y0 = min(kept_region.y0, region.y0)
-                        kept_region.x1 = max(kept_region.x1, region.x1)
-                        kept_region.y1 = max(kept_region.y1, region.y1)
-                        is_duplicate = True
-                        break
-                    continue
-                
-                # If candidate is contained or overlapping with an existing kept comment
-                if c_reg_in_kept > 0.25 or c_kept_in_reg > 0.25 or iou > iou_threshold:
+                # Check contiguous vertical header tag + box boundary (e.g. tag box directly atop component box)
+                x_overlap = max(0.0, min(region.x1, kept_region.x1) - max(region.x0, kept_region.x0))
+                y_overlap = max(0.0, min(region.y1, kept_region.y1) - max(region.y0, kept_region.y0))
+                w_min = min(region.x1 - region.x0, kept_region.x1 - kept_region.x0)
+                y_gap = max(region.y0, kept_region.y0) - min(region.y1, kept_region.y1)
+                is_contiguous_header_box = (
+                    w_min > 0 and (x_overlap / w_min) > 0.70 and 0.0 <= y_gap <= 15.0 and 
+                    ((bool(reg_text) and not bool(kept_text)) or (bool(kept_text) and not bool(reg_text)))
+                )
+
+                # Check connected markup of the same color (e.g. leader line or revision cloud touching callout text)
+                is_connected_markup = (
+                    (x_overlap > 0 and y_overlap > 0) and
+                    ((bool(reg_text) and not bool(kept_text)) or (bool(kept_text) and not bool(reg_text))) and
+                    (reg_color == kept_color)
+                )
+
+                # If candidate is contained or overlapping with an existing kept comment of the same color, contiguous, or connected
+                if c_reg_in_kept > 0.25 or c_kept_in_reg > 0.25 or iou > iou_threshold or is_contiguous_header_box or is_connected_markup:
                     # Encompass the full comment + markup area
                     kept_region.x0 = min(kept_region.x0, region.x0)
                     kept_region.y0 = min(kept_region.y0, region.y0)
                     kept_region.x1 = max(kept_region.x1, region.x1)
                     kept_region.y1 = max(kept_region.y1, region.y1)
+                    if reg_text and not kept_text:
+                        kept_region.source_text = reg_text
                     if kept_color == "other" and reg_color in ("red", "blue", "green"):
                         kept_region.label = region.label
                     is_duplicate = True
@@ -1296,6 +1353,59 @@ class AnnotationDetectionServiceEnhanced:
             
             if not is_duplicate:
                 keep.append(region)
+        
+        # Multi-pass consolidation:
+        changed = True
+        while changed:
+            changed = False
+            i = 0
+            while i < len(keep):
+                j = i + 1
+                while j < len(keep):
+                    r_i = keep[i]
+                    r_j = keep[j]
+                    col_i = _get_color(r_i.label)
+                    col_j = _get_color(r_j.label)
+
+                    # Do not merge different primary colors
+                    if col_i != col_j and (col_i in ("red", "blue", "green") and col_j in ("red", "blue", "green")):
+                        j += 1
+                        continue
+
+                    t_i = getattr(r_i, 'source_text', None)
+                    t_j = getattr(r_j, 'source_text', None)
+                    
+                    if _are_texts_distinct(t_i, t_j):
+                        j += 1
+                        continue
+
+                    c_i_in_j = self._calculate_containment(r_i, r_j)
+                    c_j_in_i = self._calculate_containment(r_j, r_i)
+                    iou = self._calculate_iou(r_i, r_j)
+                    
+                    x_overlap = max(0.0, min(r_i.x1, r_j.x1) - max(r_i.x0, r_j.x0))
+                    y_overlap = max(0.0, min(r_i.y1, r_j.y1) - max(r_i.y0, r_j.y0))
+                    is_connected_markup = (
+                        (x_overlap > 0 and y_overlap > 0) and
+                        ((bool(t_i) and not bool(t_j)) or (bool(t_j) and not bool(t_i))) and
+                        (col_i == col_j)
+                    )
+
+                    can_merge = (col_i == col_j) or (col_i == "other") or (col_j == "other")
+                    if can_merge and (c_i_in_j > 0.25 or c_j_in_i > 0.25 or iou > iou_threshold or is_connected_markup):
+                        r_i.x0 = min(r_i.x0, r_j.x0)
+                        r_i.y0 = min(r_i.y0, r_j.y0)
+                        r_i.x1 = max(r_i.x1, r_j.x1)
+                        r_i.y1 = max(r_i.y1, r_j.y1)
+                        if col_i == "other" and col_j in ("red", "blue", "green"):
+                            r_i.label = r_j.label
+                        if getattr(r_j, 'source_text', None) and not getattr(r_i, 'source_text', None):
+                            r_i.source_text = r_j.source_text
+                        keep.pop(j)
+                        changed = True
+                    else:
+                        j += 1
+                i += 1
         
         return keep
     

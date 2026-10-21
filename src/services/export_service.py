@@ -248,8 +248,11 @@ class ExportService:
         else:
             return self._export_drawing_scope_excel(enriched_comments, config)
 
-    def _get_active_departments(self) -> List[str]:
-        """Fetch list of active engineering department names."""
+    def _get_active_departments(self, config: Optional[ExportConfigDTO] = None) -> List[str]:
+        """Fetch list of active engineering department names, respecting single_department_only."""
+        if config and getattr(config, "single_department_only", False) and config.department_name:
+            return [config.department_name]
+
         if self.department_repo:
             try:
                 depts = self.department_repo.get_all_departments()
@@ -321,7 +324,7 @@ class ExportService:
             self._create_drawing_summary_sheet(ws, comments, config)
             total_sheets += 1
 
-        active_departments = self._get_active_departments()
+        active_departments = self._get_active_departments(config)
         comments_by_dept = {d: [] for d in active_departments}
         unassigned_comments = []
 
@@ -710,7 +713,7 @@ class ExportService:
         total_sheets = 2
 
         # Department sheets
-        active_departments = self._get_active_departments()
+        active_departments = self._get_active_departments(config)
         comments_by_dept = {d: [] for d in active_departments}
         unassigned_comments = []
 
@@ -937,7 +940,7 @@ class ExportService:
         total_sheets = 2
 
         # Department sheets
-        active_departments = self._get_active_departments()
+        active_departments = self._get_active_departments(config)
         comments_by_dept = {d: [] for d in active_departments}
         unassigned_comments = []
 

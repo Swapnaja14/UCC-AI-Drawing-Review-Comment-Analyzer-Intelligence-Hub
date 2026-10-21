@@ -24,7 +24,10 @@ from src.core.dtos.workflow_dtos import (
     BatchWorkflowProgressDTO,
     BatchWorkflowResultDTO
 )
-from src.core.exceptions.workflow_exceptions import WorkflowProcessingError
+from src.core.exceptions.workflow_exceptions import (
+    WorkflowProcessingError,
+    WorkflowCancelledError,
+)
 from src.services.file_service import FileService
 from src.services.pdf_service import PDFService
 from src.services.annotation_service_enhanced import AnnotationDetectionServiceEnhanced
@@ -186,9 +189,9 @@ class ProcessingWorkflowEngine:
         return img
 
     @classmethod
-    def _run_tesseract_psm(cls, img: Image.Image, psm: int) -> tuple[str, float]:
+    def _run_tesseract_psm(cls, img: Image.Image, psm: int, timeout: int = 30) -> tuple[str, float]:
         """
-        Executes Tesseract OCR on a PIL Image with the specified PSM mode.
+        Executes Tesseract OCR on a PIL Image with the specified PSM mode and safe process timeout.
         Returns:
             tuple[str, float]: (extracted_text, average_word_confidence_0_to_1)
         """
@@ -198,6 +201,7 @@ class ProcessingWorkflowEngine:
                 img,
                 config=config_str,
                 output_type=pytesseract.Output.DICT,
+                timeout=timeout,
             )
             raw_confs = ocr_data.get("conf", [])
             raw_words = ocr_data.get("text", [])
@@ -218,17 +222,23 @@ class ProcessingWorkflowEngine:
                     else 0.85
                 )
                 return text, avg_conf
-        except Exception as data_err:
-            logger.debug(f"Tesseract image_to_data failed with PSM {psm}: {data_err}")
+        except (RuntimeError, Exception) as data_err:
+            if "timeout" in str(data_err).lower():
+                logger.warning(f"Tesseract OCR image_to_data timed out after {timeout}s with PSM {psm}")
+            else:
+                logger.debug(f"Tesseract image_to_data failed with PSM {psm}: {data_err}")
 
         # Fallback to image_to_string if image_to_data fails or returns no tokens
         try:
-            ocr_full = pytesseract.image_to_string(img, config=config_str).strip()
+            ocr_full = pytesseract.image_to_string(img, config=config_str, timeout=min(timeout, 15)).strip()
             alnum_words = [w for w in ocr_full.split() if any(c.isalnum() for c in w)]
             if alnum_words:
                 return ocr_full, 0.85
-        except Exception as str_err:
-            logger.debug(f"Tesseract image_to_string failed with PSM {psm}: {str_err}")
+        except (RuntimeError, Exception) as str_err:
+            if "timeout" in str(str_err).lower():
+                logger.warning(f"Tesseract OCR image_to_string timed out after {min(timeout, 15)}s with PSM {psm}")
+            else:
+                logger.debug(f"Tesseract image_to_string failed with PSM {psm}: {str_err}")
 
         return "", 0.0
 
@@ -446,14 +456,82 @@ class ProcessingWorkflowEngine:
         # 1. Check for native annotation content (FreeText callouts, Stamps, Notes)
         if not raw_ocr_text:
             try:
+                reg_lbl = (getattr(reg, "label", "") or "").lower()
+                target_color = "red" if ("red" in reg_lbl) else ("blue" if ("blue" in reg_lbl) else ("green" if ("green" in reg_lbl) else None))
+
+                best_annot = None
+                best_score = -999.0
+
                 for annot in p_obj.annots():
-                    if annot.rect.intersects(unrot_clip):
-                        c_text = (annot.info.get("content") or "").strip()
-                        if len(c_text) >= 1:
-                            raw_ocr_text = c_text
-                            ocr_conf = 1.0
-                            ocr_engine = "native_annot"
-                            break
+                    if not annot.rect.intersects(unrot_clip):
+                        continue
+                    c_text = (annot.info.get("content") or "").strip()
+                    if not c_text:
+                        continue
+
+                    inter = annot.rect.intersect(unrot_clip)
+                    inter_area = max(0.0, inter.x1 - inter.x0) * max(0.0, inter.y1 - inter.y0)
+                    annot_area = max(1.0, (annot.rect.x1 - annot.rect.x0) * (annot.rect.y1 - annot.rect.y0))
+                    clip_area = max(1.0, (unrot_clip.x1 - unrot_clip.x0) * (unrot_clip.y1 - unrot_clip.y0))
+
+                    c_annot_in_clip = inter_area / annot_area
+                    iou = inter_area / (annot_area + clip_area - inter_area)
+
+                    score = (c_annot_in_clip * 3.0) + (iou * 2.0)
+
+                    annot_col = None
+                    try:
+                        td = p_obj.get_text("dict", clip=annot.rect)
+                        for b in td.get("blocks", []):
+                            if annot_col:
+                                break
+                            for l in b.get("lines", []):
+                                if annot_col:
+                                    break
+                                for s in l.get("spans", []):
+                                    color = s.get("color", 0)
+                                    sr = (color >> 16) & 0xFF
+                                    sg = (color >> 8) & 0xFF
+                                    sb = color & 0xFF
+                                    if sr > 150 and sg < 100 and sb < 100:
+                                        annot_col = "red"
+                                        break
+                                    elif sb > 150 and sr < 100 and sg < 100:
+                                        annot_col = "blue"
+                                        break
+                                    elif sg > 120 and sr < 100 and sb < 100:
+                                        annot_col = "green"
+                                        break
+                    except Exception:
+                        pass
+
+                    if not annot_col and getattr(annot, "colors", None):
+                        stroke = annot.colors.get("stroke") or []
+                        if len(stroke) == 3:
+                            r, g, b = stroke
+                            if r > 0.7 and g < 0.3 and b < 0.3:
+                                annot_col = "red"
+                            elif b > 0.7 and r < 0.3 and g < 0.3:
+                                annot_col = "blue"
+                            elif g > 0.5 and r < 0.4 and b < 0.4:
+                                annot_col = "green"
+
+                    if target_color:
+                        if annot_col == target_color:
+                            score += 3.0
+                        elif annot_col in ("red", "blue", "green") and annot_col != target_color:
+                            score -= 3.0
+
+                    if score > best_score:
+                        best_score = score
+                        best_annot = annot
+
+                if best_annot and best_score > 0.2:
+                    c_text = (best_annot.info.get("content") or "").strip()
+                    if len(c_text) >= 1:
+                        raw_ocr_text = c_text
+                        ocr_conf = 1.0
+                        ocr_engine = "native_annot"
             except Exception:
                 raw_ocr_text = ""
 
@@ -626,6 +704,7 @@ class ProcessingWorkflowEngine:
         progress_callback: Optional[Callable[[WorkflowStepDTO], None]] = None,
         department_id: Optional[str] = None,
         project_id: Optional[str] = None,
+        cancel_check: Optional[Callable[[], bool]] = None,
     ) -> WorkflowResultDTO:
         """
         Executes complete multi-step processing workflow for an engineering drawing PDF.
@@ -683,10 +762,14 @@ class ProcessingWorkflowEngine:
             path = self.file_service.copy_to_managed_storage(path)
 
             # ── Step 2: Metadata Extraction ──────────────────────
+            if cancel_check and cancel_check():
+                raise WorkflowCancelledError(f"Processing cancelled by user before metadata extraction for '{original_file_name}'.")
             notify("Metadata Extraction", WorkflowState.METADATA_EXTRACTING, 30, f"Extracting page metrics and PDF structure.")
             doc_dto = self.pdf_service.process_pdf_document(path)
 
             # ── Step 3: Annotation Region Detection ─────────────
+            if cancel_check and cancel_check():
+                raise WorkflowCancelledError(f"Processing cancelled by user before annotation detection for '{original_file_name}'.")
             notify("Annotation Detection", WorkflowState.ANNOTATION_DETECTING, 50, 
                    f"Detecting drawing callout boxes and redline regions.")
             
@@ -716,6 +799,8 @@ class ProcessingWorkflowEngine:
                 total_regions = 0
 
             # ── Step 4: OCR & Text Extraction on Detected Regions ─
+            if cancel_check and cancel_check():
+                raise WorkflowCancelledError(f"Processing cancelled by user before OCR text extraction for '{original_file_name}'.")
             notify("OCR Engine", WorkflowState.OCR_PROCESSING, 70, f"Extracting whole comment text from detected markup regions.")
             
             # Resolve OCR configuration parameters from AppConfig (Dynamic PSM, Micro-Upscaling, Parallel OCR)
@@ -841,7 +926,36 @@ class ProcessingWorkflowEngine:
                             kept.update(item)
                         merged = True
                         break
-                        
+
+                    # 1b. Identical comment text on same page with spatial proximity/containment (e.g. cloud + arrow + text callout)
+                    i_text = (item.get("raw_text") or "").strip().lower()
+                    k_text = (kept.get("raw_text") or "").strip().lower()
+                    if i_text and k_text and len(i_text) >= 5 and i_text == k_text:
+                        kb = kept["bbox"]
+                        xi_min = max(b[0], kb[0])
+                        yi_min = max(b[1], kb[1])
+                        xi_max = min(b[2], kb[2])
+                        yi_max = min(b[3], kb[3])
+                        inter_w = max(0.0, xi_max - xi_min)
+                        inter_h = max(0.0, yi_max - yi_min)
+                        inter_area = inter_w * inter_h
+                        b_area = max(1.0, (b[2] - b[0]) * (b[3] - b[1]))
+                        kb_area = max(1.0, (kb[2] - kb[0]) * (kb[3] - kb[1]))
+                        iou = inter_area / (b_area + kb_area - inter_area) if (b_area + kb_area - inter_area) > 0 else 0.0
+                        c_b_in_kb = inter_area / b_area
+                        c_kb_in_b = inter_area / kb_area
+                        if c_b_in_kb > 0.15 or c_kb_in_b > 0.15 or iou > 0.15:
+                            kept["bbox"] = (
+                                min(b[0], kb[0]),
+                                min(b[1], kb[1]),
+                                max(b[2], kb[2]),
+                                max(b[3], kb[3]),
+                            )
+                            if kept.get("is_ocr_failed") and not item.get("is_ocr_failed"):
+                                kept.update(item)
+                            merged = True
+                            break
+
                     # 2. Strict spatial overlap: IoU >= 0.80 (NEVER union bounding boxes)
                     kb = kept["bbox"]
                     xi_min = max(b[0], kb[0])
@@ -969,6 +1083,8 @@ class ProcessingWorkflowEngine:
                                 item["classification_method"] = "error_fallback"
 
             # ── Step 6: Database Persistence ─────────────────────
+            if cancel_check and cancel_check():
+                raise WorkflowCancelledError(f"Processing cancelled by user before database persistence for '{original_file_name}'.")
             notify("Data Persistence", WorkflowState.PERSISTING, 95, f"Saving drawing records to SQLite database.")
 
             actually_saved_count = 0
@@ -1155,6 +1271,25 @@ class ProcessingWorkflowEngine:
                 comments_saved=actually_saved_count,
             )
 
+        except WorkflowCancelledError as ce:
+            self._current_state = WorkflowState.FAILED
+            duration = round(time.time() - start_time, 2)
+            if run_record and self.processing_run_repo:
+                try:
+                    self.processing_run_repo.update_processing_run(
+                        run_id=run_record["id"],
+                        status="CANCELLED",
+                        completed_at=datetime.now(timezone.utc),
+                        duration_seconds=duration,
+                        error_message="Workflow cancelled by user",
+                    )
+                except Exception as ex_cancel:
+                    logger.warning(f"Could not update cancelled processing run: {ex_cancel}")
+            err_msg = f"Workflow cancelled for '{original_file_name}': {ce}"
+            logger.info(err_msg)
+            notify("Workflow Cancelled", WorkflowState.FAILED, 0, err_msg)
+            raise
+
         except Exception as e:
             self._current_state = WorkflowState.FAILED
             duration = round(time.time() - start_time, 2)
@@ -1179,6 +1314,7 @@ class ProcessingWorkflowEngine:
         file_paths: List[str | Path],
         progress_callback: Optional[Callable[[BatchWorkflowProgressDTO], None]] = None,
         department_id: Optional[str] = None,
+        cancel_check: Optional[Callable[[], bool]] = None,
     ) -> BatchWorkflowResultDTO:
         """
         Executes complete processing workflow across a batch of PDF drawings or extracted zip files.
@@ -1187,6 +1323,7 @@ class ProcessingWorkflowEngine:
             file_paths: List of file paths (PDF files or .zip folders).
             progress_callback: Optional callback receiving BatchWorkflowProgressDTO.
             department_id: Optional engineering department ID.
+            cancel_check: Optional callable returning True if user cancelled batch processing.
 
         Returns:
             BatchWorkflowResultDTO summary.
@@ -1218,6 +1355,9 @@ class ProcessingWorkflowEngine:
         num_workers = min(6, max(1, os.cpu_count() or 2))
         if total_files == 1 or num_workers == 1:
             for idx, pdf_path in enumerate(resolved_pdfs, start=1):
+                if cancel_check and cancel_check():
+                    logger.info(f"Batch workflow cancelled by user before processing file {idx}/{total_files} ('{pdf_path.name}').")
+                    break
                 file_name = pdf_path.name
 
                 def _on_single_step(step_dto: WorkflowStepDTO):
@@ -1239,10 +1379,14 @@ class ProcessingWorkflowEngine:
                     result = self.execute_workflow(
                         pdf_path,
                         progress_callback=_on_single_step,
-                        department_id=department_id
+                        department_id=department_id,
+                        cancel_check=cancel_check,
                     )
                     successful_results.append(result)
                     total_comments += result.total_comments_found
+                except WorkflowCancelledError:
+                    logger.info(f"Batch item {idx}/{total_files} ('{file_name}') was cancelled.")
+                    break
                 except Exception as exc:
                     logger.error(f"Batch item {idx}/{total_files} ('{file_name}') failed: {exc}")
                     failed_records.append({
@@ -1305,7 +1449,7 @@ class ProcessingWorkflowEngine:
         )
 
         return BatchWorkflowResultDTO(
-            total_files_processed=total_files,
+            total_files_processed=len(successful_results) + len(failed_records),
             successful_files_count=len(successful_results),
             failed_files_count=len(failed_records),
             total_comments_found=total_comments,

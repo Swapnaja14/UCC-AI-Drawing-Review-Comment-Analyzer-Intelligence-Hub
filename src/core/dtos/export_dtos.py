@@ -26,6 +26,7 @@ class ExportConfigDTO:
     drawing_no: Optional[str] = None
     drawing_title: Optional[str] = None
     department_name: Optional[str] = None
+    single_department_only: bool = False
 
 @dataclass
 class ExportResultDTO:

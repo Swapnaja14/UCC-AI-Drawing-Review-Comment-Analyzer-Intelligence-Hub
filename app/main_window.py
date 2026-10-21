@@ -161,6 +161,8 @@ class MainWindow(QMainWindow):
         self._topbar.set_breadcrumb(_PAGE_TITLES[idx])
         page = self._pages[idx]
         # Auto-refresh the target page so it always shows the latest DB state
+        if hasattr(page, "reload_drawings"):
+            page.reload_drawings()
         if hasattr(page, "reload_data"):
             page.reload_data()
         elif hasattr(page, "reload_comments"):
@@ -190,30 +192,38 @@ class MainWindow(QMainWindow):
         """Callback when background PDF worker completes loading document."""
         self._status_bar.set_message(f"Loaded: {doc_dto.file_name} ({doc_dto.total_pages} pages)")
         self.pdf_viewer_page.set_document(doc_dto)
-        for page in self._pages:
-            if hasattr(page, "reload_comments"):
-                page.reload_comments()
-            elif hasattr(page, "reload_data"):
-                page.reload_data()
+        # Refresh current visible page immediately
+        current_page = self._pages[self._stack.currentIndex()]
+        if hasattr(current_page, "reload_drawings"):
+            current_page.reload_drawings()
+        if hasattr(current_page, "reload_comments"):
+            current_page.reload_comments()
+        elif hasattr(current_page, "reload_data"):
+            current_page.reload_data()
 
     def _on_drawing_switched(self, drawing_id: str, doc_dto):
         """Callback when active drawing context is switched globally."""
         if doc_dto:
             self._status_bar.set_message(f"Active Drawing: {doc_dto.file_name} ({doc_dto.total_pages} pages)")
             self.pdf_viewer_page.set_document(doc_dto)
-        for page in self._pages:
-            if hasattr(page, "reload_comments"):
-                page.reload_comments()
+        current_page = self._pages[self._stack.currentIndex()]
+        if hasattr(current_page, "reload_comments"):
+            current_page.reload_comments()
+        elif hasattr(current_page, "reload_data"):
+            current_page.reload_data()
 
     def _on_drawings_updated(self):
         """Callback when new drawings are uploaded or batch completes."""
+        # Lightweight update: refresh drawing dropdowns across screens so navigation targets have fresh lists
         for page in self._pages:
             if hasattr(page, "reload_drawings"):
                 page.reload_drawings()
-            elif hasattr(page, "reload_comments"):
-                page.reload_comments()
-            elif hasattr(page, "reload_data"):
-                page.reload_data()
+        # Full reload on currently visible screen
+        current_page = self._pages[self._stack.currentIndex()]
+        if hasattr(current_page, "reload_data"):
+            current_page.reload_data()
+        elif hasattr(current_page, "reload_comments"):
+            current_page.reload_comments()
 
     def _on_dashboard_open_drawing(self, dwg_dict: dict):
         """Callback when a user double clicks a drawing in the Dashboard."""

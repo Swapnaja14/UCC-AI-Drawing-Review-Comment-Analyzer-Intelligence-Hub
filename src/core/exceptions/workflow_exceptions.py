@@ -22,3 +22,7 @@ class WorkflowProcessingError(Exception):
 class InvalidWorkflowStateError(WorkflowProcessingError):
     """Raised when an invalid state transition is requested."""
     pass
+
+class WorkflowCancelledError(WorkflowProcessingError):
+    """Raised when workflow execution is cooperatively cancelled by user/caller."""
+    pass

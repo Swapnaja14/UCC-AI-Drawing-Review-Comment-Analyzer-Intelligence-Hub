@@ -387,15 +387,21 @@ class CommentHighlightPage(QWidget):
         for c in self._comments:
             widget = self._make_comment_card(c)
             item = QListWidgetItem()
-            item.setSizeHint(QSize(300, 90))
+            # Calculate dynamic size hint based on widget content to ensure no vertical clipping
+            widget.setFixedWidth(304)
+            widget.adjustSize()
+            card_height = max(widget.sizeHint().height() + 8, 115)
+            item.setSizeHint(QSize(304, card_height))
             item.setData(Qt.ItemDataRole.UserRole, _get(c, "id", ""))
             self._list.addItem(item)
             self._list.setItemWidget(item, widget)
 
     def _make_comment_card(self, c: Union[Dict[str, Any], Any]) -> QFrame:
         card = QFrame()
+        card.setObjectName("commentCard")
         card.setStyleSheet(
-            "QFrame { background:#2D2F34; border-radius:8px; padding:4px; }"
+            "#commentCard { background:#2D2F34; border-radius:8px; border: 1px solid #3A3C42; } "
+            "#commentCard:hover { background: #34373E; border-color: #4A4D56; }"
         )
         lay = QVBoxLayout(card)
         lay.setContentsMargins(12, 10, 12, 10)
@@ -413,24 +419,25 @@ class CommentHighlightPage(QWidget):
         ext_col = get_extraction_color(c)
         id_lbl = QLabel(str(cid))
         id_lbl.setFont(QFont("Cascadia Code", 11, QFont.Weight.Bold))
-        id_lbl.setStyleSheet(f"color: {ext_col};")
+        id_lbl.setStyleSheet(f"color: {ext_col}; line-height: 1.2;")
         id_row.addWidget(id_lbl)
         id_row.addStretch()
 
         page_tag = QLabel(f"Pg {page_no}")
-        page_tag.setFont(QFont("Segoe UI", 10, QFont.Weight.Bold))
-        page_tag.setStyleSheet("color: #A6A9B1; background: #3A3C42; padding: 1px 6px; border-radius: 4px;")
+        page_tag.setFont(QFont("Segoe UI", 9, QFont.Weight.Bold))
+        page_tag.setStyleSheet("color: #A6A9B1; background: #3A3C42; padding: 2px 6px; border-radius: 4px;")
         id_row.addWidget(page_tag)
 
         dwg = QLabel(str(drawing_no))
-        dwg.setFont(QFont("Cascadia Code", 11))
+        dwg.setFont(QFont("Cascadia Code", 10))
         dwg.setStyleSheet("color: #3E9BFF;")
         id_row.addWidget(dwg)
         lay.addLayout(id_row)
 
-        text = str(ocr_text)
-        excerpt = QLabel(text[:70] + ("…" if len(text) > 70 else ""))
-        excerpt.setFont(QFont("Segoe UI", 12))
+        text = str(ocr_text).strip()
+        excerpt = QLabel(text[:75] + ("…" if len(text) > 75 else ""))
+        excerpt.setFont(QFont("Segoe UI", 11))
+        excerpt.setStyleSheet("color: #E2E8F0;")
         excerpt.setWordWrap(True)
         lay.addWidget(excerpt)
 

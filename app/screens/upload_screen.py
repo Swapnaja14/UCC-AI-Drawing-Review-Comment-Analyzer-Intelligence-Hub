@@ -938,7 +938,6 @@ class UploadPage(QWidget):
             self._single_prog.setRange(0, 0)
 
         self._single_status_lbl.setText(f"{step_snapshot.step_name}: {step_snapshot.message}")
-        QApplication.processEvents()
 
     def _on_workflow_completed(self, result_dto) -> None:
         self._stop_workflow_timer()
@@ -980,7 +979,6 @@ class UploadPage(QWidget):
             self._batch_prog.setRange(0, 0)
 
         self._batch_status_lbl.setText(f"[{idx}/{total}] {fname} — {step_name} ({pct}%)")
-        QApplication.processEvents()
 
     def _on_batch_workflow_completed(self, batch_result_dto) -> None:
         self._stop_workflow_timer()
@@ -1016,16 +1014,39 @@ class UploadPage(QWidget):
 
     def _on_doc_error(self, error_msg: str) -> None:
         self._stop_workflow_timer()
+        batch_btn_style = (
+            "QPushButton { background: qlineargradient(x1:0, y1:0, x2:1, y2:0, "
+            "stop:0 #4F46E5, stop:1 #7C3AED); color: #FFFFFF; font-weight: bold; "
+            "border-radius: 8px; font-size: 13px; border: none; padding: 10px 24px; }"
+            "QPushButton:hover { background: qlineargradient(x1:0, y1:0, x2:1, y2:0, "
+            "stop:0 #4338CA, stop:1 #6D28D9); }"
+            "QPushButton:disabled { background: #252830; color: #555866; border: 1px solid #3A3D46; }"
+        )
+
         if self._active_workflow_mode == self.MODE_SINGLE:
             self._single_prog.setRange(0, 100)
             self._single_status_lbl.setText(f"❌ {error_msg}")
             self._single_status_lbl.setStyleSheet("color: #F87171;")
-            self._single_process_btn.setText("Processing Failed")
+            self._single_process_btn.setText("  Retry Processing")
+            self._single_process_btn.setEnabled(True)
+            self._single_process_btn.setStyleSheet("")
+            try:
+                self._single_process_btn.clicked.disconnect()
+            except Exception:
+                pass
+            self._single_process_btn.clicked.connect(self._start_single_workflow)
         elif self._active_workflow_mode == self.MODE_BATCH:
             self._batch_prog.setRange(0, 100)
             self._batch_status_lbl.setText(f"❌ {error_msg}")
             self._batch_status_lbl.setStyleSheet("color: #F87171;")
-            self._batch_process_btn.setText("Processing Failed")
+            self._batch_process_btn.setText("  Retry Batch Processing")
+            self._batch_process_btn.setEnabled(True)
+            self._batch_process_btn.setStyleSheet(batch_btn_style)
+            try:
+                self._batch_process_btn.clicked.disconnect()
+            except Exception:
+                pass
+            self._batch_process_btn.clicked.connect(self._start_batch_workflow)
         else:
             self._single_prog.hide()
             self._batch_prog.hide()
@@ -1033,8 +1054,24 @@ class UploadPage(QWidget):
             self._batch_status_lbl.setText(f"❌ {error_msg}")
             self._single_status_lbl.setStyleSheet("color: #F87171;")
             self._batch_status_lbl.setStyleSheet("color: #F87171;")
-            self._single_process_btn.setText("Processing Failed")
-            self._batch_process_btn.setText("Processing Failed")
+            if self._single_filepath:
+                self._single_process_btn.setText("  Retry Processing")
+                self._single_process_btn.setEnabled(True)
+                self._single_process_btn.setStyleSheet("")
+                try:
+                    self._single_process_btn.clicked.disconnect()
+                except Exception:
+                    pass
+                self._single_process_btn.clicked.connect(self._start_single_workflow)
+            if self._batch_filepaths:
+                self._batch_process_btn.setText("  Retry Batch Processing")
+                self._batch_process_btn.setEnabled(True)
+                self._batch_process_btn.setStyleSheet(batch_btn_style)
+                try:
+                    self._batch_process_btn.clicked.disconnect()
+                except Exception:
+                    pass
+                self._batch_process_btn.clicked.connect(self._start_batch_workflow)
 
     def _show_recent(self) -> None:
         menu = QMenu(self)

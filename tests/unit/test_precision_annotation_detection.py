@@ -357,6 +357,46 @@ def test_small_reviewer_initials_and_arrows_detected(service, tmp_path: Path):
     labels = [r.label for r in res.regions]
     assert any("red" in l for l in labels)
 
+def test_blue_revision_cloud_and_comment_extraction_with_nested_red_text(service, tmp_path: Path):
+    """Verify blue revision clouds and callout text are paired and red text inside is preserved independently."""
+    pdf_path = tmp_path / "blue_cloud_nested_red.pdf"
+    doc = fitz.open()
+    page = doc.new_page(width=1000, height=800)
 
+    # Blue revision cloud rectangle
+    page.draw_rect(fitz.Rect(400, 200, 700, 350), color=(0.0, 0.2, 0.9), width=2.0)
 
+    # Red comment inside the blue cloud
+    red_annot = page.add_freetext_annot(fitz.Rect(450, 280, 620, 310), "NEEDS 120V POWER", text_color=(0.9, 0.0, 0.0))
+    red_annot.update()
 
+    # Blue leader line and callout text below cloud
+    page.draw_line((500, 350), (500, 420), color=(0.0, 0.2, 0.9), width=1.5)
+    page.draw_line((500, 420), (450, 420), color=(0.0, 0.2, 0.9), width=1.5)
+    blue_callout = page.add_freetext_annot(fitz.Rect(100, 400, 440, 450), "WHICH CKT NEED TO USED AND JB REQ OR NOT", text_color=(0.0, 0.2, 0.9))
+    blue_callout.update()
+
+    doc.save(pdf_path)
+    doc.close()
+
+    res = service.detect_annotations_on_page(pdf_path, 0, method='hybrid')
+    
+    # Must detect both:
+    # 1. The blue comment encompassing the blue cloud and blue callout text
+    # 2. The red comment inside the cloud preserved separately
+    blue_regs = [r for r in res.regions if "blue" in r.label]
+    red_regs = [r for r in res.regions if "red" in r.label]
+
+    assert len(blue_regs) >= 1
+    assert any("WHICH CKT" in (r.source_text or "") for r in blue_regs)
+    
+    # Check that blue region spans both callout text and the cloud
+    main_blue = next(r for r in blue_regs if "WHICH CKT" in (r.source_text or ""))
+    assert main_blue.x0 <= 150
+    assert main_blue.x1 >= 650
+    assert main_blue.y0 <= 250
+    assert main_blue.y1 >= 420
+
+    assert len(red_regs) >= 1
+    main_red = next(r for r in red_regs if "NEEDS 120V POWER" in (r.source_text or ""))
+    assert main_red is not None

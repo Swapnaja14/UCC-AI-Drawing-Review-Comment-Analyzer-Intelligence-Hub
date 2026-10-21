@@ -237,16 +237,23 @@ class DashboardPage(QWidget):
             self._controller.workflow_completed_signal.connect(self._on_workflow_completed)
             self._controller.document_loaded_signal.connect(lambda _: self.reload_data())
 
-        # ── Auto-Refresh Timer (every 8 seconds) ───────────────────
+        # ── Auto-Refresh Timer (every 8 seconds when visible) ───────
         self._auto_timer = QTimer(self)
         self._auto_timer.setInterval(8000)
         self._auto_timer.timeout.connect(self.reload_data)
-        self._auto_timer.start()
 
     def showEvent(self, event):
-        """Auto-refresh dashboard data whenever this screen becomes visible."""
+        """Resume auto-refresh timer and reload dashboard data whenever screen becomes visible."""
         super().showEvent(event)
         self.reload_data()
+        if hasattr(self, "_auto_timer") and not self._auto_timer.isActive():
+            self._auto_timer.start(8000)
+
+    def hideEvent(self, event):
+        """Stop auto-refresh timer while Dashboard is hidden to avoid unnecessary background DB polling."""
+        super().hideEvent(event)
+        if hasattr(self, "_auto_timer") and self._auto_timer.isActive():
+            self._auto_timer.stop()
 
     def _get_toggle_btn_style(self, is_active: bool) -> str:
         if is_active:
@@ -488,6 +495,10 @@ class DashboardPage(QWidget):
 
     def _on_workflow_step(self, step_dto: Any) -> None:
         """Real-time slot triggered as background workflow steps execute."""
+        # Pause background polling timer during active workflow processing
+        if hasattr(self, "_auto_timer") and self._auto_timer.isActive():
+            self._auto_timer.stop()
+
         step_name = getattr(step_dto, "step_name", "")
         progress = getattr(step_dto, "progress", 0)
 
@@ -513,6 +524,8 @@ class DashboardPage(QWidget):
             self._update_job_row(key, 100, "Done", "#4ADE80")
 
         self.reload_data()
+        if self.isVisible() and hasattr(self, "_auto_timer") and not self._auto_timer.isActive():
+            self._auto_timer.start(8000)
 
     def _update_job_row(self, key: str, progress: int, status: str, color: str) -> None:
         if key in self._job_rows:

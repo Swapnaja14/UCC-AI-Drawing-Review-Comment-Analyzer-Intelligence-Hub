@@ -34,10 +34,9 @@ Provides:
 #
 # This warning is for all development agents — do not silently mix coordinate
 # systems when passing comments to make_page_pixmap() or BBoxItem.
-from __future__ import annotations
 from typing import List, Any, Optional
 from PySide6.QtWidgets import QGraphicsRectItem
-from PySide6.QtCore import QRectF, Qt
+from PySide6.QtCore import QRectF, QRect, Qt
 from PySide6.QtGui import (
     QPixmap, QPainter, QPen, QBrush, QColor, QFont,
 )

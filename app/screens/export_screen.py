@@ -690,6 +690,7 @@ class ExportPage(QWidget):
                 date_str=date_str,
                 drawing_no=drawing_no if scope_val == "drawing" else None,
                 department_name=department_name,
+                single_department_only=True,
             )
 
             result = self._controller.export_data(config)

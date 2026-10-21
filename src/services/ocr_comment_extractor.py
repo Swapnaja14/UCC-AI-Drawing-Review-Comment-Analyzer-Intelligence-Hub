@@ -108,12 +108,17 @@ class OCRCommentExtractor:
         
         doc.close()
         
-        # Run OCR with detailed data (bounding boxes, confidence)
-        ocr_data = pytesseract.image_to_data(
-            img,
-            output_type=pytesseract.Output.DICT,
-            config='--psm 11'  # Sparse text with no OSD
-        )
+        # Run OCR with detailed data (bounding boxes, confidence) and safe timeout
+        try:
+            ocr_data = pytesseract.image_to_data(
+                img,
+                output_type=pytesseract.Output.DICT,
+                config='--psm 11',  # Sparse text with no OSD
+                timeout=30,
+            )
+        except Exception as e:
+            logger.warning(f"Comment extraction OCR timed out or failed: {e}")
+            ocr_data = {'text': [], 'conf': [], 'left': [], 'top': [], 'width': [], 'height': []}
         
         # Extract text regions and filter for comments
         results = []

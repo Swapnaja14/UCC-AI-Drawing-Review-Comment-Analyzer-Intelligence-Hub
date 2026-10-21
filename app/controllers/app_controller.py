@@ -100,15 +100,22 @@ class WorkflowWorker(QThread):
             def on_progress(step_snapshot: WorkflowStepDTO):
                 self.step_signal.emit(step_snapshot)
 
+            def is_cancelled() -> bool:
+                return self.isInterruptionRequested()
+
             result = self.workflow_engine.execute_workflow(
                 self.file_path,
                 progress_callback=on_progress,
                 department_id=self.department_id,
+                cancel_check=is_cancelled,
             )
             self.completed_signal.emit(result)
         except Exception as e:
-            logger.error(f"Error in WorkflowWorker: {e}")
-            self.error_signal.emit(str(e))
+            if "cancelled" in str(e).lower() or self.isInterruptionRequested():
+                logger.info(f"WorkflowWorker gracefully stopped: {e}")
+            else:
+                logger.error(f"Error in WorkflowWorker: {e}")
+                self.error_signal.emit(str(e))
 
 
 class BatchWorkflowWorker(QThread):
@@ -134,15 +141,22 @@ class BatchWorkflowWorker(QThread):
             def on_progress(batch_snapshot: BatchWorkflowProgressDTO):
                 self.step_signal.emit(batch_snapshot)
 
+            def is_cancelled() -> bool:
+                return self.isInterruptionRequested()
+
             result = self.workflow_engine.execute_batch_workflow(
                 self.file_paths,
                 progress_callback=on_progress,
                 department_id=self.department_id,
+                cancel_check=is_cancelled,
             )
             self.completed_signal.emit(result)
         except Exception as e:
-            logger.error(f"Error in BatchWorkflowWorker: {e}")
-            self.error_signal.emit(str(e))
+            if "cancelled" in str(e).lower() or self.isInterruptionRequested():
+                logger.info(f"BatchWorkflowWorker gracefully stopped: {e}")
+            else:
+                logger.error(f"Error in BatchWorkflowWorker: {e}")
+                self.error_signal.emit(str(e))
 
 
 
@@ -438,10 +452,10 @@ class AppController(QObject):
         )
 
         if self._workflow_worker and self._workflow_worker.isRunning():
+            self._workflow_worker.requestInterruption()
             self._workflow_worker.quit()
             if not self._workflow_worker.wait(2000):
-                self._workflow_worker.terminate()
-                self._workflow_worker.wait(1000)
+                logger.warning("Workflow worker did not finish cooperatively in 2000ms.")
 
         self._workflow_worker = WorkflowWorker(
             self.workflow_engine, path, department_id=department_id
@@ -469,10 +483,10 @@ class AppController(QObject):
         )
 
         if self._batch_workflow_worker and self._batch_workflow_worker.isRunning():
+            self._batch_workflow_worker.requestInterruption()
             self._batch_workflow_worker.quit()
             if not self._batch_workflow_worker.wait(2000):
-                self._batch_workflow_worker.terminate()
-                self._batch_workflow_worker.wait(1000)
+                logger.warning("Batch workflow worker did not finish cooperatively in 2000ms.")
 
         self._batch_workflow_worker = BatchWorkflowWorker(
             self.workflow_engine, file_paths, department_id=department_id
@@ -651,8 +665,8 @@ class AppController(QObject):
         logger.info(f"AppController load request for: {path}")
 
         if self._load_worker and self._load_worker.isRunning():
-            self._load_worker.terminate()
-            self._load_worker.wait()
+            self._load_worker.quit()
+            self._load_worker.wait(1000)
 
         self._load_worker = PDFLoadWorker(self.pdf_service, self.drawing_repo, path)
         self._load_worker.success_signal.connect(self._on_doc_loaded)
@@ -666,13 +680,24 @@ class AppController(QObject):
         path = Path(file_path).resolve()
 
         if self._render_worker and self._render_worker.isRunning():
-            self._render_worker.terminate()
-            self._render_worker.wait()
+            self._render_worker.quit()
+            self._render_worker.wait(1000)
 
         self._render_worker = PDFRenderWorker(self.pdf_service, path, page_number, dpi)
         self._render_worker.rendered_signal.connect(self._on_page_rendered)
         self._render_worker.error_signal.connect(self._on_render_error)
         self._render_worker.start()
+
+    def cancel_processing(self) -> None:
+        """Cooperatively cancels any running workflow or batch processing worker."""
+        if self._workflow_worker and self._workflow_worker.isRunning():
+            logger.info("Cancelling single drawing workflow worker...")
+            self._workflow_worker.requestInterruption()
+            self._workflow_worker.quit()
+        if self._batch_workflow_worker and self._batch_workflow_worker.isRunning():
+            logger.info("Cancelling batch workflow worker...")
+            self._batch_workflow_worker.requestInterruption()
+            self._batch_workflow_worker.quit()
 
     # ── Project / dashboard operations ────────────────────────────
 
@@ -1366,6 +1391,9 @@ class AppController(QObject):
 
         if not config.designer_name and getattr(self, "_current_session", None) and self._current_session.user:
             config.designer_name = self._current_session.user.display_name or self._current_session.user.username
+
+        if not config.department_name and self.current_department_name:
+            config.department_name = self.current_department_name
 
         return self.export_service.export_drawing_comments(config)
 
