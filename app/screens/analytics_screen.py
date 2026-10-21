@@ -11,7 +11,7 @@ from typing import Any, Dict, List, Optional
 from PySide6.QtWidgets import (QWidget, QVBoxLayout, QHBoxLayout, QFrame,
                                 QLabel, QPushButton, QComboBox,
                                 QDateEdit, QGridLayout, QSizePolicy, QCheckBox)
-from PySide6.QtCore import Qt, QDate
+from PySide6.QtCore import Qt, QDate, QTimer
 from PySide6.QtGui import QFont
 
 from app.components.kpi_card import KpiCard
@@ -104,8 +104,13 @@ class AnalyticsPage(QWidget):
         fb1 = QHBoxLayout()
         fb1.setSpacing(12)
 
+        self._proj_lbl = QLabel("Project:")
+        self._proj_lbl.setObjectName("SubCaption")
+        fb1.addWidget(self._proj_lbl)
         self._proj_cb = QComboBox()
-        self._proj_cb.hide()
+        self._proj_cb.setFixedHeight(36)
+        self._proj_cb.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Fixed)
+        fb1.addWidget(self._proj_cb)
 
         b_lbl = QLabel("Batch:")
         b_lbl.setObjectName("SubCaption")
@@ -193,6 +198,8 @@ class AnalyticsPage(QWidget):
         filter_layout.addWidget(self._date_err_lbl)
 
         filter_layout.addLayout(fb2)
+
+
         root.addWidget(filter_card)
 
         self._populate_filters()
@@ -216,6 +223,11 @@ class AnalyticsPage(QWidget):
         self._build_charts()
         root.addLayout(self._grid, 1)
 
+        self._debounce_timer = QTimer(self)
+        self._debounce_timer.setSingleShot(True)
+        self._debounce_timer.setInterval(150)
+        self._debounce_timer.timeout.connect(self._do_reload)
+
     def _get_default_from_date(self) -> QDate:
         """Return earliest comment date from DB, or year 2000 for all-time view."""
         if self._controller:
@@ -227,27 +239,33 @@ class AnalyticsPage(QWidget):
                 pass
         return QDate(2000, 1, 1)
 
-    def _populate_filters(self) -> None:
-        """Populate project, batch, drawing, department, and category filter dropdowns."""
+    def _refresh_project_options(self) -> None:
+        """Rebuild the Project dropdown; surface it only when projects exist."""
+        prev = self._proj_cb.currentData() if hasattr(self, "_proj_cb") else ""
         self._proj_cb.blockSignals(True)
         self._proj_cb.clear()
         self._proj_cb.addItem("All Projects", "")
+        records = []
         if self._controller:
             try:
-                records = self._controller.get_all_projects()
+                records = self._controller.get_all_projects() or []
                 for p in records:
                     pid = p.get("id", "") if isinstance(p, dict) else getattr(p, "id", "")
                     name = p.get("name", pid) if isinstance(p, dict) else getattr(p, "name", pid)
                     self._proj_cb.addItem(name, pid)
             except Exception:
-                pass
+                records = []
+        has_projects = len(records) > 0
+        if hasattr(self, "_proj_lbl"):
+            self._proj_lbl.setVisible(has_projects)
+        self._proj_cb.setVisible(has_projects)
+        idx = self._proj_cb.findData(prev)
+        if idx >= 0:
+            self._proj_cb.setCurrentIndex(idx)
         self._proj_cb.blockSignals(False)
 
-        # Populate batch combobox
-        self._refresh_batch_options()
-
-        self._populate_drawings_for_selected_project()
-
+    def _refresh_department_options(self) -> None:
+        """Rebuild the Department dropdown without losing active selection."""
         previous_dept = self._dept_cb.currentText()
         self._dept_cb.blockSignals(True)
         self._dept_cb.clear()
@@ -261,8 +279,6 @@ class AnalyticsPage(QWidget):
         for name in options.get("departments", []):
             if name and name not in departments:
                 departments.append(name)
-        # Offered when it would return rows — and kept while it is the current
-        # selection, since dropping it would silently widen the filter to All.
         if options.get("has_unassigned") or previous_dept == UNASSIGNED_DEPARTMENT:
             departments.append(UNASSIGNED_DEPARTMENT)
         self._dept_cb.addItems(departments)
@@ -280,6 +296,9 @@ class AnalyticsPage(QWidget):
             self._dept_cb.setEnabled(True)
         self._dept_cb.blockSignals(False)
 
+    def _refresh_category_options(self) -> None:
+        """Rebuild the Category dropdown without losing active selection."""
+        prev = self._cat_cb.currentText() if hasattr(self, "_cat_cb") else ""
         self._cat_cb.blockSignals(True)
         self._cat_cb.clear()
         categories = ["All Categories"]
@@ -295,7 +314,18 @@ class AnalyticsPage(QWidget):
             if c_name not in categories:
                 categories.append(c_name)
         self._cat_cb.addItems(categories)
+        idx = self._cat_cb.findText(prev)
+        if idx >= 0:
+            self._cat_cb.setCurrentIndex(idx)
         self._cat_cb.blockSignals(False)
+
+    def _populate_filters(self) -> None:
+        """Initial population of all dropdowns."""
+        self._refresh_project_options()
+        self._refresh_batch_options()
+        self._populate_drawings_for_selected_project()
+        self._refresh_department_options()
+        self._refresh_category_options()
 
         # Default From Date to earliest comment date (all-time)
         self._date_from.blockSignals(True)
@@ -370,18 +400,15 @@ class AnalyticsPage(QWidget):
         self._dwg_cb.blockSignals(False)
 
     def _on_department_changed(self, index: int) -> None:
-        """Cascade department filter to available drawings and refresh."""
-        self._populate_drawings_for_selected_project()
+        """Cascade department filter: populate drawings once and refresh."""
         self._apply_filters()
 
     def _on_project_changed(self, index: int) -> None:
-        """Update drawing combobox options when selected project changes and reload data."""
-        self._populate_drawings_for_selected_project()
+        """Cascade project filter: populate drawings once and refresh."""
         self._apply_filters()
 
     def _on_batch_changed(self, index: int) -> None:
-        """Update drawing combobox options when batch filter changes and reload data."""
-        self._populate_drawings_for_selected_project()
+        """Cascade batch filter: populate drawings once and refresh."""
         self._apply_filters()
 
     def _reset_filters(self) -> None:
@@ -585,6 +612,7 @@ class AnalyticsPage(QWidget):
             self._kpi_cards.append(card)
             self._kpi_row.addWidget(card, 1)
 
+
     def _build_charts(self) -> None:
         """Fetch real data for charts and populate grid using all active filters."""
         while self._grid.count():
@@ -691,20 +719,28 @@ class AnalyticsPage(QWidget):
         return True
 
     def _apply_filters(self, *args) -> None:
-        """Trigger reload of KPIs and charts based on current filter state."""
+        """Debounce reload of KPIs and charts on filter changes (~150 ms)."""
         if not self._validate_date_range():
             return
-        self.reload_data()
+        if hasattr(self, "_debounce_timer"):
+            self._debounce_timer.start(150)
+        else:
+            self._do_reload()
 
     def reload_data(self) -> None:
-        """Reload live KPI metrics, charts, and filter options from the controller."""
+        """Immediate reload of live metrics, charts, and filter options (cancels pending debounce)."""
+        if hasattr(self, "_debounce_timer"):
+            self._debounce_timer.stop()
+        self._do_reload()
+
+    def _do_reload(self) -> None:
+        """Internal reload routine: refreshes options, populates drawings once, rebuilds cards and charts."""
         if not self._validate_date_range():
             return
-        # Refresh batch dropdown in case a new batch was processed, keeping the
-        # user's selection even when the batch is empty.
+        self._refresh_project_options()
         self._refresh_batch_options()
-
-        # Refresh drawings dropdown so newly processed drawings are never stale
+        self._refresh_department_options()
+        self._refresh_category_options()
         self._populate_drawings_for_selected_project()
 
         self._build_kpi_cards()
