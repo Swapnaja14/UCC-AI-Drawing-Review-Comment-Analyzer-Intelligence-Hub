@@ -20,6 +20,8 @@ from app.components.charts import (
     build_pareto_chart,
     build_monthly_chart,
     build_category_pie,
+    build_status_distribution_chart,
+    build_confidence_distribution_chart,
 )
 from src.core.dtos.analytics_dtos import KPISummaryDTO
 from src.core.metric_definitions import (
@@ -649,7 +651,7 @@ class AnalyticsPage(QWidget):
                                message=EMPTY_BATCH_MESSAGE,
                                sub=EMPTY_BATCH_SUB)
             empty.setMinimumHeight(320)
-            self._grid.addWidget(empty, 0, 0, 2, 2)
+            self._grid.addWidget(empty, 0, 0, 2, 3)
             return
 
         incl_rej = filters.get("include_rejected", True)
@@ -693,6 +695,38 @@ class AnalyticsPage(QWidget):
             pareto_title = f"Pareto — Comments by Category{rej_suffix}"
             pie_title = f"Category Distribution{rej_suffix}"
 
+        status_data = None
+        if self._controller and hasattr(self._controller, "get_status_distribution"):
+            try:
+                status_data = self._controller.get_status_distribution(
+                    project_id=proj_id,
+                    drawing_id=dwg_id,
+                    drawing_ids=dwg_ids,
+                    department_name=dept_name,
+                    category_name=cat_name,
+                    date_from=d_from,
+                    date_to=d_to,
+                    include_rejected=incl_rej,
+                )
+            except Exception:
+                status_data = None
+
+        conf_data = None
+        if self._controller and hasattr(self._controller, "get_confidence_distribution"):
+            try:
+                conf_data = self._controller.get_confidence_distribution(
+                    project_id=proj_id,
+                    drawing_id=dwg_id,
+                    drawing_ids=dwg_ids,
+                    department_name=dept_name,
+                    category_name=cat_name,
+                    date_from=d_from,
+                    date_to=d_to,
+                    include_rejected=incl_rej,
+                )
+            except Exception:
+                conf_data = None
+
         colors = self._theme_manager.colors if self._theme_manager else None
         pareto_view  = build_pareto_chart(
             pareto_data,
@@ -705,6 +739,8 @@ class AnalyticsPage(QWidget):
         )
         timeline_view = build_monthly_chart(trend_data, title="Comments extracted over time", theme_colors=colors)
         pie_view     = build_category_pie(category_data, title=pie_title, highlight_name=cat_name if cat_name else None, theme_colors=colors)
+        status_view  = build_status_distribution_chart(status_data, title="Status Distribution", theme_colors=colors)
+        conf_view    = build_confidence_distribution_chart(conf_data, title="Confidence Distribution", theme_colors=colors)
 
         def _wrap(view, min_h: int = 280) -> QFrame:
             f = QFrame()
@@ -717,7 +753,9 @@ class AnalyticsPage(QWidget):
 
         self._grid.addWidget(_wrap(pareto_view,   320), 0, 0, 2, 1)
         self._grid.addWidget(_wrap(timeline_view, 220), 0, 1)
+        self._grid.addWidget(_wrap(status_view,   220), 0, 2)
         self._grid.addWidget(_wrap(pie_view,      220), 1, 1)
+        self._grid.addWidget(_wrap(conf_view,     220), 1, 2)
 
     def _validate_date_range(self) -> bool:
         """Validate that From Date <= To Date. Show error message if invalid."""

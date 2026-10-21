@@ -1183,125 +1183,72 @@ class AnalyticsService:
 
 
     def get_confidence_distribution(
-
         self,
-
         project_id: Optional[str] = None,
-
         drawing_id: Optional[str] = None,
-
         department_name: Optional[str] = None,
-
         category_name: Optional[str] = None,
-
         date_from: Optional[datetime] = None,
-
         date_to: Optional[datetime] = None,
-
         drawing_ids: Optional[List[str]] = None,
-
+        include_rejected: bool = True,
     ) -> List[ConfidenceBucketDTO]:
-
         with self._db.get_session() as session:
-
             query = session.query(CommentModel.confidence)
-
             query = _apply_comment_filters(
-
                 query, session, project_id, drawing_id, department_name, category_name, date_from, date_to, drawing_ids=drawing_ids
-
             )
-
+            if not include_rejected:
+                query = query.filter(_status_clean() != "REJECTED")
             confidences = [r[0] or 0.0 for r in query.all()]
-
             total = len(confidences)
 
-            
-
             buckets = [
-
                 {'label': '0.0-0.2', 'count': sum(1 for c in confidences if c < 0.2)},
-
                 {'label': '0.2-0.4', 'count': sum(1 for c in confidences if 0.2 <= c < 0.4)},
-
                 {'label': '0.4-0.6', 'count': sum(1 for c in confidences if 0.4 <= c < 0.6)},
-
                 {'label': '0.6-0.8', 'count': sum(1 for c in confidences if 0.6 <= c < 0.8)},
-
                 {'label': '0.8-1.0', 'count': sum(1 for c in confidences if c >= 0.8)},
-
             ]
 
-            
-
             return [
-
                 ConfidenceBucketDTO(
-
                     range_label=b['label'],
-
                     count=b['count'],
-
                     percentage=(b['count'] / total * 100.0) if total > 0 else 0.0
-
                 )
-
                 for b in buckets
-
             ]
 
 
 
     def get_status_distribution(
-
         self,
-
         project_id: Optional[str] = None,
-
         drawing_id: Optional[str] = None,
-
         department_name: Optional[str] = None,
-
         category_name: Optional[str] = None,
-
         date_from: Optional[datetime] = None,
-
         date_to: Optional[datetime] = None,
-
         drawing_ids: Optional[List[str]] = None,
-
+        include_rejected: bool = True,
     ) -> Dict[str, int]:
-
         """Return status counts (Pending, Approved, Rejected, Flagged) for the exact filtered population."""
-
         kpi = self.get_global_kpis(
-
             project_id=project_id,
-
             drawing_id=drawing_id,
-
             department_name=department_name,
-
             category_name=category_name,
-
             date_from=date_from,
-
             date_to=date_to,
-
             drawing_ids=drawing_ids,
-
+            include_rejected=include_rejected,
         )
-
         return {
-
             "Pending": kpi.pending_count,
-
             "Approved": kpi.approved_count,
-
             "Rejected": kpi.rejected_count,
-
             "Flagged": kpi.flagged_count,
-
         }
 
 
@@ -1432,73 +1379,59 @@ class AnalyticsService:
 
 
 
-    def get_reviewer_metrics(self) -> List[ReviewerMetricsDTO]:
-
+    def get_reviewer_metrics(
+        self,
+        project_id: Optional[str] = None,
+        drawing_id: Optional[str] = None,
+        department_name: Optional[str] = None,
+        category_name: Optional[str] = None,
+        date_from: Optional[datetime] = None,
+        date_to: Optional[datetime] = None,
+        drawing_ids: Optional[List[str]] = None,
+    ) -> List[ReviewerMetricsDTO]:
+        """
+        Derive reviewer review metrics from audit_logs for human review actions,
+        scoped to the same filtered population as the other analytics widgets.
+        """
         with self._db.get_session() as session:
+            try:
+                human_actions = ["approve", "reject", "flag", "bulk_approve"]
+                query = session.query(
+                    func.coalesce(AuditLogModel.user_id, "anonymous"),
+                    func.coalesce(AuditLogModel.reviewer_name, "Anonymous Reviewer"),
+                    func.count(AuditLogModel.id),
+                    func.sum(case((func.lower(AuditLogModel.action).in_(["approve", "bulk_approve"]), 1), else_=0)),
+                    func.sum(case((func.lower(AuditLogModel.action) == "reject", 1), else_=0)),
+                    func.sum(case((func.lower(AuditLogModel.action) == "flag", 1), else_=0)),
+                ).join(
+                    CommentModel, AuditLogModel.comment_id == CommentModel.id
+                )
+                query = _apply_comment_filters(
+                    query, session, project_id, drawing_id, department_name, category_name, date_from, date_to, drawing_ids=drawing_ids
+                )
+                query = query.filter(
+                    func.lower(AuditLogModel.action).in_(human_actions),
+                    func.coalesce(AuditLogModel.reviewer_name, "") != "AI Auto-Approval",
+                ).group_by(
+                    func.coalesce(AuditLogModel.user_id, "anonymous"),
+                    func.coalesce(AuditLogModel.reviewer_name, "Anonymous Reviewer"),
+                )
 
-            rows = session.query(
-
-                CommentModel.user_id,
-
-                func.count(CommentModel.id),
-
-                func.sum(case((CommentModel.status == "Approved", 1), else_=0)),
-
-                func.sum(case((CommentModel.status == "Rejected", 1), else_=0)),
-
-                func.sum(case((CommentModel.status == "Flagged", 1), else_=0)),
-
-            ).filter(
-
-                CommentModel.is_verified_by_human == True,
-
-                CommentModel.user_id != None
-
-            ).group_by(CommentModel.user_id).all()
-
-
-
-            if not rows:
-
+                rows = query.all()
+                results = []
+                for uid, rname, count, app_c, rej_c, flg_c in rows:
+                    results.append(ReviewerMetricsDTO(
+                        reviewer_id=str(uid),
+                        reviewer_name=str(rname),
+                        comments_reviewed=int(count or 0),
+                        approved=int(app_c or 0),
+                        rejected=int(rej_c or 0),
+                        flagged=int(flg_c or 0),
+                    ))
+                return sorted(results, key=lambda r: (-r.comments_reviewed, r.reviewer_name))
+            except Exception as exc:
+                logger.warning(f"Could not load reviewer metrics from audit logs: {exc}")
                 return []
-
-
-
-            user_ids = {r[0] for r in rows if r[0]}
-
-            users = session.query(UserModel).filter(UserModel.id.in_(user_ids)).all() if user_ids else []
-
-            user_map = {u.id: getattr(u, 'display_name', 'Unknown User') for u in users}
-
-
-
-            results = []
-
-            for uid, reviewed, app_c, rej_c, flg_c in rows:
-
-                if not uid:
-
-                    continue
-
-                results.append(ReviewerMetricsDTO(
-
-                    reviewer_id=uid,
-
-                    reviewer_name=user_map.get(uid, 'Unknown User'),
-
-                    comments_reviewed=reviewed or 0,
-
-                    approved=app_c or 0,
-
-                    rejected=rej_c or 0,
-
-                    flagged=flg_c or 0
-
-                ))
-
-
-
-            return results
 
 
 
@@ -1635,7 +1568,7 @@ class AnalyticsService:
 
             status_trend=self.get_status_trend(project_id=project_id),
 
-            reviewer_metrics=self.get_reviewer_metrics(),
+            reviewer_metrics=self.get_reviewer_metrics(project_id=project_id),
 
         )
 

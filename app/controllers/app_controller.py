@@ -1554,6 +1554,7 @@ class AppController(QObject):
         date_from: Optional[Any] = None,
         date_to: Optional[Any] = None,
         drawing_ids: Optional[List[str]] = None,
+        include_rejected: bool = True,
     ):
         """Proxy to analytics_service.get_confidence_distribution with full filtering."""
         eff_dept = self.current_department_name if self.current_department_name else department_name
@@ -1565,6 +1566,7 @@ class AppController(QObject):
             date_from=date_from,
             date_to=date_to,
             drawing_ids=drawing_ids,
+            include_rejected=include_rejected,
         )
 
     def get_status_distribution(
@@ -1576,10 +1578,34 @@ class AppController(QObject):
         date_from: Optional[Any] = None,
         date_to: Optional[Any] = None,
         drawing_ids: Optional[List[str]] = None,
+        include_rejected: bool = True,
     ):
         """Proxy to analytics_service.get_status_distribution with full filtering."""
         eff_dept = self.current_department_name if self.current_department_name else department_name
         return self.analytics_service.get_status_distribution(
+            project_id=project_id,
+            drawing_id=drawing_id,
+            department_name=eff_dept,
+            category_name=category_name,
+            date_from=date_from,
+            date_to=date_to,
+            drawing_ids=drawing_ids,
+            include_rejected=include_rejected,
+        )
+
+    def get_reviewer_metrics(
+        self,
+        project_id: Optional[str] = None,
+        drawing_id: Optional[str] = None,
+        department_name: Optional[str] = None,
+        category_name: Optional[str] = None,
+        date_from: Optional[Any] = None,
+        date_to: Optional[Any] = None,
+        drawing_ids: Optional[List[str]] = None,
+    ):
+        """Proxy to analytics_service.get_reviewer_metrics with full filtering."""
+        eff_dept = self.current_department_name if self.current_department_name else department_name
+        return self.analytics_service.get_reviewer_metrics(
             project_id=project_id,
             drawing_id=drawing_id,
             department_name=eff_dept,
