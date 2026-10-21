@@ -1,6 +1,6 @@
 from typing import Any, List, Optional, Dict, Tuple
 
-from sqlalchemy import func, case
+from sqlalchemy import func, case, false
 
 from datetime import datetime, timezone, timedelta
 
@@ -222,7 +222,7 @@ def _apply_comment_filters(
 
         else:
 
-            query = query.filter(False)
+            query = query.filter(false())
 
     elif project_id:
 
@@ -623,7 +623,7 @@ class AnalyticsService:
 
             elif drawing_ids is not None:
 
-                d_query = d_query.filter(DrawingModel.id.in_(drawing_ids)) if drawing_ids else d_query.filter(False)
+                d_query = d_query.filter(DrawingModel.id.in_(drawing_ids)) if drawing_ids else d_query.filter(false())
 
             elif project_id:
 
@@ -633,7 +633,7 @@ class AnalyticsService:
 
                 d_query = d_query.filter(
 
-                    DrawingModel.id.in_(dept_drawing_ids) if dept_drawing_ids else False
+                    DrawingModel.id.in_(dept_drawing_ids) if dept_drawing_ids else false()
 
                 )
 
@@ -649,7 +649,7 @@ class AnalyticsService:
 
             elif drawing_ids is not None:
 
-                pg_query = pg_query.filter(PageModel.drawing_id.in_(drawing_ids)) if drawing_ids else pg_query.filter(False)
+                pg_query = pg_query.filter(PageModel.drawing_id.in_(drawing_ids)) if drawing_ids else pg_query.filter(false())
 
             elif project_id:
 
@@ -661,7 +661,7 @@ class AnalyticsService:
 
                 pg_query = pg_query.filter(
 
-                    PageModel.drawing_id.in_(dept_drawing_ids) if dept_drawing_ids else False
+                    PageModel.drawing_id.in_(dept_drawing_ids) if dept_drawing_ids else false()
 
                 )
 
@@ -679,7 +679,7 @@ class AnalyticsService:
 
                 status_clean.in_(list(REVIEWED_STATUSES))
 
-                & (CommentModel.is_verified_by_human == True)
+                & (CommentModel.is_verified_by_human.is_(True))
 
             )
 
@@ -687,7 +687,7 @@ class AnalyticsService:
 
                 (func.lower(func.coalesce(CommentModel.classification_method, '')) == 'ai_model')
 
-                & (CommentModel.fallback_used == False)
+                & (CommentModel.fallback_used.is_(False))
 
             )
 
@@ -715,9 +715,9 @@ class AnalyticsService:
 
                 func.sum(case((CommentModel.confidence < low_threshold, 1), else_=0)),
 
-                func.sum(case(((status_clean == "APPROVED") & (CommentModel.is_verified_by_human == True), 1), else_=0)),
+                func.sum(case(((status_clean == "APPROVED") & (CommentModel.is_verified_by_human.is_(True)), 1), else_=0)),
 
-                func.sum(case(((status_clean == "APPROVED") & (CommentModel.is_verified_by_human == False), 1), else_=0)),
+                func.sum(case(((status_clean == "APPROVED") & (CommentModel.is_verified_by_human.is_(False)), 1), else_=0)),
 
                 func.sum(case((
 
@@ -1024,7 +1024,7 @@ class AnalyticsService:
 
             if drawing_ids is not None:
 
-                query = query.filter(DrawingModel.id.in_(drawing_ids)) if drawing_ids else query.filter(False)
+                query = query.filter(DrawingModel.id.in_(drawing_ids)) if drawing_ids else query.filter(false())
 
 
 

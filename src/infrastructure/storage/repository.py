@@ -1066,7 +1066,7 @@ class CommentRepository:
         with self._db.get_session() as session:
             query = session.query(CommentModel).filter(CommentModel.drawing_id == drawing_id)
             if preserve_verified:
-                query = query.filter(CommentModel.is_verified_by_human == False)
+                query = query.filter(CommentModel.is_verified_by_human.is_(False))
             rows = query.all()
             count = len(rows)
             for row in rows:
@@ -1309,7 +1309,7 @@ class CommentRepository:
         with self._db.get_session() as session:
             query = (
                 session.query(CommentModel)
-                .filter(CommentModel.is_verified_by_human == True)
+                .filter(CommentModel.is_verified_by_human.is_(True))
             )
             if department_id:
                 matching_dept_ids = [
