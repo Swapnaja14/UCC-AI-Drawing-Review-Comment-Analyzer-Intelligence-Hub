@@ -897,6 +897,11 @@ class AnalyticsService:
 
 
 
+    def get_min_comment_date(self) -> Optional[datetime]:
+        """Return the earliest comment creation date in the database, or None if empty."""
+        with self._db.get_session() as session:
+            return session.query(func.min(CommentModel.created_at)).scalar()
+
     def get_department_options(self) -> Dict[str, Any]:
 
         """

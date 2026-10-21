@@ -1418,6 +1418,10 @@ class AppController(QObject):
         """Return all category records from database."""
         return self.category_repo.get_all_categories()
 
+    def get_min_comment_date(self) -> Optional[Any]:
+        """Return the earliest comment creation date across all comments."""
+        return self.analytics_service.get_min_comment_date()
+
     def get_department_options(self) -> Dict[str, Any]:
         """Department names for the analytics filter, plus whether "Unassigned" has rows."""
         return self.analytics_service.get_department_options()

@@ -228,3 +228,10 @@ def test_bucket_trend_data_monthly_span():
     assert result[1].count == 0  # Feb
     assert result[0].count == 1  # Jan
     assert result[-1].count == 1  # Oct
+
+
+def test_get_min_comment_date(test_setup):
+    service = test_setup
+    min_date = service.get_min_comment_date()
+    assert min_date is not None
+    assert isinstance(min_date, datetime)
