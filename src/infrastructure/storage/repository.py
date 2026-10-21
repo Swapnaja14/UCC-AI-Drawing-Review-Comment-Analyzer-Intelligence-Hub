@@ -485,7 +485,9 @@ class ProjectRepository:
             drawings_processed = session.query(DrawingModel).count()
             comments_detected  = session.query(CommentModel).count()
 
-            # Accuracy: ratio of human-verified approved comments to all comments
+            # Human-verified approval rate: approved rows a human confirmed,
+            # over all comments. Deliberately not called "accuracy" — it says
+            # nothing about how correct the classification model is.
             approved = (
                 session.query(CommentModel)
                 .filter(
@@ -494,7 +496,7 @@ class ProjectRepository:
                 )
                 .count()
             )
-            accuracy = (
+            human_verified_approval_rate = (
                 round((approved / comments_detected) * 100, 1)
                 if comments_detected > 0
                 else None
@@ -504,7 +506,7 @@ class ProjectRepository:
                 "total_projects":    total_projects,
                 "drawings_processed": drawings_processed,
                 "comments_detected":  comments_detected,
-                "accuracy":          accuracy,
+                "human_verified_approval_rate": human_verified_approval_rate,
             }
 
 

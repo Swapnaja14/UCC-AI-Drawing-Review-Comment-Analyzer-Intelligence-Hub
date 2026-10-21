@@ -35,6 +35,9 @@ ai:
   model_path: models/distilbert_classifier
   confidence_threshold: 0.7
   fallback_to_rules: true
+  auto_approve_high_confidence: true
+  auto_approve_threshold: 0.8
+  low_confidence_threshold: 0.6
 ui:
   theme: dark
   language: English (US)

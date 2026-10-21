@@ -109,12 +109,13 @@ def test_empty_database_returns_zeros(tmp_path):
     assert kpis.total_projects == 0
     assert kpis.total_drawings == 0
     assert kpis.total_comments == 0
-    assert kpis.accuracy_rate is None
+    assert kpis.human_verified_approval_rate is None
 
-def test_kpi_accuracy_calculation(test_setup):
+def test_human_verified_approval_rate(test_setup):
     service = test_setup
     kpis = service.get_global_kpis()
-    assert kpis.accuracy_rate == pytest.approx(20.0)
+    # c1 and c3 are Approved AND is_verified_by_human -> 2 of 10 comments.
+    assert kpis.human_verified_approval_rate == pytest.approx(20.0)
 
 
 def test_department_pareto_analysis(tmp_path):

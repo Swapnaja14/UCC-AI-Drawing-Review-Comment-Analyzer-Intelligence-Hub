@@ -92,6 +92,9 @@ class AIConfig:
     fallback_to_rules: bool = True
     auto_approve_high_confidence: bool = True
     auto_approve_threshold: float = 0.80
+    # Analytics confidence bands. high = auto_approve_threshold (the score at
+    # which the pipeline would auto-approve); low = this value.
+    low_confidence_threshold: float = 0.60
 
 
 @dataclass
@@ -205,6 +208,7 @@ class AppConfig:
             "UCC_AI_MODEL_PATH": ("ai.model_path", str),
             "UCC_AI_AUTO_APPROVE": ("ai.auto_approve_high_confidence", lambda v: v.lower() in ("1", "true", "yes")),
             "UCC_AI_AUTO_APPROVE_THRESHOLD": ("ai.auto_approve_threshold", float),
+            "UCC_AI_LOW_CONFIDENCE_THRESHOLD": ("ai.low_confidence_threshold", float),
             "UCC_UI_THEME": ("ui.theme", str),
             "UCC_UI_LANGUAGE": ("ui.language", str),
             "UCC_UI_DEFAULT_PROJECTS_DIR": ("ui.default_projects_dir", str),

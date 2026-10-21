@@ -155,8 +155,15 @@ def _verify_consistency(kpis, cat_dist, pareto, trend, conf_dist=None, status_di
         assert kpis.review_progress is not None
         assert 0.0 <= kpis.review_progress <= 100.0
         assert kpis.reviewed_count == kpis.approved_count + kpis.rejected_count
-        assert kpis.estimated_hours_saved is not None
-        assert kpis.estimated_hours_saved >= 0.0
+        # Review progress counts Flagged as NOT yet reviewed
+        assert kpis.review_progress == pytest.approx(kpis.reviewed_count / kpis.total_comments * 100.0)
+        # Flagged always reconciles into its two reported causes
+        assert kpis.flagged_manual_count + kpis.flagged_ocr_failed_count == kpis.flagged_count
+        # The three reported concepts stay independent fields, none named "accuracy"
+        assert not hasattr(kpis, "accuracy_rate")
+        assert not hasattr(kpis, "estimated_hours_saved")
+        assert kpis.high_confidence_threshold is not None
+        assert kpis.low_confidence_threshold is not None
 
 
 # ── Scenario 1: All Drawings ───────────────────────────────────────────────
@@ -410,8 +417,8 @@ def test_scenario_12_confidence_and_status_parity_all(analytics_fixture):
     _verify_consistency(kpis, cat_dist, pareto, trend, conf_dist=conf_dist, status_dist=status_dist)
 
 
-# ── Scenario 13: Auto-Approval Metrics and Human Hours Saved ─────────────────
-def test_scenario_13_auto_approval_and_hours_saved(analytics_fixture):
+# ── Scenario 13: Auto-Approval vs Human Review Metrics ───────────────────────
+def test_scenario_13_auto_approval_and_human_review(analytics_fixture):
     _, service, _ = analytics_fixture
     # In fixture:
     # c1: Approved, is_verified_by_human=True
@@ -423,9 +430,13 @@ def test_scenario_13_auto_approval_and_hours_saved(analytics_fixture):
     assert kpis.auto_approved_count == 1
     assert kpis.auto_approval_rate == (1 / 8 * 100.0)
     assert kpis.reviewed_count == 4  # 3 approved + 1 rejected
-    # Estimated hours saved: 1 auto-approved * 0.25h + 4 reviewed * 0.10h = 0.65h -> round(0.65, 1) = 0.6 or 0.7
-    assert kpis.estimated_hours_saved is not None
-    assert kpis.estimated_hours_saved > 0.0
+    # Human-reviewed = status in (Approved, Rejected, Flagged) AND is_verified_by_human
+    # -> c1 (Approved), c3 (Rejected), c7 (Approved). c4 is Flagged but not verified.
+    assert kpis.human_reviewed_count == 3
+    assert kpis.human_verified_approval_rate == pytest.approx(2 / 8 * 100.0)
+    # The hours-saved KPI was removed: it assumed per-comment minutes, double
+    # counted auto-approvals and used two different formulas in two places.
+    assert not hasattr(kpis, "estimated_hours_saved")
 
 
 # ── Scenario 14: AppController Analytics Proxies ─────────────────────────────

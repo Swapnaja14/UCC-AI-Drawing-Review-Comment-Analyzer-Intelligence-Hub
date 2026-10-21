@@ -17,6 +17,7 @@ from PySide6.QtCore import Qt, Signal, QSize, QTimer
 
 from app.components.kpi_card import KpiCard
 from app.components.chips import StatusChip
+from src.core.metric_definitions import REVIEW_PROGRESS_TOOLTIP
 
 try:
     import qtawesome as qta
@@ -281,30 +282,24 @@ class DashboardPage(QWidget):
     def _get_kpi_values(self) -> tuple[int, int, int, str, str, str]:
         """Query KPI aggregates from controller analytics service."""
         kpi_data = self._controller.get_dashboard_kpis() if self._controller else None
-        if kpi_data is not None:
-            total_projects = getattr(kpi_data, "total_projects", 0)
-            total_drawings = getattr(kpi_data, "total_drawings", 0)
-            total_comments = getattr(kpi_data, "total_comments", 0)
-            avg_conf = getattr(kpi_data, "avg_confidence", 0.0) or 0.0
-            acc_val = getattr(kpi_data, "accuracy_rate", None)
+        if kpi_data is None:
+            return 0, 0, 0, "—", "Review Progress", "Ready"
 
-            if acc_val is not None and acc_val > 0.0:
-                metric_str = f"{acc_val:.1f}%"
-                metric_lbl = "Approval Rate"
-                trend_label = "Verified"
-            elif avg_conf > 0.0:
-                metric_str = f"{(avg_conf * 100.0 if avg_conf <= 1.0 else avg_conf):.1f}%"
-                metric_lbl = "Avg Confidence"
-                trend_label = "AI Confidence"
-            else:
-                metric_str = "—"
-                metric_lbl = "Avg Confidence"
-                trend_label = "Ready"
-        else:
-            total_projects, total_drawings, total_comments = 0, 0, 0
-            metric_str, metric_lbl, trend_label = "—", "Avg Confidence", "Ready"
+        total_projects = getattr(kpi_data, "total_projects", 0)
+        total_drawings = getattr(kpi_data, "total_drawings", 0)
+        total_comments = getattr(kpi_data, "total_comments", 0)
 
-        return total_projects, total_drawings, total_comments, metric_str, metric_lbl, trend_label
+        reviewed = getattr(kpi_data, "reviewed_count", None) or 0
+        progress = getattr(kpi_data, "review_progress", None)
+        if progress is None:
+            progress = (reviewed / total_comments * 100.0) if total_comments else None
+
+        metric_str = "—" if progress is None else f"{progress:.1f}%"
+        trend_label = (
+            f"{reviewed}/{total_comments} reviewed"
+            if total_comments else "Nothing to review yet"
+        )
+        return total_projects, total_drawings, total_comments, metric_str, "Review Progress", trend_label
 
     def _build_kpi_cards(self) -> None:
         """Build or refresh KPI cards with accurate live database metrics."""
@@ -321,11 +316,13 @@ class DashboardPage(QWidget):
             ("fa5s.folder-open",  str(total_projects), "Total Projects",     "Active",      "#3E9BFF"),
             ("fa5s.file-pdf",     str(total_drawings), "Drawings Processed", "In Database", "#8B9CFF"),
             ("fa5s.comments",     str(total_comments), "Comments Detected",  "Live Extracted", "#FBBF24"),
-            ("fa5s.check-circle", metric_str,          metric_lbl,           metric_trend,  "#4ADE80"),
+            ("fa5s.tasks",        metric_str,          metric_lbl,           metric_trend,  "#4ADE80"),
         ]
         for icon, val, lbl, trend, color in kpis:
             card = KpiCard(icon, val, lbl, trend, color)
             card.setMinimumHeight(125)
+            if lbl == "Review Progress":
+                card.setToolTip(REVIEW_PROGRESS_TOOLTIP)
             self._kpi_cards.append(card)
             self._kpi_row.addWidget(card, 1)
 

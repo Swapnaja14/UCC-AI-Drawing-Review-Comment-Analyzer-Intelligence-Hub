@@ -170,11 +170,11 @@ def test_confidence_and_approval_rate_metrics(analytics_test_db):
     assert pytest.approx(kpis.avg_confidence, rel=1e-2) == 0.80
 
     # Approved + human verified: c1 (0.95), c5 (0.90) -> 2 out of 5 total comments = 40.0%
-    assert pytest.approx(kpis.accuracy_rate, rel=1e-2) == 40.0
+    assert pytest.approx(kpis.human_verified_approval_rate, rel=1e-2) == 40.0
 
 
 def test_analytics_page_reset_and_kpi_cards(analytics_test_db):
-    """Verify that AnalyticsPage builds 6 distinct KPI cards and reset filters works properly."""
+    """Verify that AnalyticsPage builds its KPI cards and reset filters works properly."""
     from PySide6.QtWidgets import QApplication
     from app.screens.analytics_screen import AnalyticsPage
     _ = QApplication.instance() or QApplication([])
@@ -215,8 +215,9 @@ def test_analytics_page_reset_and_kpi_cards(analytics_test_db):
     ctrl = MockController()
     page = AnalyticsPage(controller=ctrl)
 
-    # Verify 6 KPI cards are rendered
-    assert len(page._kpi_cards) == 6
+    # Verify the seven metric cards are rendered and each states its definition
+    assert len(page._kpi_cards) == 7
+    assert all(card.toolTip().strip() for card in page._kpi_cards)
 
     # Verify filter change then reset
     page._cat_cb.setCurrentIndex(1)

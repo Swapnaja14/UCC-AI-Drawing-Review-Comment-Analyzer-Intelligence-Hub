@@ -20,6 +20,12 @@ from app.components.charts import (
     build_monthly_chart,
     build_category_pie,
 )
+from src.core.dtos.analytics_dtos import KPISummaryDTO
+from src.core.metric_definitions import (
+    AI_CONFIDENCE_CAVEAT,
+    CATEGORY_AGREEMENT_TOOLTIP_HEADER,
+    REVIEW_PROGRESS_TOOLTIP,
+)
 
 from datetime import datetime
 
@@ -39,6 +45,12 @@ STANDARD_CATEGORIES: List[str] = [
     "BOM",
     "Uncategorized",
 ]
+
+_EMPTY_KPIS = KPISummaryDTO(
+    total_projects=0, total_drawings=0, total_comments=0, total_pages=0,
+    approved_count=0, rejected_count=0, pending_count=0, flagged_count=0,
+    avg_confidence=0.0, high_confidence_pct=0.0, low_confidence_pct=0.0,
+)
 
 
 class AnalyticsPage(QWidget):
@@ -389,7 +401,11 @@ class AnalyticsPage(QWidget):
         }
 
     def _build_kpi_cards(self) -> None:
-        """Fetch real KPI summary data using active filters and build KPI cards."""
+        """Build the KPI cards from the filtered population.
+
+        Three separate concepts are reported and never merged or called
+        "accuracy": review progress, AI confidence, and category agreement.
+        """
         while self._kpi_row.count():
             item = self._kpi_row.takeAt(0)
             w = item.widget()
@@ -398,7 +414,7 @@ class AnalyticsPage(QWidget):
         self._kpi_cards.clear()
 
         filters = self._get_active_filters()
-        kpi_data = self._controller.get_dashboard_kpis(
+        kpi = self._controller.get_dashboard_kpis(
             project_id=filters["project_id"],
             drawing_id=filters["drawing_id"],
             drawing_ids=filters.get("drawing_ids"),
@@ -407,79 +423,95 @@ class AnalyticsPage(QWidget):
             date_from=filters["date_from"],
             date_to=filters["date_to"],
         ) if self._controller else None
+        if kpi is None:
+            kpi = _EMPTY_KPIS
 
-        if kpi_data is not None:
-            if hasattr(kpi_data, "total_comments"):
-                total_comments = kpi_data.total_comments
-                pending_count  = kpi_data.pending_count
-                approved_count = kpi_data.approved_count
-                rejected_count = kpi_data.rejected_count
-                flagged_count  = kpi_data.flagged_count
-                avg_confidence = getattr(kpi_data, "avg_confidence", 0.0) or 0.0
-                reviewed_count = getattr(kpi_data, "reviewed_count", None)
-                if reviewed_count is None:
-                    reviewed_count = approved_count + rejected_count
-                review_progress = getattr(kpi_data, "review_progress", 0.0) or 0.0
-                approval_rate = getattr(kpi_data, "approval_rate", 0.0) or 0.0
-                auto_approved_count = getattr(kpi_data, "auto_approved_count", 0) or 0
-                auto_approval_rate = getattr(kpi_data, "auto_approval_rate", 0.0) or 0.0
-                est_hours_saved = getattr(kpi_data, "estimated_hours_saved", 0.0) or 0.0
-                high_conf_pct = getattr(kpi_data, "high_confidence_pct", 0.0) or 0.0
-                low_conf_pct = getattr(kpi_data, "low_confidence_pct", 0.0) or 0.0
-            elif isinstance(kpi_data, dict):
-                total_comments = kpi_data.get("total_comments", 0)
-                pending_count  = kpi_data.get("pending_count", 0)
-                approved_count = kpi_data.get("approved_count", 0)
-                rejected_count = kpi_data.get("rejected_count", 0)
-                flagged_count  = kpi_data.get("flagged_count", 0)
-                avg_confidence = kpi_data.get("avg_confidence", 0.0) or 0.0
-                reviewed_count = kpi_data.get("reviewed_count", approved_count + rejected_count)
-                review_progress = kpi_data.get("review_progress", 0.0) or 0.0
-                approval_rate = kpi_data.get("approval_rate", 0.0) or 0.0
-                auto_approved_count = kpi_data.get("auto_approved_count", 0) or 0
-                auto_approval_rate = kpi_data.get("auto_approval_rate", 0.0) or 0.0
-                est_hours_saved = kpi_data.get("estimated_hours_saved", 0.0) or 0.0
-                high_conf_pct = kpi_data.get("high_confidence_pct", 0.0) or 0.0
-                low_conf_pct = kpi_data.get("low_confidence_pct", 0.0) or 0.0
-            else:
-                total_comments = pending_count = approved_count = rejected_count = flagged_count = 0
-                avg_confidence = review_progress = approval_rate = auto_approval_rate = est_hours_saved = 0.0
-                reviewed_count = auto_approved_count = 0
-                high_conf_pct = low_conf_pct = 0.0
-        else:
-            total_comments = pending_count = approved_count = rejected_count = flagged_count = 0
-            avg_confidence = review_progress = approval_rate = auto_approval_rate = est_hours_saved = 0.0
-            reviewed_count = auto_approved_count = 0
-            high_conf_pct = low_conf_pct = 0.0
+        total = kpi.total_comments
+        pct = lambda n: f"{(n / total * 100):.1f}%" if total > 0 else "0.0%"
 
-        pending_pct  = f"{(pending_count / total_comments * 100):.1f}%" if total_comments > 0 else "0.0%"
-        approved_pct = f"{(approved_count / total_comments * 100):.1f}%" if total_comments > 0 else "0.0%"
-        rejected_pct = f"{(rejected_count / total_comments * 100):.1f}%" if total_comments > 0 else "0.0%"
-        flagged_pct  = f"{(flagged_count / total_comments * 100):.1f}%" if total_comments > 0 else "0.0%"
-        conf_str     = f"{(avg_confidence * 100.0 if avg_confidence <= 1.0 else avg_confidence):.1f}%" if total_comments > 0 and avg_confidence > 0 else "—"
-        conf_trend   = f"~{est_hours_saved:.1f}h Est." if (total_comments > 0 and est_hours_saved > 0) else "AI Confidence"
+        reviewed = kpi.reviewed_count or 0
+        pending = kpi.pending_count
+        approved = kpi.approved_count
+        rejected = kpi.rejected_count
+        flagged = kpi.flagged_count
+        auto_approved = kpi.auto_approved_count or 0
+        human_approved = max(0, approved - auto_approved)
+        human_reviewed = kpi.human_reviewed_count or 0
+        flagged_manual = kpi.flagged_manual_count or 0
+        flagged_ocr = kpi.flagged_ocr_failed_count or 0
+        high_t = kpi.high_confidence_threshold
+        low_t = kpi.low_confidence_threshold
+        ai_conf = kpi.ai_confidence_avg
+        ai_n = kpi.ai_confidence_sample_size or 0
+        agreement = kpi.category_agreement_pct
+        agreement_n = kpi.category_agreement_sample_size or 0
+        population = "including rejected" if kpi.include_rejected else "excluding rejected"
+
+        review_progress_str = f"{(kpi.review_progress or 0.0):.1f}%" if total > 0 else "—"
+        ai_conf_str = f"{ai_conf * 100.0:.1f}%" if ai_conf is not None and ai_n > 0 else "—"
+        agreement_str = f"{agreement:.1f}%" if agreement is not None else "—"
+
+        high_band = f"≥{high_t * 100:.0f}%" if high_t is not None else "high"
+        low_band = f"<{low_t * 100:.0f}%" if low_t is not None else "low"
 
         kpi_items = [
-            ("fa5s.comments",     f"{total_comments:,}", "Total Comments", "Total in Query", "#3E9BFF"),
-            ("fa5s.clock",        f"{pending_count:,}",  "Pending Review", pending_pct,      "#60A5FA"),
-            ("fa5s.check-circle", f"{approved_count:,}", "Approved",       approved_pct,     "#4ADE80"),
-            ("fa5s.times-circle", f"{rejected_count:,}", "Rejected",       rejected_pct,     "#F87171"),
-            ("fa5s.flag",         f"{flagged_count:,}",  "Flagged",        flagged_pct,      "#FBBF24"),
-            ("fa5s.robot",        conf_str,              "Avg Confidence", conf_trend,       "#A78BFA"),
+            ("fa5s.comments",      f"{total:,}",            "Total Comments",    f"in filter · {population}", "#3E9BFF"),
+            ("fa5s.tasks",         review_progress_str,     "Review Progress",   f"{reviewed:,} of {total:,} decided", "#60A5FA"),
+            ("fa5s.check-circle",  f"{approved:,}",         "Approved",          pct(approved),               "#4ADE80"),
+            ("fa5s.times-circle",  f"{rejected:,}",         "Rejected",          pct(rejected),               "#F87171"),
+            ("fa5s.flag",          f"{flagged:,}",          "Flagged",           pct(flagged),                "#FBBF24"),
+            ("fa5s.robot",         ai_conf_str,             "AI Confidence",     f"n={ai_n:,} model-scored",   "#A78BFA"),
+            ("fa5s.balance-scale", agreement_str,           "Category Agreement", f"n={agreement_n:,} reviewed", "#2DD4BF"),
         ]
 
         tooltips = [
-            f"Total Comments: {total_comments:,}\nReviewed: {reviewed_count:,} ({review_progress:.1f}%)\nPending: {pending_count:,} ({pending_pct})\nPopulation matches all active charts",
-            f"Pending Review: {pending_count:,} ({pending_pct})\nAwaiting human engineering action",
-            f"Approved: {approved_count:,} ({approved_pct})\nAuto-Approved: {auto_approved_count:,} ({auto_approval_rate:.1f}%)\nHuman-Approved: {max(0, approved_count - auto_approved_count):,}\nApproval Rate: {approval_rate:.1f}%",
-            f"Rejected: {rejected_count:,} ({rejected_pct})\nMarked invalid or inapplicable",
-            f"Flagged: {flagged_count:,} ({flagged_pct})\nMarked for senior engineering escalation",
-            f"Average AI Confidence: {conf_str}\nHigh Confidence (≥85%): {high_conf_pct:.1f}%\nLow Confidence (<60%): {low_conf_pct:.1f}%\nEstimated Hours Saved: ~{est_hours_saved:.1f} hrs (Est.)\nNote: Confidence reflects AI model score, not ground-truth accuracy.",
+            (
+                f"Total Comments: {total:,}\n"
+                f"Population: {population}\n"
+                f"Pending: {pending:,} · Approved: {approved:,} · Rejected: {rejected:,} · Flagged: {flagged:,}\n"
+                f"Same population as the KPI cards, status donut and trend chart."
+            ),
+            (
+                f"Review Progress: {review_progress_str}\n"
+                f"{REVIEW_PROGRESS_TOOLTIP}\n"
+                f"= (Approved + Rejected) / Total = {reviewed:,} / {total:,}\n"
+                f"Pending: {pending:,} ({pct(pending)})\n"
+                f"Human-reviewed (a person confirmed the decision): {human_reviewed:,}"
+            ),
+            (
+                f"Approved: {approved:,} ({pct(approved)})\n"
+                f"Auto-approved (no human): {auto_approved:,} ({(kpi.auto_approval_rate or 0.0):.1f}%)\n"
+                f"Human-approved: {human_approved:,}\n"
+                f"Approval rate: {(kpi.approval_rate or 0.0):.1f}%"
+            ),
+            f"Rejected: {rejected:,} ({pct(rejected)})\nMarked invalid or not applicable.",
+            (
+                f"Flagged: {flagged:,} ({pct(flagged)})\n"
+                f"Manual flag by a reviewer: {flagged_manual:,}\n"
+                f"OCR extraction failed: {flagged_ocr:,}\n"
+                f"Flagged comments are excluded from Review Progress."
+            ),
+            (
+                f"Average AI confidence: {ai_conf_str} over {ai_n:,} model-scored comments.\n"
+                f"High band {high_band}: {(kpi.high_confidence_pct or 0.0):.1f}% of the population\n"
+                f"Low band {low_band}: {(kpi.low_confidence_pct or 0.0):.1f}% of the population\n"
+                f"Bands come from ai.auto_approve_threshold / ai.low_confidence_threshold in config.\n\n"
+                f"{AI_CONFIDENCE_CAVEAT}"
+            ),
+            (
+                f"{CATEGORY_AGREEMENT_TOOLTIP_HEADER}\n"
+                f"Agreement in this filter: {agreement_str} over {agreement_n:,} rows.\n"
+                f"Not comparable to the AI confidence score above — different population."
+                if agreement is not None else
+                "Category agreement: no human-reviewed rows with a recorded initial category\n"
+                "in this population yet."
+            ),
         ]
 
         for i, (icon, val, lbl, trend, color) in enumerate(kpi_items):
             card = KpiCard(icon, val, lbl, trend, color)
             card.setMinimumHeight(120)
+            card.setMinimumWidth(132)
             card.setToolTip(tooltips[i])
             self._kpi_cards.append(card)
             self._kpi_row.addWidget(card, 1)

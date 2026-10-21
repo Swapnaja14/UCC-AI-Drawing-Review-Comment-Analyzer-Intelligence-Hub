@@ -65,10 +65,15 @@ def main():
     print(f"   Total Projects: {kpis.total_projects}")
     print(f"   Total Drawings: {kpis.total_drawings}")
     print(f"   Total Comments: {kpis.total_comments}")
-    if kpis.accuracy_rate is not None:
-        print(f"   System Accuracy: {kpis.accuracy_rate:.1f}%\n")
+    if kpis.human_verified_approval_rate is not None:
+        print(f"   Human-Verified Approval Rate: {kpis.human_verified_approval_rate:.1f}%")
     else:
-        print("   System Accuracy: N/A (No comments verified yet)\n")
+        print("   Human-Verified Approval Rate: N/A (No comments verified yet)")
+    print(f"   Review Progress: {kpis.review_progress or 0.0:.1f}%")
+    if kpis.ai_confidence_avg is not None:
+        print(f"   Avg AI Confidence (n={kpis.ai_confidence_sample_size}): {kpis.ai_confidence_avg:.2f}\n")
+    else:
+        print("   Avg AI Confidence: N/A (no ai_model-classified rows)\n")
         
     # 4. Test Excel Export
     print("4. Testing Export Service")

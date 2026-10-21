@@ -1,10 +1,11 @@
-from typing import List, Optional, Dict
+from typing import List, Optional, Dict, Tuple
 from sqlalchemy import func, case
 from datetime import datetime
 
 from src.infrastructure.storage.repository import DatabaseEngine
 from src.infrastructure.storage.models import (
-    ProjectModel, DrawingModel, PageModel, CommentModel, CategoryModel, UserModel, EngineeringDepartmentModel
+    ProjectModel, DrawingModel, PageModel, CommentModel, CategoryModel, UserModel, EngineeringDepartmentModel,
+    OCR_FAILED_ENGINE,
 )
 from src.infrastructure.logging.logger import get_logger
 from src.core.dtos.analytics_dtos import (
@@ -13,6 +14,9 @@ from src.core.dtos.analytics_dtos import (
 )
 
 logger = get_logger(__name__)
+
+#: Statuses that mean a human took a decision on the comment.
+REVIEWED_STATUSES = ("APPROVED", "REJECTED", "FLAGGED")
 
 CATEGORY_COLORS = {
     'Technical': '#EF4444',
@@ -37,6 +41,35 @@ CATEGORY_COLORS = {
     'General/Administrative': '#6B7280',
     'Uncategorized': '#9CA3AF'
 }
+
+
+def get_confidence_thresholds() -> Tuple[float, float]:
+    """
+    Return (high, low) confidence band edges from application config.
+
+    ``high`` is the auto-approve threshold — the score at which the pipeline
+    itself would approve a comment without a human — so the "high confidence"
+    band means something operationally rather than being an arbitrary 0.85.
+    """
+    high, low = 0.80, 0.60
+    try:
+        from src.config import get_config
+        ai_cfg = get_config().ai
+        high = float(getattr(ai_cfg, "auto_approve_threshold", high))
+        low = float(getattr(ai_cfg, "low_confidence_threshold", low))
+    except Exception as exc:
+        logger.warning(f"Could not read confidence thresholds from config, using defaults: {exc}")
+    return high, low
+
+
+def _status_clean():
+    """Normalised comment status so counts stay exhaustive across casing/whitespace."""
+    return func.upper(func.trim(func.coalesce(CommentModel.status, "PENDING")))
+
+
+def _category_clean(column=None):
+    """NULL, '' and whitespace-only categories collapse to a single 'Uncategorized'."""
+    return func.coalesce(func.nullif(func.trim(column if column is not None else CommentModel.category_name), ''), 'Uncategorized')
 
 def _apply_comment_filters(
     query,
@@ -117,7 +150,17 @@ class AnalyticsService:
         date_from: Optional[datetime] = None,
         date_to: Optional[datetime] = None,
         drawing_ids: Optional[List[str]] = None,
+        include_rejected: bool = True,
     ) -> KPISummaryDTO:
+        """
+        Aggregate review metrics for one filtered comment population.
+
+        ``include_rejected=False`` drops Rejected rows from every count and rate
+        returned here; the flag is echoed on the DTO so callers can state the
+        population they are showing.
+        """
+        high_threshold, low_threshold = get_confidence_thresholds()
+
         with self._db.get_session() as session:
             p_query = session.query(func.count(ProjectModel.id))
             if project_id:
@@ -161,58 +204,93 @@ class AnalyticsService:
             
             # Single SQL aggregation query with comment filters
             # Status normalization ensures Total == Pending + Approved + Rejected + Flagged unconditionally
-            status_clean = func.upper(func.trim(func.coalesce(CommentModel.status, "PENDING")))
+            status_clean = _status_clean()
+            reviewed_by_human = (
+                status_clean.in_(list(REVIEWED_STATUSES))
+                & (CommentModel.is_verified_by_human == True)
+            )
+            ai_scored = (
+                (func.lower(func.coalesce(CommentModel.classification_method, '')) == 'ai_model')
+                & (CommentModel.fallback_used == False)
+            )
+            initial_clean = func.lower(func.trim(func.coalesce(CommentModel.initial_category, '')))
+            category_clean = func.lower(_category_clean())
+
             stats_query = session.query(
                 func.count(CommentModel.id),
                 func.sum(case((status_clean == "APPROVED", 1), else_=0)),
                 func.sum(case((status_clean == "REJECTED", 1), else_=0)),
-                func.sum(case((status_clean.notin_(["APPROVED", "REJECTED", "FLAGGED"]), 1), else_=0)),
+                func.sum(case((status_clean.notin_(list(REVIEWED_STATUSES)), 1), else_=0)),
                 func.sum(case((status_clean == "FLAGGED", 1), else_=0)),
                 func.avg(CommentModel.confidence),
-                func.sum(case((CommentModel.confidence >= 0.85, 1), else_=0)),
-                func.sum(case((CommentModel.confidence < 0.60, 1), else_=0)),
+                func.sum(case((CommentModel.confidence >= high_threshold, 1), else_=0)),
+                func.sum(case((CommentModel.confidence < low_threshold, 1), else_=0)),
                 func.sum(case(((status_clean == "APPROVED") & (CommentModel.is_verified_by_human == True), 1), else_=0)),
-                func.sum(case(((status_clean == "APPROVED") & (CommentModel.is_verified_by_human == False), 1), else_=0))
+                func.sum(case(((status_clean == "APPROVED") & (CommentModel.is_verified_by_human == False), 1), else_=0)),
+                func.sum(case((
+                    (status_clean == "FLAGGED")
+                    & (func.coalesce(CommentModel.ocr_engine, '') == OCR_FAILED_ENGINE), 1
+                ), else_=0)),
+                func.sum(case((reviewed_by_human, 1), else_=0)),
+                func.avg(case((ai_scored, CommentModel.classification_confidence), else_=None)),
+                func.sum(case((ai_scored, 1), else_=0)),
+                func.sum(case((reviewed_by_human & (initial_clean != ''), 1), else_=0)),
+                func.sum(case((
+                    reviewed_by_human & (initial_clean != '') & (category_clean == initial_clean), 1
+                ), else_=0)),
             )
             stats_query = _apply_comment_filters(
                 stats_query, session, project_id, drawing_id, department_name, category_name, date_from, date_to, drawing_ids=drawing_ids
             )
+            if not include_rejected:
+                stats_query = stats_query.filter(status_clean != "REJECTED")
             stats = stats_query.first()
-            
+
             if stats:
-                total_comments = stats[0] or 0
-                approved_count = stats[1] or 0
-                rejected_count = stats[2] or 0
-                pending_count = stats[3] or 0
-                flagged_count = stats[4] or 0
+                total_comments = int(stats[0] or 0)
+                approved_count = int(stats[1] or 0)
+                rejected_count = int(stats[2] or 0)
+                pending_count = int(stats[3] or 0)
+                flagged_count = int(stats[4] or 0)
                 avg_confidence = float(stats[5] or 0.0)
-                high_conf = stats[6] or 0
-                low_conf = stats[7] or 0
-                approved_verified = stats[8] or 0
-                auto_approved_count = stats[9] or 0
+                high_conf = int(stats[6] or 0)
+                low_conf = int(stats[7] or 0)
+                approved_verified = int(stats[8] or 0)
+                auto_approved_count = int(stats[9] or 0)
+                flagged_ocr_failed = int(stats[10] or 0)
+                human_reviewed_count = int(stats[11] or 0)
+                ai_confidence_avg = float(stats[12]) if stats[12] is not None else None
+                ai_confidence_n = int(stats[13] or 0)
+                agreement_n = int(stats[14] or 0)
+                agreement_hits = int(stats[15] or 0)
             else:
                 total_comments = approved_count = rejected_count = pending_count = flagged_count = 0
                 avg_confidence = 0.0
                 high_conf = low_conf = approved_verified = auto_approved_count = 0
+                flagged_ocr_failed = human_reviewed_count = ai_confidence_n = 0
+                agreement_n = agreement_hits = 0
+                ai_confidence_avg = None
 
-            # Verified Approval Rate vs Total Comments
-            accuracy_rate = (approved_verified / total_comments * 100.0) if total_comments > 0 else None
+            flagged_manual_count = max(0, flagged_count - flagged_ocr_failed)
+
+            human_verified_approval_rate = (
+                (approved_verified / total_comments * 100.0) if total_comments > 0 else None
+            )
             approval_rate = (approved_count / total_comments * 100.0) if total_comments > 0 else 0.0
             reviewed_count = approved_count + rejected_count
             review_progress = (reviewed_count / total_comments * 100.0) if total_comments > 0 else 0.0
             high_confidence_pct = (high_conf / total_comments * 100.0) if total_comments > 0 else 0.0
             low_confidence_pct = (low_conf / total_comments * 100.0) if total_comments > 0 else 0.0
             auto_approval_rate = (auto_approved_count / total_comments * 100.0) if total_comments > 0 else 0.0
-            
-            # Estimated engineering hours saved: ~15 mins per auto-approval, ~6 mins per reviewed comment
-            estimated_hours_saved = round((auto_approved_count * 0.25) + (reviewed_count * 0.10), 1) if total_comments > 0 else 0.0
-            
+            category_agreement_pct = (
+                (agreement_hits / agreement_n * 100.0) if agreement_n > 0 else None
+            )
+
             return KPISummaryDTO(
                 total_projects=total_projects,
                 total_drawings=total_drawings,
                 total_comments=total_comments,
                 total_pages=total_pages,
-                accuracy_rate=accuracy_rate,
                 approved_count=approved_count,
                 rejected_count=rejected_count,
                 pending_count=pending_count,
@@ -225,7 +303,17 @@ class AnalyticsService:
                 reviewed_count=reviewed_count,
                 auto_approved_count=auto_approved_count,
                 auto_approval_rate=auto_approval_rate,
-                estimated_hours_saved=estimated_hours_saved,
+                human_verified_approval_rate=human_verified_approval_rate,
+                human_reviewed_count=human_reviewed_count,
+                flagged_manual_count=flagged_manual_count,
+                flagged_ocr_failed_count=flagged_ocr_failed,
+                ai_confidence_avg=ai_confidence_avg,
+                ai_confidence_sample_size=ai_confidence_n,
+                category_agreement_pct=category_agreement_pct,
+                category_agreement_sample_size=agreement_n,
+                high_confidence_threshold=high_threshold,
+                low_confidence_threshold=low_threshold,
+                include_rejected=include_rejected,
             )
 
     def get_category_distribution(
@@ -422,133 +510,22 @@ class AnalyticsService:
             ]
 
     def get_project_analytics(self, project_id: str) -> Optional[ProjectAnalyticsDTO]:
+        """
+        Project-scoped analytics, built entirely from the same filtered queries
+        the global dashboard uses so the two can never disagree.
+        """
         with self._db.get_session() as session:
             project = session.query(ProjectModel).filter(ProjectModel.id == project_id).first()
             if not project:
                 return None
-                
-            drawings = session.query(DrawingModel).filter(DrawingModel.project_id == project_id).all()
-            drawing_ids = [d.id for d in drawings]
-            
-            if not drawing_ids:
-                empty_kpi = KPISummaryDTO(
-                    total_projects=1, total_drawings=0, total_comments=0, total_pages=0,
-                    accuracy_rate=None, approved_count=0, rejected_count=0, pending_count=0,
-                    flagged_count=0, avg_confidence=0.0, high_confidence_pct=0.0, low_confidence_pct=0.0
-                )
-                return ProjectAnalyticsDTO(
-                    project_id=project.id,
-                    project_name=getattr(project, 'name', 'Unknown Project'),
-                    kpi_summary=empty_kpi,
-                    category_distribution=[],
-                    confidence_distribution=[],
-                    status_trend=[],
-                    reviewer_metrics=[]
-                )
+            project_name = getattr(project, 'name', 'Unknown Project')
 
-            total_drawings = len(drawing_ids)
-            total_pages = session.query(func.count(PageModel.id)).filter(PageModel.drawing_id.in_(drawing_ids)).scalar() or 0
-            
-            stats = session.query(
-                func.count(CommentModel.id),
-                func.sum(case((CommentModel.status == "Approved", 1), else_=0)),
-                func.sum(case((CommentModel.status == "Rejected", 1), else_=0)),
-                func.sum(case((CommentModel.status == "Pending", 1), else_=0)),
-                func.sum(case((CommentModel.status == "Flagged", 1), else_=0)),
-                func.avg(CommentModel.confidence),
-                func.sum(case((CommentModel.confidence >= 0.85, 1), else_=0)),
-                func.sum(case((CommentModel.confidence < 0.60, 1), else_=0)),
-                func.sum(case(((CommentModel.status == "Approved") & (CommentModel.is_verified_by_human == True), 1), else_=0))
-            ).filter(CommentModel.drawing_id.in_(drawing_ids)).first()
-
-            if stats:
-                total_comments = stats[0] or 0
-                approved_count = stats[1] or 0
-                rejected_count = stats[2] or 0
-                pending_count = stats[3] or 0
-                flagged_count = stats[4] or 0
-                avg_confidence = float(stats[5] or 0.0)
-                high_conf = stats[6] or 0
-                low_conf = stats[7] or 0
-                approved_verified = stats[8] or 0
-            else:
-                total_comments = approved_count = rejected_count = pending_count = flagged_count = 0
-                avg_confidence = 0.0
-                high_conf = low_conf = approved_verified = 0
-
-            accuracy_rate = (approved_verified / total_comments * 100.0) if total_comments > 0 else None
-            high_confidence_pct = (high_conf / total_comments * 100.0) if total_comments > 0 else 0.0
-            low_confidence_pct = (low_conf / total_comments * 100.0) if total_comments > 0 else 0.0
-            approval_rate = (approved_count / total_comments * 100.0) if total_comments > 0 else 0.0
-            reviewed_count = approved_count + rejected_count
-            review_progress = (reviewed_count / total_comments * 100.0) if total_comments > 0 else 0.0
-            estimated_hours_saved = round((approved_count * 0.15) + (rejected_count * 0.10), 1) if total_comments > 0 else 0.0
-
-            kpi_summary = KPISummaryDTO(
-                total_projects=1,
-                total_drawings=total_drawings,
-                total_comments=total_comments,
-                total_pages=total_pages,
-                accuracy_rate=accuracy_rate,
-                approved_count=approved_count,
-                rejected_count=rejected_count,
-                pending_count=pending_count,
-                flagged_count=flagged_count,
-                avg_confidence=avg_confidence,
-                high_confidence_pct=high_confidence_pct,
-                low_confidence_pct=low_confidence_pct,
-                approval_rate=approval_rate,
-                review_progress=review_progress,
-                reviewed_count=reviewed_count,
-                auto_approved_count=0,
-                auto_approval_rate=0.0,
-                estimated_hours_saved=estimated_hours_saved,
-            )
-
-            # Category distribution query
-            cat_rows = session.query(
-                CommentModel.category_name, func.count(CommentModel.id)
-            ).filter(CommentModel.drawing_id.in_(drawing_ids)).group_by(CommentModel.category_name).all()
-
-            category_distribution = []
-            for cat_name, count in cat_rows:
-                c_name = cat_name or 'Uncategorized'
-                pct = (count / total_comments * 100.0) if total_comments > 0 else 0.0
-                color = CATEGORY_COLORS.get(c_name, '#9CA3AF')
-                category_distribution.append(CategoryDistributionDTO(
-                    category_name=c_name, count=count, percentage=pct, color_hex=color
-                ))
-            category_distribution.sort(key=lambda x: x.count, reverse=True)
-
-            # Confidence distribution query
-            conf_rows = session.query(
-                func.sum(case((CommentModel.confidence < 0.2, 1), else_=0)),
-                func.sum(case(((CommentModel.confidence >= 0.2) & (CommentModel.confidence < 0.4), 1), else_=0)),
-                func.sum(case(((CommentModel.confidence >= 0.4) & (CommentModel.confidence < 0.6), 1), else_=0)),
-                func.sum(case(((CommentModel.confidence >= 0.6) & (CommentModel.confidence < 0.8), 1), else_=0)),
-                func.sum(case((CommentModel.confidence >= 0.8, 1), else_=0)),
-            ).filter(CommentModel.drawing_id.in_(drawing_ids)).first()
-
-            buckets_counts = conf_rows if conf_rows else (0, 0, 0, 0, 0)
-            labels = ['0.0-0.2', '0.2-0.4', '0.4-0.6', '0.6-0.8', '0.8-1.0']
-            confidence_distribution = [
-                ConfidenceBucketDTO(
-                    range_label=labels[i],
-                    count=cnt or 0,
-                    percentage=((cnt or 0) / total_comments * 100.0) if total_comments > 0 else 0.0
-                )
-                for i, cnt in enumerate(buckets_counts)
-            ]
-
-            status_trend = self.get_status_trend()
-            reviewer_metrics = self.get_reviewer_metrics()
-
-            return ProjectAnalyticsDTO(
-                project_id=project.id,
-                project_name=getattr(project, 'name', 'Unknown Project'),
-                kpi_summary=kpi_summary,
-                category_distribution=category_distribution,
-                confidence_distribution=confidence_distribution,
-                status_trend=status_trend,
-                reviewer_metrics=reviewer_metrics
-            )
+        return ProjectAnalyticsDTO(
+            project_id=project_id,
+            project_name=project_name,
+            kpi_summary=self.get_global_kpis(project_id=project_id),
+            category_distribution=self.get_category_distribution(project_id=project_id),
+            confidence_distribution=self.get_confidence_distribution(project_id=project_id),
+            status_trend=self.get_status_trend(project_id=project_id),
+            reviewer_metrics=self.get_reviewer_metrics(),
+        )
