@@ -8,6 +8,8 @@ dst_path = Path("backups/sqlite_pre_migration/ucc_database_backup_20261012.db").
 print(f"Source: {src_path}")
 print(f"Destination: {dst_path}")
 
+dst_path.parent.mkdir(parents=True, exist_ok=True)
+
 # Open source in read-only URI mode to ensure no write locks or modifications
 src_uri = f"file:{src_path.as_posix()}?mode=ro"
 src_conn = sqlite3.connect(src_uri, uri=True)

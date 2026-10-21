@@ -502,12 +502,6 @@ class AppController(QObject):
         """Explicit batch processing workflow invocation."""
         self.start_batch_processing_workflow(file_paths, department_id=department_id)
 
-    def get_all_departments(self) -> List[Dict[str, Any]]:
-        """Returns all active engineering departments from the repository."""
-        if self.department_repo:
-            return self.department_repo.get_all_departments()
-        return []
-
     def _on_workflow_step(self, step_snapshot: WorkflowStepDTO) -> None:
         self.workflow_step_signal.emit(step_snapshot)
 
@@ -556,14 +550,6 @@ class AppController(QObject):
             logger.error(f"switch_current_drawing failed for '{drawing_id}': {exc}")
             self.processing_error_signal.emit(str(exc))
             return False
-
-    def get_all_drawings(
-        self, project_id: Optional[str] = None, department_id: Optional[str] = None
-    ) -> List[Dict[str, Any]]:
-        """Return all drawings from DB, optionally filtered by project or department."""
-        if hasattr(self, "drawing_repo"):
-            return self.drawing_repo.get_all_drawings(project_id=project_id, department_id=department_id or self.current_department_id)
-        return []
 
     def get_batch_drawings(self) -> List[Dict[str, Any]]:
         """Return drawings for the active batch if currently in batch mode."""
@@ -701,14 +687,6 @@ class AppController(QObject):
 
     # ── Project / dashboard operations ────────────────────────────
 
-    def get_all_departments(self) -> List[Dict[str, Any]]:
-        """Return all engineering departments for UI dropdowns."""
-        return self.department_repo.get_all_departments() if hasattr(self, 'department_repo') else []
-
-    def get_all_categories(self) -> List[Dict[str, Any]]:
-        """Return all classifications categories from DB."""
-        return self.category_repo.get_all_categories() if hasattr(self, 'category_repo') else []
-
     def get_categories_for_department(self, dept_name: Optional[str] = None) -> List[Dict[str, Any]]:
         """Return categories applicable to a department (global + department-scoped)."""
         if hasattr(self, 'category_repo'):
@@ -745,10 +723,6 @@ class AppController(QObject):
         if hasattr(self, 'category_repo'):
             return self.category_repo.delete_category(name, department_name=department_name)
         return False
-
-    def get_all_projects(self) -> List[Dict[str, Any]]:
-        """Return all project records from the database."""
-        return self.project_repo.get_all_projects()
 
     def get_current_drawing(self) -> Optional[Dict[str, Any]]:
         """Return the drawing dictionary for the currently active drawing, or None."""
@@ -1193,12 +1167,6 @@ class AppController(QObject):
         """
         return self.comment_repo.get_department_category_counts(drawing_id)
 
-    # ── Export operations ──────────────────────────────────────────
-
-    def export_data(self, config: ExportConfigDTO) -> Any:
-        """Export comments to Excel/CSV/JSON."""
-        return self.export_service.export_drawing_comments(config)
-
     # ── Data normalisation ─────────────────────────────────────────
 
     def normalise_comment(self, db_dict: Dict[str, Any]) -> Dict[str, Any]:
@@ -1369,6 +1337,8 @@ class AppController(QObject):
         }
 
         return result
+
+    # ── Export operations ──────────────────────────────────────────
 
     def export_data(self, config: ExportConfigDTO) -> Any:
         """
