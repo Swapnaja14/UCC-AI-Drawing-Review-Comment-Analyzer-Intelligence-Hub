@@ -6,7 +6,7 @@ Data Transfer Objects (DTOs) for Processing Workflow & File Validation.
 from dataclasses import dataclass, field
 from enum import Enum, auto
 from typing import Optional, List, Dict, Any
-from datetime import datetime
+from datetime import datetime, timezone
 from pathlib import Path
 
 
@@ -40,7 +40,7 @@ class WorkflowStepDTO:
     state: WorkflowState
     progress_percentage: int     # 0-100%
     message: str
-    started_at: datetime = field(default_factory=datetime.utcnow)
+    started_at: datetime = field(default_factory=lambda: datetime.now(timezone.utc))
 
 
 @dataclass(frozen=True)

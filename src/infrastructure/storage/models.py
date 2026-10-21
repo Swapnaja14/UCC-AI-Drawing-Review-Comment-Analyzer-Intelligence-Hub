@@ -11,12 +11,17 @@ Tables:
     comments     — review comments extracted from pages
 """
 
-from datetime import datetime
+from datetime import datetime, timezone
 from sqlalchemy import (
     Column, String, Integer, Float, Boolean, DateTime,
     ForeignKey, Text, Index
 )
 from sqlalchemy.orm import DeclarativeBase, relationship
+
+
+def utc_now() -> datetime:
+    """Return timezone-aware current UTC datetime."""
+    return datetime.now(timezone.utc)
 
 
 # ---------------------------------------------------------------------------
@@ -58,12 +63,12 @@ class UserModel(Base):
     # e.g. "Reviewer", "Lead Engineer", "Admin"
     department_id = Column(String(50), ForeignKey('engineering_departments.id', ondelete='SET NULL'), nullable=True)
     is_active    = Column(Boolean,     nullable=False, default=True)
-    created_at   = Column(DateTime,    nullable=False, default=datetime.utcnow)
+    created_at   = Column(DateTime(timezone=True), nullable=False, default=utc_now)
 
     # Authentication fields (used by AuthService for PBKDF2 sign-in)
     password_hash = Column(String(255), nullable=True)
     salt          = Column(String(64),  nullable=True)
-    last_login    = Column(DateTime,    nullable=True)
+    last_login    = Column(DateTime(timezone=True), nullable=True)
 
     # Relationships
     comments = relationship(
@@ -98,7 +103,7 @@ class EngineeringDepartmentModel(Base):
     name        = Column(String(100), nullable=False, unique=True)
     description = Column(Text,        nullable=True)
     is_active   = Column(Boolean,     nullable=False, default=True)
-    created_at  = Column(DateTime,    nullable=False, default=datetime.utcnow)
+    created_at  = Column(DateTime(timezone=True), nullable=False, default=utc_now)
 
     # Relationships
     drawings = relationship("DrawingModel", back_populates="department_rel")
@@ -124,7 +129,7 @@ class CategoryModel(Base):
     description     = Column(Text,        nullable=True)
     keywords        = Column(Text,        nullable=True)   # Comma-separated trigger keywords/patterns
     color_hex       = Column(String(7),   nullable=True)   # e.g. "#FBBF24"
-    created_at      = Column(DateTime,    nullable=False, default=datetime.utcnow)
+    created_at      = Column(DateTime(timezone=True), nullable=False, default=utc_now)
 
     # Relationships
     comments = relationship("CommentModel", back_populates="category_rel")
@@ -151,9 +156,9 @@ class ProjectModel(Base):
     # "Active" | "Complete" | "On Hold"
     progress      = Column(Integer,     nullable=False, default=0)   # 0-100
     lead_engineer = Column(String(100), nullable=True)
-    created_at    = Column(DateTime,    nullable=False, default=datetime.utcnow)
-    updated_at    = Column(DateTime,    nullable=False,
-                           default=datetime.utcnow, onupdate=datetime.utcnow)
+    created_at    = Column(DateTime(timezone=True), nullable=False, default=utc_now)
+    updated_at    = Column(DateTime(timezone=True), nullable=False,
+                           default=utc_now, onupdate=utc_now)
 
     # Relationships
     drawings = relationship(
@@ -194,7 +199,7 @@ class DrawingModel(Base):
     is_scanned        = Column(Boolean,     nullable=False, default=False)
     title             = Column(String(255), nullable=True)
     author            = Column(String(255), nullable=True)
-    uploaded_at       = Column(DateTime,    nullable=False, default=datetime.utcnow)
+    uploaded_at       = Column(DateTime(timezone=True), nullable=False, default=utc_now)
 
     # Relationships
     project        = relationship("ProjectModel", back_populates="drawings")
@@ -308,9 +313,9 @@ class CommentModel(Base):
     bbox_y1              = Column(Float,      nullable=False, default=0.0)
     label                = Column(String(50), nullable=True, default="comment_red")
     is_verified_by_human = Column(Boolean,    nullable=False, default=False)
-    created_at           = Column(DateTime,   nullable=False, default=datetime.utcnow)
-    updated_at           = Column(DateTime,   nullable=False,
-                                  default=datetime.utcnow, onupdate=datetime.utcnow)
+    created_at           = Column(DateTime(timezone=True), nullable=False, default=utc_now)
+    updated_at           = Column(DateTime(timezone=True), nullable=False,
+                                  default=utc_now, onupdate=utc_now)
 
     # Relationships
     drawing        = relationship("DrawingModel",              back_populates="comments",
@@ -367,7 +372,7 @@ class AuditLogModel(Base):
     old_value     = Column(Text,        nullable=True)
     new_value     = Column(Text,        nullable=True)
     notes         = Column(Text,        nullable=True)
-    timestamp     = Column(DateTime,    nullable=False, default=datetime.utcnow)
+    timestamp     = Column(DateTime(timezone=True), nullable=False, default=utc_now)
 
     # Relationships
     comment = relationship("CommentModel", back_populates="audit_logs", foreign_keys=[comment_id])
@@ -402,7 +407,7 @@ class ExportLogModel(Base):
     total_rows      = Column(Integer,     nullable=False, default=0)
     file_size_bytes = Column(Integer,     nullable=False, default=0)
     status          = Column(String(50),  nullable=False, default="Success")
-    created_at      = Column(DateTime,    nullable=False, default=datetime.utcnow)
+    created_at      = Column(DateTime(timezone=True), nullable=False, default=utc_now)
 
     # Relationships
     drawing = relationship("DrawingModel", foreign_keys=[drawing_id])
@@ -430,14 +435,14 @@ class ProcessingRunModel(Base):
     project_id        = Column(String(50),  ForeignKey("projects.id", ondelete="SET NULL"), nullable=True)
     drawing_id        = Column(String(50),  ForeignKey("drawings.id", ondelete="SET NULL"), nullable=True)
     original_filename = Column(String(255), nullable=False)
-    started_at        = Column(DateTime,    nullable=False, default=datetime.utcnow)
-    completed_at      = Column(DateTime,    nullable=True)
+    started_at        = Column(DateTime(timezone=True), nullable=False, default=utc_now)
+    completed_at      = Column(DateTime(timezone=True), nullable=True)
     duration_seconds  = Column(Float,       nullable=False, default=0.0)
     status            = Column(String(50),  nullable=False, default="QUEUED")
     # "QUEUED" | "PROCESSING" | "COMPLETED" | "PARTIAL" | "FAILED" | "CANCELLED"
     error_message     = Column(Text,        nullable=True)
-    created_at        = Column(DateTime,    nullable=False, default=datetime.utcnow)
-    updated_at        = Column(DateTime,    nullable=False, default=datetime.utcnow, onupdate=datetime.utcnow)
+    created_at        = Column(DateTime(timezone=True), nullable=False, default=utc_now)
+    updated_at        = Column(DateTime(timezone=True), nullable=False, default=utc_now, onupdate=utc_now)
 
     # Relationships
     drawing = relationship("DrawingModel", foreign_keys=[drawing_id])
