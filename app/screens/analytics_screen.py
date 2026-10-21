@@ -184,12 +184,12 @@ class AnalyticsPage(QWidget):
         reset_btn.clicked.connect(self._reset_filters)
         fb2.addWidget(reset_btn)
 
-        apply_btn = QPushButton("Apply Filters")
-        apply_btn.setObjectName("PrimaryBtn")
-        apply_btn.setFixedHeight(36)
-        apply_btn.setMinimumWidth(110)
-        apply_btn.clicked.connect(self._apply_filters)
-        fb2.addWidget(apply_btn)
+        refresh_btn = QPushButton("Refresh")
+        refresh_btn.setObjectName("PrimaryBtn")
+        refresh_btn.setFixedHeight(36)
+        refresh_btn.setMinimumWidth(110)
+        refresh_btn.clicked.connect(self.reload_data)
+        fb2.addWidget(refresh_btn)
 
         self._date_err_lbl = QLabel("")
         self._date_err_lbl.setObjectName("DateError")
@@ -198,6 +198,11 @@ class AnalyticsPage(QWidget):
         filter_layout.addWidget(self._date_err_lbl)
 
         filter_layout.addLayout(fb2)
+
+        self._filter_summary_lbl = QLabel("")
+        self._filter_summary_lbl.setObjectName("SubCaption")
+        self._filter_summary_lbl.setStyleSheet("color: #A6A9B1; font-size: 13px; font-weight: 500; padding-top: 4px;")
+        filter_layout.addWidget(self._filter_summary_lbl)
 
 
         root.addWidget(filter_card)
@@ -612,6 +617,8 @@ class AnalyticsPage(QWidget):
             self._kpi_cards.append(card)
             self._kpi_row.addWidget(card, 1)
 
+        self._update_filter_summary(kpi, filters)
+
 
     def _build_charts(self) -> None:
         """Fetch real data for charts and populate grid using all active filters."""
@@ -717,6 +724,34 @@ class AnalyticsPage(QWidget):
         if hasattr(self, "_date_err_lbl"):
             self._date_err_lbl.setVisible(False)
         return True
+
+    def _update_filter_summary(self, kpi: KPISummaryDTO, filters: dict) -> None:
+        """Update the one-line active-filter summary."""
+        if not hasattr(self, "_filter_summary_lbl"):
+            return
+        total = kpi.total_comments if kpi else 0
+        parts = []
+        if filters.get("is_current_batch"):
+            parts.append("Current Batch")
+        if filters.get("project_id"):
+            proj_text = self._proj_cb.currentText()
+            parts.append(f"Project: {proj_text}")
+        if filters.get("department_name"):
+            parts.append(f"Dept: {filters['department_name']}")
+        if filters.get("category_name"):
+            parts.append(f"Category: {filters['category_name']}")
+        if filters.get("drawing_id"):
+            parts.append("1 drawing")
+        if not filters.get("include_rejected", True):
+            parts.append("excl. rejected")
+        if filters.get("date_from") or filters.get("date_to"):
+            qf = self._date_from.date().toString("yyyy-MM-dd")
+            qt = self._date_to.date().toString("yyyy-MM-dd")
+            parts.append(f"{qf} to {qt}")
+
+        filter_desc = " · ".join(parts) if parts else "all comments"
+        self._filter_summary_lbl.setText(f"Showing {total:,} comments — {filter_desc}")
+        self._filter_summary_lbl.setVisible(True)
 
     def _apply_filters(self, *args) -> None:
         """Debounce reload of KPIs and charts on filter changes (~150 ms)."""
