@@ -495,36 +495,40 @@ class UploadPage(QWidget):
     # ── Department Selection Getters ────────────────────────────────────────
 
     def get_single_department_id(self) -> str | None:
-        if self._controller and getattr(self._controller, "current_department_id", None):
+        if self._controller and self._controller.is_department_scoped():
             return self._controller.current_department_id
         idx = self._single_dept_combo.currentIndex()
         if idx <= 0:
             return None
-        return self._single_dept_combo.itemData(idx, Qt.ItemDataRole.UserRole)
+        val = self._single_dept_combo.itemData(idx, Qt.ItemDataRole.UserRole)
+        return val if val and str(val).strip().lower() != "unassigned" else None
 
     def get_single_department_name(self) -> str | None:
-        if self._controller and getattr(self._controller, "current_department_name", None):
+        if self._controller and self._controller.is_department_scoped():
             return self._controller.current_department_name
         idx = self._single_dept_combo.currentIndex()
         if idx <= 0:
             return None
-        return self._single_dept_combo.currentText()
+        name = self._single_dept_combo.currentText()
+        return name if name and str(name).strip().lower() != "unassigned" else None
 
     def get_batch_department_id(self) -> str | None:
-        if self._controller and getattr(self._controller, "current_department_id", None):
+        if self._controller and self._controller.is_department_scoped():
             return self._controller.current_department_id
         idx = self._batch_dept_combo.currentIndex()
         if idx <= 0:
             return None
-        return self._batch_dept_combo.itemData(idx, Qt.ItemDataRole.UserRole)
+        val = self._batch_dept_combo.itemData(idx, Qt.ItemDataRole.UserRole)
+        return val if val and str(val).strip().lower() != "unassigned" else None
 
     def get_batch_department_name(self) -> str | None:
-        if self._controller and getattr(self._controller, "current_department_name", None):
+        if self._controller and self._controller.is_department_scoped():
             return self._controller.current_department_name
         idx = self._batch_dept_combo.currentIndex()
         if idx <= 0:
             return None
-        return self._batch_dept_combo.currentText()
+        name = self._batch_dept_combo.currentText()
+        return name if name and str(name).strip().lower() != "unassigned" else None
 
     def get_selected_department_id(self) -> str | None:
         return self.get_single_department_id() or self.get_batch_department_id()
@@ -878,7 +882,10 @@ class UploadPage(QWidget):
         self._start_workflow_timer(self.MODE_SINGLE)
 
         if self._controller:
-            self._controller.start_processing_workflow(self._single_filepath, department_id=dept_id or dept_name)
+            target_dept = dept_id or dept_name
+            if target_dept and str(target_dept).strip().lower() == "unassigned":
+                target_dept = None
+            self._controller.start_processing_workflow(self._single_filepath, department_id=target_dept)
         else:
             self._stop_workflow_timer()
             self._single_prog.setRange(0, 100)
@@ -913,7 +920,10 @@ class UploadPage(QWidget):
         self._start_workflow_timer(self.MODE_BATCH)
 
         if self._controller:
-            self._controller.start_batch_processing_workflow(self._batch_filepaths, department_id=dept_id or dept_name)
+            target_dept = dept_id or dept_name
+            if target_dept and str(target_dept).strip().lower() == "unassigned":
+                target_dept = None
+            self._controller.start_batch_processing_workflow(self._batch_filepaths, department_id=target_dept)
         else:
             self._stop_workflow_timer()
             self._batch_prog.setRange(0, 100)

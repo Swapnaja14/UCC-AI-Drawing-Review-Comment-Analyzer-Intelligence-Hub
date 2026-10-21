@@ -983,7 +983,7 @@ class ProcessingWorkflowEngine:
             # Establish drawing ID and effective department before classification
             db_record = self.drawing_repo.save_drawing_from_dto(doc_dto, project_id=project_id, department_id=department_id)
             drawing_id = db_record.get("id", "DWG-000")
-            effective_dept_id = db_record.get("department_id") or department_id
+            effective_dept_id = db_record.get("department_id")
             resolved_proj_id = db_record.get("project_id")
 
             if run_record and self.processing_run_repo:

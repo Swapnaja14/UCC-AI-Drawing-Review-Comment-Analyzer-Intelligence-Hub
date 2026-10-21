@@ -290,6 +290,19 @@ class DrawingRepository:
                 if session.query(ProjectModel).filter(ProjectModel.id == project_id).first():
                     valid_project_id = project_id
 
+            valid_department_id = None
+            if department_id and str(department_id).strip().lower() not in ("unassigned", "none", "", "all", "all departments"):
+                dept = (
+                    session.query(EngineeringDepartmentModel)
+                    .filter(
+                        (EngineeringDepartmentModel.id == department_id) |
+                        (EngineeringDepartmentModel.name == department_id)
+                    )
+                    .first()
+                )
+                if dept:
+                    valid_department_id = dept.id
+
             existing = (
                 session.query(DrawingModel)
                 .filter(DrawingModel.file_hash_sha256 == dto.file_hash_sha256)
@@ -297,8 +310,8 @@ class DrawingRepository:
             )
             if existing:
                 existing.uploaded_at = datetime.now(timezone.utc)
-                if department_id and not existing.department_id:
-                    existing.department_id = department_id
+                if valid_department_id and not existing.department_id:
+                    existing.department_id = valid_department_id
                 if valid_project_id:
                     existing.project_id = valid_project_id
                 if not Path(existing.file_path).exists() and persistent_path.exists():
@@ -319,7 +332,7 @@ class DrawingRepository:
             drawing = DrawingModel(
                 id=drawing_id,
                 project_id=valid_project_id,
-                department_id=department_id,
+                department_id=valid_department_id,
                 file_path=str(persistent_path),
                 file_name=original_file_name,
                 file_size_bytes=dto.file_size_bytes,
@@ -1031,13 +1044,36 @@ class CommentRepository:
                 if session.get(CommentModel, comment_id):
                     comment_id = f"{comment_id}-{uuid.uuid4().hex[:4].upper()}"
 
+            valid_department_id = None
+            if department_id and str(department_id).strip().lower() not in ("unassigned", "none", "", "all", "all departments"):
+                dept = (
+                    session.query(EngineeringDepartmentModel)
+                    .filter(
+                        (EngineeringDepartmentModel.id == department_id) |
+                        (EngineeringDepartmentModel.name == department_id)
+                    )
+                    .first()
+                )
+                if dept:
+                    valid_department_id = dept.id
+
+            valid_category_id = None
+            if category_id:
+                if session.query(CategoryModel).filter(CategoryModel.id == category_id).first():
+                    valid_category_id = category_id
+
+            valid_user_id = None
+            if user_id:
+                if session.query(UserModel).filter(UserModel.id == user_id).first():
+                    valid_user_id = user_id
+
             comment = CommentModel(
                 id=comment_id,
                 drawing_id=drawing_id,
                 page_id=page_id,
-                category_id=category_id,
-                department_id=department_id,
-                user_id=user_id,
+                category_id=valid_category_id,
+                department_id=valid_department_id,
+                user_id=valid_user_id,
                 page_number=page_number,
                 raw_text=raw_text,
                 cleaned_text=cleaned_text,
