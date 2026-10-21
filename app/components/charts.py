@@ -154,6 +154,7 @@ def build_pareto_chart(
     title: str = "Pareto — Comments by Category",
     total: Optional[int] = None,
     reference_line: Optional[float] = 80.0,
+    highlight_name: Optional[str] = None,
 ) -> "QChartView | QFrame":
     """
     Build a Pareto chart: bars for category counts plus a cumulative-% line.
@@ -229,11 +230,27 @@ def build_pareto_chart(
             provided.append((running / total * 100.0) if total > 0 else 0.0)
     cumuls = [float(p) for p in provided]
 
+    if highlight_name is not None:
+        # Append title subtitle when highlighting
+        chart.setTitle(chart.title() + f" — highlighting: {highlight_name}")
+
     bar_set = QBarSet("Comments")
-    bar_set.setColor(QColor("#3E9BFF"))
     bar_set.setBorderColor(QColor("#60A5FA"))
-    for v in counts:
+    for i, (cat, v) in enumerate(zip(cats, counts)):
         bar_set.append(v)
+    # Per-bar colour via individual setColor on each slice is not supported
+    # by QBarSet directly; use a single dim colour for non-highlighted bars.
+    if highlight_name is not None:
+        # If any cat exactly matches highlight, brighten that set
+        # QBarSet applies one colour to all bars; the highlight annotation is
+        # handled via a contrasting title subtitle instead.
+        cat_lower = [c.lower() for c in cats]
+        if highlight_name.lower() in cat_lower:
+            bar_set.setColor(QColor("#1E4D7A"))  # dimmed
+        else:
+            bar_set.setColor(QColor("#3E9BFF"))
+    else:
+        bar_set.setColor(QColor("#3E9BFF"))
 
     bar_series = QBarSeries()
     bar_series.append(bar_set)
@@ -453,6 +470,7 @@ build_status_trend_chart = build_monthly_chart
 def build_category_pie(
     data: Optional[Union[List[Any], Dict[str, Any]]] = None,
     title: str = "Category Distribution",
+    highlight_name: Optional[str] = None,
 ) -> "QChartView | QFrame":
     """
     Build a category distribution donut chart.
@@ -514,6 +532,11 @@ def build_category_pie(
         slice_.setColor(QColor(color))
         slice_.setLabelColor(QColor("#F2F3F5") if _is_dark_theme() else QColor("#1B1D21"))
         slice_.setLabelFont(QFont("Segoe UI", 10))
+        if highlight_name is not None:
+            if cat_name.lower() == highlight_name.lower():
+                slice_.setExploded(True)
+            else:
+                slice_.setOpacity(0.5)
 
     if not has_slices:
         slice_ = series.append("No Data", 1)

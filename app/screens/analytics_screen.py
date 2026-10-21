@@ -623,9 +623,10 @@ class AnalyticsPage(QWidget):
             # The Pareto may be a top-N slice; the cumulative line must still be
             # measured against the whole population the slice came from.
             total=sum(getattr(d, "count", 0) for d in (category_data or [])) or None,
+            highlight_name=cat_name if cat_name else None,
         )
         timeline_view = build_monthly_chart(trend_data, title="Comment Timeline (by Creation Date)")
-        pie_view     = build_category_pie(category_data, title=pie_title)
+        pie_view     = build_category_pie(category_data, title=pie_title, highlight_name=cat_name if cat_name else None)
 
         def _wrap(view, min_h: int = 280) -> QFrame:
             f = QFrame()
