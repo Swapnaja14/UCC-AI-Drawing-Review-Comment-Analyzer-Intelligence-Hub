@@ -176,3 +176,55 @@ def test_include_rejected_toggle(test_setup):
 
     pareto_no_rej = service.get_pareto_analysis(include_rejected=False)
     assert sum(d.count for d in pareto_no_rej) == 8
+
+
+def test_bucket_trend_data_daily_span_and_zero_fill():
+    from src.services.analytics_service import bucket_trend_data
+    # 5 dates across Jan 1 to Jan 5 (span <= 31 days)
+    # Notice: no dates on Jan 3 -> must be zero-filled!
+    d1 = datetime(2026, 1, 1, 10, 0, 0, tzinfo=timezone.utc)
+    d2 = datetime(2026, 1, 2, 12, 0, 0, tzinfo=timezone.utc)
+    d4 = datetime(2026, 1, 4, 15, 0, 0, tzinfo=timezone.utc)
+    d5 = datetime(2026, 1, 5, 8, 0, 0, tzinfo=timezone.utc)
+    
+    result = bucket_trend_data([d1, d2, d4, d5])
+    # Expect 5 daily buckets (Jan 1 through Jan 5)
+    assert len(result) == 5
+    labels = [r.period_label for r in result]
+    # Verify continuous days
+    assert labels[0].endswith('-01')
+    assert labels[1].endswith('-02')
+    assert labels[2].endswith('-03')
+    assert labels[3].endswith('-04')
+    assert labels[4].endswith('-05')
+    # Jan 3 should have count 0 (zero-filled)
+    assert result[2].count == 0
+    assert result[0].count == 1
+    assert result[1].count == 1
+    assert result[3].count == 1
+    assert result[4].count == 1
+
+
+def test_bucket_trend_data_weekly_span():
+    from src.services.analytics_service import bucket_trend_data
+    # Dates 60 days apart (span between 32 and 182 days -> weekly buckets)
+    d1 = datetime(2026, 1, 1, 10, 0, 0, tzinfo=timezone.utc)
+    d2 = datetime(2026, 3, 2, 10, 0, 0, tzinfo=timezone.utc)
+    result = bucket_trend_data([d1, d2])
+    assert len(result) >= 8  # ~9 weeks
+    assert all('-W' in r.period_label for r in result)
+
+
+def test_bucket_trend_data_monthly_span():
+    from src.services.analytics_service import bucket_trend_data
+    # Dates 300 days apart (> 26 weeks -> monthly buckets)
+    d1 = datetime(2026, 1, 1, 10, 0, 0, tzinfo=timezone.utc)
+    d2 = datetime(2026, 10, 20, 10, 0, 0, tzinfo=timezone.utc)
+    result = bucket_trend_data([d1, d2])
+    assert len(result) == 10  # Jan through Oct (10 months, continuous)
+    assert result[0].period_label == '2026-01'
+    assert result[-1].period_label == '2026-10'
+    # Empty months between Jan and Oct are zero-filled
+    assert result[1].count == 0  # Feb
+    assert result[0].count == 1  # Jan
+    assert result[-1].count == 1  # Oct
