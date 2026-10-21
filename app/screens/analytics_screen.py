@@ -261,17 +261,17 @@ class AnalyticsPage(QWidget):
         self._cat_cb.blockSignals(True)
         self._cat_cb.clear()
         categories = ["All Categories"]
+        cat_options = []
         if self._controller:
             try:
-                cat_records = self._controller.get_all_categories()
-                for c in cat_records:
-                    c_name = c.get("name") if isinstance(c, dict) else getattr(c, "name", "")
-                    if c_name and c_name not in categories:
-                        categories.append(c_name)
+                cat_options = self._controller.get_category_options()
             except Exception:
-                pass
-        if len(categories) == 1:
-            categories.extend(STANDARD_CATEGORIES)
+                cat_options = []
+        if not cat_options:
+            cat_options = STANDARD_CATEGORIES
+        for c_name in cat_options:
+            if c_name not in categories:
+                categories.append(c_name)
         self._cat_cb.addItems(categories)
         self._cat_cb.blockSignals(False)
 

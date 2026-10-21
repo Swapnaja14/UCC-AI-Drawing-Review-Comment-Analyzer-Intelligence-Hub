@@ -1422,6 +1422,10 @@ class AppController(QObject):
         """Department names for the analytics filter, plus whether "Unassigned" has rows."""
         return self.analytics_service.get_department_options()
 
+    def get_category_options(self) -> List[str]:
+        """Category names for the analytics filter (taxonomy UNION comment categories)."""
+        return self.analytics_service.get_category_options()
+
     def get_drawing_options(
         self,
         project_id: Optional[str] = None,
