@@ -56,6 +56,11 @@ _EMPTY_KPIS = KPISummaryDTO(
 #: Data value carried by the "current batch" entry in the Batch dropdown.
 CURRENT_BATCH = "CURRENT_BATCH"
 
+#: Sentinel labels in the Department dropdown. "Unassigned" is a real filter
+#: value — it selects comments with no department — not a synonym for "All".
+ALL_DEPARTMENTS = "All Departments"
+UNASSIGNED_DEPARTMENT = "Unassigned"
+
 #: Shown instead of the charts when Current Batch is selected but the session has
 #: not processed any drawing. The KPIs stay at zero because the underlying query
 #: is restricted to an empty drawing list — never widened to "everything".
@@ -221,30 +226,25 @@ class AnalyticsPage(QWidget):
 
         self._populate_drawings_for_selected_project()
 
+        previous_dept = self._dept_cb.currentText()
         self._dept_cb.blockSignals(True)
         self._dept_cb.clear()
-        departments = ["All Departments"]
+        departments = [ALL_DEPARTMENTS]
+        options: Dict[str, Any] = {}
         if self._controller:
             try:
-                records = self._controller.get_all_departments()
-                for d in records:
-                    name = d.get("name") if isinstance(d, dict) else getattr(d, "name", "")
-                    if name and name not in departments:
-                        departments.append(name)
+                options = self._controller.get_department_options() or {}
             except Exception:
-                pass
-        if len(departments) == 1:
-            departments.extend([
-                "Electrical Engineering",
-                "GPD",
-                "Pipe Support Engineering",
-                "Piping Engineering",
-                "Plakon",
-                "Structural & Physical Design",
-                "System Engineering",
-                "Unassigned",
-            ])
+                options = {}
+        for name in options.get("departments", []):
+            if name and name not in departments:
+                departments.append(name)
+        # Offered when it would return rows — and kept while it is the current
+        # selection, since dropping it would silently widen the filter to All.
+        if options.get("has_unassigned") or previous_dept == UNASSIGNED_DEPARTMENT:
+            departments.append(UNASSIGNED_DEPARTMENT)
         self._dept_cb.addItems(departments)
+
         user_dept = self._controller.current_department_name if self._controller and getattr(self._controller, "current_department_name", None) else None
         if user_dept:
             idx = self._dept_cb.findText(user_dept)
@@ -252,6 +252,9 @@ class AnalyticsPage(QWidget):
                 self._dept_cb.setCurrentIndex(idx)
             self._dept_cb.setEnabled(False)
         else:
+            idx = self._dept_cb.findText(previous_dept)
+            if idx >= 0:
+                self._dept_cb.setCurrentIndex(idx)
             self._dept_cb.setEnabled(True)
         self._dept_cb.blockSignals(False)
 
@@ -294,53 +297,49 @@ class AnalyticsPage(QWidget):
         self._batch_cb.blockSignals(False)
 
     def _populate_drawings_for_selected_project(self) -> None:
-        """Populate drawing dropdown filtered by current project, department, and/or batch selection."""
+        """
+        Rebuild the drawing dropdown for the current project / batch / department
+        scope.
+
+        The list comes from one query that returns id, name and comment count —
+        it never loads comment rows — and it filters on the department recorded
+        on the comment, the same semantic the KPIs and charts use.
+        """
         proj_id = self._proj_cb.currentData() if hasattr(self, "_proj_cb") else ""
         batch_selection = self._batch_cb.currentData() if hasattr(self, "_batch_cb") else ""
-        dept_text = self._dept_cb.currentText() if hasattr(self, "_dept_cb") else "All Departments"
+        dept_text = self._dept_cb.currentText() if hasattr(self, "_dept_cb") else ALL_DEPARTMENTS
         user_dept = self._controller.current_department_name if self._controller and getattr(self._controller, "current_department_name", None) else None
-        active_dept = user_dept or (None if dept_text in ("All Departments", "", "Unassigned") else dept_text)
+        active_dept = user_dept or (None if dept_text in (ALL_DEPARTMENTS, "") else dept_text)
 
         prev_dwg_id = self._dwg_cb.currentData() if hasattr(self, "_dwg_cb") else None
 
+        if batch_selection == CURRENT_BATCH:
+            all_label = "All Drawings in Batch"
+            scope_ids = getattr(self._controller, "current_batch_drawing_ids", None) or []
+        else:
+            all_label = "All Drawings"
+            scope_ids = None
+
         self._dwg_cb.blockSignals(True)
         self._dwg_cb.clear()
+        self._dwg_cb.addItem(all_label, "")
 
-        if batch_selection == CURRENT_BATCH:
-            self._dwg_cb.addItem("All Drawings in Batch", "")
-            if self._controller:
-                try:
-                    drawings = self._controller.get_batch_drawings()
-                    for d in drawings:
-                        did = d.get("id", "")
-                        fname = d.get("file_name", "Drawing")
-                        self._dwg_cb.addItem(fname, did)
-                except Exception:
-                    pass
-        else:
-            self._dwg_cb.addItem("All Drawings", "")
-            if self._controller:
-                try:
-                    drawings = self._controller.get_all_drawings(
-                        project_id=proj_id if proj_id else None,
-                        department_id=active_dept
-                    )
-                    for d in drawings:
-                        did = d.get("id", "")
-                        fname = d.get("file_name", "Drawing")
-                        self._dwg_cb.addItem(fname, did)
-                except Exception:
-                    pass
+        drawings: List[Dict[str, Any]] = []
+        if self._controller:
+            try:
+                drawings = self._controller.get_drawing_options(
+                    project_id=proj_id if proj_id else None,
+                    department_name=active_dept,
+                    drawing_ids=scope_ids,
+                ) or []
+            except Exception:
+                drawings = []
+        for d in drawings:
+            self._dwg_cb.addItem(d.get("file_name") or "Drawing", d.get("id", ""))
 
         # Restore previous selection if still in list
-        if prev_dwg_id:
-            idx = self._dwg_cb.findData(prev_dwg_id)
-            if idx >= 0:
-                self._dwg_cb.setCurrentIndex(idx)
-            else:
-                self._dwg_cb.setCurrentIndex(0)
-        else:
-            self._dwg_cb.setCurrentIndex(0)
+        idx = self._dwg_cb.findData(prev_dwg_id) if prev_dwg_id else -1
+        self._dwg_cb.setCurrentIndex(idx if idx >= 0 else 0)
         self._dwg_cb.blockSignals(False)
 
     def _on_department_changed(self, index: int) -> None:
@@ -404,7 +403,7 @@ class AnalyticsPage(QWidget):
         batch_selection = self._batch_cb.currentData() if hasattr(self, "_batch_cb") else ""
         dwg_id  = self._dwg_cb.currentData() if hasattr(self, "_dwg_cb") else ""
         user_dept = self._controller.current_department_name if self._controller and getattr(self._controller, "current_department_name", None) else None
-        dept_text = self._dept_cb.currentText() if hasattr(self, "_dept_cb") else "All Departments"
+        dept_text = self._dept_cb.currentText() if hasattr(self, "_dept_cb") else ALL_DEPARTMENTS
         dept    = user_dept or dept_text
         cat     = self._cat_cb.currentText() if hasattr(self, "_cat_cb") else "All Categories"
 
@@ -429,7 +428,7 @@ class AnalyticsPage(QWidget):
             "drawing_id": dwg_id if dwg_id else None,
             "drawing_ids": (batch_drawing_ids if not dwg_id else None) if is_current_batch else None,
             "is_current_batch": is_current_batch,
-            "department_name": None if dept in ("All Departments", "", "Unassigned") else dept,
+            "department_name": None if dept in (ALL_DEPARTMENTS, "") else dept,
             "category_name": None if cat in ("All Categories", "") else cat,
             "date_from": from_dt,
             "date_to": to_dt,

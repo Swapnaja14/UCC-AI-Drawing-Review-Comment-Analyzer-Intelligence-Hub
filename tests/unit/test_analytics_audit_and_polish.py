@@ -191,11 +191,21 @@ def test_analytics_page_reset_and_kpi_cards(analytics_test_db):
         def get_all_departments(self):
             return [{"id": "d1", "name": "Piping Engineering"}]
 
+        def get_department_options(self):
+            return service.get_department_options()
+
         def get_all_categories(self):
             return [{"name": "Technical"}]
 
-        def get_all_drawings(self, project_id=None):
+        def get_all_drawings(self, project_id=None, department_id=None):
             return [{"id": "dwg1", "file_name": "d1.pdf"}]
+
+        def get_drawing_options(self, project_id=None, department_name=None, drawing_ids=None):
+            return service.get_drawing_options(
+                project_id=project_id,
+                department_name=department_name,
+                drawing_ids=drawing_ids,
+            )
 
         def get_batch_drawings(self):
             return [{"id": "dwg1", "file_name": "d1.pdf"}]

@@ -1418,6 +1418,27 @@ class AppController(QObject):
         """Return all category records from database."""
         return self.category_repo.get_all_categories()
 
+    def get_department_options(self) -> Dict[str, Any]:
+        """Department names for the analytics filter, plus whether "Unassigned" has rows."""
+        return self.analytics_service.get_department_options()
+
+    def get_drawing_options(
+        self,
+        project_id: Optional[str] = None,
+        department_name: Optional[str] = None,
+        drawing_ids: Optional[List[str]] = None,
+    ) -> List[Dict[str, Any]]:
+        """
+        Lightweight drawing list (id, file name, comment count) for analytics
+        dropdowns, always enforcing the active user's department scope.
+        """
+        eff_dept = self.current_department_name if self.is_department_scoped() else department_name
+        return self.analytics_service.get_drawing_options(
+            project_id=project_id,
+            department_name=eff_dept,
+            drawing_ids=drawing_ids,
+        )
+
     def get_dashboard_kpis(
         self,
         project_id: Optional[str] = None,

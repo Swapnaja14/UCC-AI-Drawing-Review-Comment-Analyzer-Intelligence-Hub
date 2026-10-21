@@ -1,4 +1,4 @@
-from typing import List, Optional, Dict, Tuple
+from typing import Any, List, Optional, Dict, Tuple
 from sqlalchemy import func, case
 from datetime import datetime
 
@@ -158,13 +158,40 @@ class AnalyticsService:
         ``include_rejected=False`` drops Rejected rows from every count and rate
         returned here; the flag is echoed on the DTO so callers can state the
         population they are showing.
+
+        ``department_name`` always means the department recorded on the comment
+        (``comments.department_id``), never the one recorded on the drawing, and
+        ``"Unassigned"`` selects comments with no department. The project,
+        drawing and page counts follow the same rule: they count only what
+        carries a comment in this population, so the KPI cards, the charts and
+        the drawing dropdown cannot disagree about what a department filter
+        means.
         """
         high_threshold, low_threshold = get_confidence_thresholds()
 
         with self._db.get_session() as session:
+            # A comment's department is recorded on the comment, not on the
+            # drawing, so with a department filter active a project, drawing or
+            # page only counts when it actually carries a comment for that
+            # department. Every other filter keeps its drawing-level scope.
+            dept_drawing_ids = None
+            if department_name:
+                dept_query = session.query(CommentModel.drawing_id).distinct()
+                dept_query = _apply_comment_filters(
+                    dept_query, session, department_name=department_name
+                )
+                dept_drawing_ids = [row[0] for row in dept_query.all() if row[0]]
+
             p_query = session.query(func.count(ProjectModel.id))
             if project_id:
                 p_query = p_query.filter(ProjectModel.id == project_id)
+            if dept_drawing_ids is not None:
+                p_query = p_query.filter(
+                    ProjectModel.id.in_(
+                        session.query(DrawingModel.project_id)
+                        .filter(DrawingModel.id.in_(dept_drawing_ids))
+                    ) if dept_drawing_ids else False
+                )
             total_projects = p_query.scalar() or 0
 
             d_query = session.query(func.count(DrawingModel.id))
@@ -174,14 +201,10 @@ class AnalyticsService:
                 d_query = d_query.filter(DrawingModel.id.in_(drawing_ids)) if drawing_ids else d_query.filter(False)
             elif project_id:
                 d_query = d_query.filter(DrawingModel.project_id == project_id)
-            if department_name:
-                if department_name == "Unassigned":
-                    d_query = d_query.filter(DrawingModel.department_id.is_(None))
-                else:
-                    d_query = d_query.join(
-                        EngineeringDepartmentModel,
-                        DrawingModel.department_id == EngineeringDepartmentModel.id
-                    ).filter(EngineeringDepartmentModel.name == department_name)
+            if dept_drawing_ids is not None:
+                d_query = d_query.filter(
+                    DrawingModel.id.in_(dept_drawing_ids) if dept_drawing_ids else False
+                )
             total_drawings = d_query.scalar() or 0
 
             pg_query = session.query(func.count(PageModel.id))
@@ -192,14 +215,10 @@ class AnalyticsService:
             elif project_id:
                 dwg_sub = session.query(DrawingModel.id).filter(DrawingModel.project_id == project_id)
                 pg_query = pg_query.filter(PageModel.drawing_id.in_(dwg_sub))
-            if department_name:
-                if department_name == "Unassigned":
-                    pg_query = pg_query.join(DrawingModel, PageModel.drawing_id == DrawingModel.id).filter(DrawingModel.department_id.is_(None))
-                else:
-                    pg_query = pg_query.join(DrawingModel, PageModel.drawing_id == DrawingModel.id).join(
-                        EngineeringDepartmentModel,
-                        DrawingModel.department_id == EngineeringDepartmentModel.id
-                    ).filter(EngineeringDepartmentModel.name == department_name)
+            if dept_drawing_ids is not None:
+                pg_query = pg_query.filter(
+                    PageModel.drawing_id.in_(dept_drawing_ids) if dept_drawing_ids else False
+                )
             total_pages = pg_query.scalar() or 0
             
             # Single SQL aggregation query with comment filters
@@ -315,6 +334,75 @@ class AnalyticsService:
                 low_confidence_threshold=low_threshold,
                 include_rejected=include_rejected,
             )
+
+    def get_department_options(self) -> Dict[str, Any]:
+        """
+        Departments the Analytics filter can offer.
+
+        ``has_unassigned`` is True when at least one comment carries no
+        department, so the UI offers "Unassigned" only when selecting it would
+        actually return rows.
+        """
+        with self._db.get_session() as session:
+            names = [
+                row[0]
+                for row in session.query(EngineeringDepartmentModel.name)
+                .filter(EngineeringDepartmentModel.is_active.is_(True))
+                .order_by(EngineeringDepartmentModel.name)
+                .all()
+            ]
+            unassigned = session.query(func.count(CommentModel.id)).outerjoin(
+                EngineeringDepartmentModel,
+                CommentModel.department_id == EngineeringDepartmentModel.id,
+            ).filter(EngineeringDepartmentModel.id.is_(None)).scalar() or 0
+
+            return {"departments": [n for n in names if n], "has_unassigned": bool(unassigned)}
+
+    def get_drawing_options(
+        self,
+        project_id: Optional[str] = None,
+        department_name: Optional[str] = None,
+        drawing_ids: Optional[List[str]] = None,
+    ) -> List[Dict[str, Any]]:
+        """
+        Lightweight drawing list for filter dropdowns: id, file name and the
+        number of comments in scope. No comment rows are loaded.
+
+        ``department_name`` is a name, not a ``DEPT-xxxxxxxx`` id, and is matched
+        against the comment-level department used everywhere else in analytics,
+        so the dropdown lists exactly the drawings the counts describe and the
+        comment count next to each name is the count for that department.
+        """
+        with self._db.get_session() as session:
+            count_query = session.query(
+                CommentModel.drawing_id.label("drawing_id"),
+                func.count(CommentModel.id).label("comment_count"),
+            )
+            count_query = _apply_comment_filters(
+                count_query, session, project_id=project_id, department_name=department_name
+            )
+            comment_counts = count_query.group_by(CommentModel.drawing_id).subquery()
+
+            query = session.query(
+                DrawingModel.id,
+                DrawingModel.file_name,
+                func.coalesce(comment_counts.c.comment_count, 0),
+            )
+            # With a department selected, a drawing that carries no comment for
+            # that department is not part of the population and must not appear.
+            join_kind = query.join if department_name else query.outerjoin
+            query = join_kind(comment_counts, comment_counts.c.drawing_id == DrawingModel.id)
+
+            if project_id:
+                query = query.filter(DrawingModel.project_id == project_id)
+            if drawing_ids is not None:
+                query = query.filter(DrawingModel.id.in_(drawing_ids)) if drawing_ids else query.filter(False)
+
+            rows = query.order_by(DrawingModel.file_name).all()
+            return [
+                {"id": r[0], "file_name": r[1], "comments_count": int(r[2] or 0)}
+                for r in rows
+            ]
 
     def get_category_distribution(
         self,
