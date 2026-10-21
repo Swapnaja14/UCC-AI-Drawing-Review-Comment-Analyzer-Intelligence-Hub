@@ -197,6 +197,8 @@ scratch/
 test.db
 backups/
 reports/
+data/ucc_database_working_copy.db
+migration_quarantine.json
 
 # PyInstaller spec
 !UCC_Drawing_Review_Intelligence.spec
