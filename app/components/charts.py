@@ -41,22 +41,13 @@ __all__ = [
 ]
 
 
-# ── Per-category accent colours ───────────────────────────────────────────────
+# ── Fallback colour ───────────────────────────────────────────────────────────
 
-_CAT_COLORS: dict[str, str] = {
-    "Dimensional":              "#3E9BFF",
-    "Dimensional/Tolerancing":  "#3E9BFF",
-    "Structural":               "#A78BFA",
-    "Structural/Civil":         "#10B981",
-    "Electrical":               "#FBBF24",
-    "Electrical/Instrumentation":"#F59E0B",
-    "Material":                 "#2DD4BF",
-    "Safety/HSE":               "#EF4444",
-    "Documentation":            "#A6A9B1",
-    "General/Administrative":   "#6B7280",
-    "Uncategorized":            "#9CA3AF",
-    "Other":                    "#94A3B8",
-}
+#: Used only when a caller passes bare {name: count} data with no colour attached.
+#: Category colours come from the analytics service (``categories.color_hex``), so
+#: this module deliberately holds no palette of its own — a second one here would
+#: draw the same category a different colour in a different chart.
+FALLBACK_CATEGORY_COLOR = "#A6A9B1"
 
 
 # ── Internal helpers ──────────────────────────────────────────────────────────
@@ -505,14 +496,14 @@ def build_category_pie(
             color = (
                 getattr(item, "color_hex", None)
                 or (item.get("color_hex") if isinstance(item, dict) else None)
-                or _CAT_COLORS.get(cat_name, "#A6A9B1")
+                or FALLBACK_CATEGORY_COLOR
             )
             if count > 0:
                 raw_items.append((str(cat_name), int(count), str(color)))
     elif isinstance(data, dict) and data:
         for cat, count in data.items():
             if count > 0:
-                raw_items.append((str(cat), int(count), _CAT_COLORS.get(cat, "#A6A9B1")))
+                raw_items.append((str(cat), int(count), FALLBACK_CATEGORY_COLOR))
 
     total_count = sum(cnt for _, cnt, _ in raw_items)
 

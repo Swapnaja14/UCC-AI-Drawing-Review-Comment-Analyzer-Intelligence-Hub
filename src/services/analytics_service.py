@@ -26,33 +26,12 @@ PARETO_TAIL_BUCKETS = ("uncategorized", "other")
 #: asked to group its tail.
 OTHER_BUCKET = "Other"
 
-#: Neutral colour for a grouped tail when there is no Uncategorized bucket to
-#: inherit one from.
+#: Neutral colour for a grouped tail, and for any category the taxonomy has no
+#: colour for.
 NEUTRAL_COLOR = '#9CA3AF'
 
-CATEGORY_COLORS = {
-    'Technical': '#EF4444',
-    'Drafting': '#8B5CF6',
-    'Dimension': '#3B82F6',
-    'Cosmetic': '#EC4899',
-    'Standards': '#F59E0B',
-    'Coordination': '#10B981',
-    'Documentation': '#6B7280',
-    'Revision': '#F97316',
-    'Calculation': '#6366F1',
-    'Feasibility': '#14B8A6',
-    'Material': '#06B6D4',
-    'Notes': '#84CC16',
-    'BOM': '#A855F7',
-    # Backwards compatibility
-    'Piping/Process': '#3B82F6',
-    'Electrical/Instrumentation': '#F59E0B',
-    'Structural/Civil': '#10B981',
-    'Safety/HSE': '#EF4444',
-    'Dimensional/Tolerancing': '#8B5CF6',
-    'General/Administrative': '#6B7280',
-    'Uncategorized': '#9CA3AF'
-}
+#: Bucket that absorbs every comment with no usable category name.
+UNCATEGORIZED = 'Uncategorized'
 
 
 def get_confidence_thresholds() -> Tuple[float, float]:
@@ -81,7 +60,32 @@ def _status_clean():
 
 def _category_clean(column=None):
     """NULL, '' and whitespace-only categories collapse to a single 'Uncategorized'."""
-    return func.coalesce(func.nullif(func.trim(column if column is not None else CommentModel.category_name), ''), 'Uncategorized')
+    return func.coalesce(func.nullif(func.trim(column if column is not None else CommentModel.category_name), ''), UNCATEGORIZED)
+
+
+def _category_palette(session) -> Dict[str, Tuple[str, str]]:
+    """
+    ``{lowercased name: (canonical name, colour)}`` read from the categories table.
+
+    ``categories.color_hex`` is the single colour source for analytics. Every widget
+    gets its colours through the distribution DTOs built here, so one category can
+    never be drawn two different colours in two different charts.
+    """
+    palette: Dict[str, Tuple[str, str]] = {}
+    for name, color in session.query(CategoryModel.name, CategoryModel.color_hex).all():
+        if not name or not name.strip():
+            continue
+        palette.setdefault(name.strip().lower(), (name.strip(), color or NEUTRAL_COLOR))
+    palette.setdefault(UNCATEGORIZED.lower(), (UNCATEGORIZED, NEUTRAL_COLOR))
+    return palette
+
+
+def _resolve_category(raw_name: Optional[str], palette: Dict[str, Tuple[str, str]]) -> Tuple[str, str]:
+    """Canonical spelling and colour for a stored category name, matched case-insensitively."""
+    key = (raw_name or '').strip().lower()
+    if key in palette:
+        return palette[key]
+    return ((raw_name or UNCATEGORIZED).strip() or UNCATEGORIZED, NEUTRAL_COLOR)
 
 
 def _pareto_sort_key(item) -> tuple:
@@ -124,14 +128,10 @@ def _apply_comment_filters(
             ).filter(EngineeringDepartmentModel.name == department_name)
 
     if category_name and category_name != "All Categories":
-        if category_name == "Uncategorized":
-            query = query.filter(
-                (CommentModel.category_name == "Uncategorized") |
-                (CommentModel.category_name.is_(None)) |
-                (CommentModel.category_name == "")
-            )
-        else:
-            query = query.filter(CommentModel.category_name == category_name)
+        # Normalised on both sides, so selecting "Dimension" also catches comments
+        # stored as "dimension" or " Dimension ", and "Uncategorized" needs no
+        # special case because _category_clean already maps NULL/''/whitespace to it.
+        query = query.filter(func.lower(_category_clean()) == category_name.strip().lower())
 
     from datetime import date as date_type, time as time_type
     if date_from:
@@ -433,33 +433,65 @@ class AnalyticsService:
         include_rejected: bool = True,
         drawing_ids: Optional[List[str]] = None,
     ) -> List[CategoryDistributionDTO]:
+        """
+        Comment counts per category, with colours taken from ``categories.color_hex``.
+
+        Names are normalised in SQL (NULL/empty/whitespace -> "Uncategorized") and
+        then matched case-insensitively against the taxonomy, so "dimension" and
+        "Dimension" are one bucket rather than two. Ordering is stable: count
+        descending, then name ascending.
+        """
         with self._db.get_session() as session:
             status_clean = func.upper(func.trim(func.coalesce(CommentModel.status, "PENDING")))
-            query = session.query(CommentModel.category_name, func.count(CommentModel.id))
+            category_clean = _category_clean()
+            query = session.query(category_clean, func.count(CommentModel.id))
             if not include_rejected:
                 query = query.filter(status_clean != "REJECTED")
             query = _apply_comment_filters(
                 query, session, project_id, drawing_id, department_name, category_name, date_from, date_to, drawing_ids=drawing_ids
             )
-            query = query.group_by(CommentModel.category_name)
-            
-            results = query.all()
-            total = sum(count for _, count in results)
-            
-            distribution = []
-            for cat_n, count in results:
-                c_name = cat_n or 'Uncategorized'
-                pct = (count / total * 100.0) if total > 0 else 0.0
-                color = CATEGORY_COLORS.get(c_name, '#9CA3AF')
-                distribution.append(CategoryDistributionDTO(
-                    category_name=c_name,
-                    count=count,
-                    percentage=pct,
-                    color_hex=color
-                ))
-            
-            distribution.sort(key=lambda x: x.count, reverse=True)
+            query = query.group_by(category_clean)
+
+            palette = _category_palette(session)
+            # GROUP BY works on the raw stored text, so casing variants still arrive
+            # as separate rows; folding them here keeps the buckets dialect-independent.
+            merged: Dict[str, CategoryDistributionDTO] = {}
+            for raw_name, count in query.all():
+                c_name, color = _resolve_category(raw_name, palette)
+                existing = merged.get(c_name)
+                if existing is not None:
+                    existing.count += int(count or 0)
+                else:
+                    merged[c_name] = CategoryDistributionDTO(
+                        category_name=c_name,
+                        count=int(count or 0),
+                        percentage=0.0,
+                        color_hex=color,
+                    )
+
+            distribution = list(merged.values())
+            total = sum(d.count for d in distribution)
+            for item in distribution:
+                item.percentage = (item.count / total * 100.0) if total > 0 else 0.0
+
+            distribution.sort(key=lambda d: (-d.count, d.category_name))
             return distribution
+
+    def get_category_options(self) -> List[str]:
+        """
+        Categories the Analytics filter can offer, in canonical spelling.
+
+        The taxonomy alone would list categories that have no comments and hide
+        categories that only ever existed on comments (written before they were
+        seeded), so the list is the taxonomy UNION the distinct normalised names
+        actually stored on comments.
+        """
+        with self._db.get_session() as session:
+            palette = _category_palette(session)
+            names = {canonical for canonical, _ in palette.values()}
+            for (raw_name,) in session.query(_category_clean()).distinct().all():
+                names.add(_resolve_category(raw_name, palette)[0])
+            return sorted(n for n in names if n)
 
     def get_confidence_distribution(
         self,
@@ -566,7 +598,7 @@ class AnalyticsService:
             tail_count = sum(d.count for d in tail)
             other_color = next(
                 (d.color_hex for d in tail
-                 if (d.category_name or '').strip().lower() == 'uncategorized'),
+                 if (d.category_name or '').strip().lower() == UNCATEGORIZED.lower()),
                 NEUTRAL_COLOR,
             )
             distribution = head + [CategoryDistributionDTO(
