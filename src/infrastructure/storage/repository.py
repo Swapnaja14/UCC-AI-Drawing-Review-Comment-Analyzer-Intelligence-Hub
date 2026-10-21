@@ -9,6 +9,7 @@ No seed / mock data is inserted anywhere in this module.
 
 from __future__ import annotations
 
+import os
 import re
 import uuid
 from datetime import datetime, timezone
@@ -64,43 +65,84 @@ _DEFAULT_DB_PATH: Path = _PROJECT_ROOT / "data" / "ucc_database.db"
 
 class DatabaseEngine:
     """
-    Manages the SQLite engine and SQLAlchemy session factory.
+    Manages the database engine (SQLite or PostgreSQL) and SQLAlchemy session factory.
 
     Parameters
     ----------
     db_path:
         Absolute or relative path to the SQLite file.
-        Defaults to  <project_root>/data/ucc_database.db.
+        Defaults to <project_root>/data/ucc_database.db.
+    url:
+        Full database URL (e.g. postgresql+psycopg://user:pass@host:5432/dbname).
+        Overridden by UCC_DATABASE_URL environment variable if set.
+    backend:
+        "sqlite" | "postgresql" (default: "sqlite"). Inferred from URL if not given.
     echo:
         Pass ``True`` to log all generated SQL (useful for debugging).
+    pool_size:
+        Connection pool size for PostgreSQL (default: 5).
+    max_overflow:
+        Max pool overflow connections for PostgreSQL (default: 10).
     """
 
     def __init__(
         self,
         db_path: Optional[Path] = None,
+        url: Optional[str] = None,
+        backend: Optional[str] = None,
         echo: bool = False,
+        pool_size: int = 5,
+        max_overflow: int = 10,
     ) -> None:
-        self.db_path: Path = Path(db_path).resolve() if db_path else _DEFAULT_DB_PATH
+        env_url = os.environ.get("UCC_DATABASE_URL") or os.environ.get("DATABASE_URL")
+        env_backend = os.environ.get("UCC_DATABASE_BACKEND")
+        raw_url = url or env_url
 
-        # Create the data directory if it does not exist
-        self.db_path.parent.mkdir(parents=True, exist_ok=True)
+        if raw_url:
+            if raw_url.startswith("postgresql") or raw_url.startswith("postgres"):
+                self.backend = "postgresql"
+                if raw_url.startswith("postgresql://") or raw_url.startswith("postgres://"):
+                    self.url = re.sub(r"^postgres(ql)?://", "postgresql+psycopg://", raw_url)
+                else:
+                    self.url = raw_url
+            else:
+                self.backend = "sqlite"
+                self.url = raw_url
+            self.db_path = None
+        else:
+            self.backend = (backend or env_backend or "sqlite").lower()
+            if self.backend == "postgresql":
+                raise ValueError("PostgreSQL backend selected but no database URL provided (set UCC_DATABASE_URL or pass url=...)")
+            self.db_path: Path = Path(db_path).resolve() if db_path else _DEFAULT_DB_PATH
+            self.db_path.parent.mkdir(parents=True, exist_ok=True)
+            self.url = f"sqlite:///{self.db_path.as_posix()}"
 
-        self.engine = create_engine(
-            f"sqlite:///{self.db_path}",
-            echo=echo,
-            connect_args={"check_same_thread": False},
-        )
-
-        # Enable WAL mode, high-performance caching, and foreign-key enforcement
-        @event.listens_for(self.engine, "connect")
-        def _set_sqlite_pragmas(dbapi_conn, _connection_record):
-            cursor = dbapi_conn.cursor()
-            cursor.execute("PRAGMA journal_mode=WAL;")
-            cursor.execute("PRAGMA synchronous=NORMAL;")
-            cursor.execute("PRAGMA cache_size=-64000;")  # 64MB RAM cache
-            cursor.execute("PRAGMA temp_store=MEMORY;")
-            cursor.execute("PRAGMA foreign_keys=ON;")
-            cursor.close()
+        if self.backend == "sqlite":
+            self.engine = create_engine(
+                self.url,
+                echo=echo,
+                connect_args={"check_same_thread": False},
+            )
+            # Enable WAL mode, high-performance caching, and foreign-key enforcement ONLY on SQLite
+            @event.listens_for(self.engine, "connect")
+            def _set_sqlite_pragmas(dbapi_conn, _connection_record):
+                cursor = dbapi_conn.cursor()
+                cursor.execute("PRAGMA journal_mode=WAL;")
+                cursor.execute("PRAGMA synchronous=NORMAL;")
+                cursor.execute("PRAGMA cache_size=-64000;")  # 64MB RAM cache
+                cursor.execute("PRAGMA temp_store=MEMORY;")
+                cursor.execute("PRAGMA foreign_keys=ON;")
+                cursor.close()
+        else:
+            # PostgreSQL: pooled engine
+            self.engine = create_engine(
+                self.url,
+                echo=echo,
+                pool_size=pool_size,
+                max_overflow=max_overflow,
+                pool_pre_ping=True,
+                pool_recycle=1800,
+            )
 
         self.SessionLocal: sessionmaker[Session] = sessionmaker(
             bind=self.engine,
@@ -126,13 +168,15 @@ class DatabaseEngine:
     def _init_db(self) -> None:
         """Create all tables declared in models.py (idempotent) and apply migrations."""
         Base.metadata.create_all(bind=self.engine)
-        self._run_migrations()
+        if self.backend == "sqlite":
+            self._run_migrations()
         # Seed official UCC departments automatically if empty
         dept_repo = EngineeringDepartmentRepository(self)
         dept_repo.seed_default_departments()
         cat_repo = CategoryRepository(self)
         cat_repo.seed_default_categories()
-        logger.info(f"SQLite database ready at: {self.db_path}")
+        desc = self.url if self.backend == "postgresql" else str(self.db_path)
+        logger.info(f"{self.backend.capitalize()} database ready at: {desc}")
 
     def _run_migrations(self) -> None:
         """Ensure newly added columns exist in existing SQLite databases and indexes are present."""

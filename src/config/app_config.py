@@ -21,12 +21,39 @@ DEFAULT_CONFIG_PATH = PROJECT_ROOT / "config" / "config.yaml"
 
 @dataclass
 class DatabaseConfig:
-    """Configuration for SQLite storage engine and SQLAlchemy ORM."""
+    """Configuration for SQLite / PostgreSQL storage engine and SQLAlchemy ORM."""
+    backend: str = "sqlite"  # "sqlite" | "postgresql"
+    url: Optional[str] = None
     db_path: str = "data/ucc_database.db"
     wal_mode: bool = True
     echo_sql: bool = False
     timeout_seconds: float = 30.0
     pool_size: int = 5
+    max_overflow: int = 10
+    pool_recycle: int = 1800
+    pool_pre_ping: bool = True
+
+    def get_url(self) -> str:
+        """Return the effective database connection URL, prioritizing environment overrides."""
+        env_url = os.environ.get("UCC_DATABASE_URL") or os.environ.get("DATABASE_URL")
+        if env_url:
+            return env_url
+        if (self.backend or "").lower() == "postgresql" and self.url:
+            return self.url
+        resolved = self.get_resolved_db_path()
+        return f"sqlite:///{resolved.as_posix()}"
+
+    def get_backend(self) -> str:
+        """Return effective backend ('sqlite' or 'postgresql')."""
+        env_backend = os.environ.get("UCC_DATABASE_BACKEND")
+        if env_backend:
+            return env_backend.lower()
+        env_url = os.environ.get("UCC_DATABASE_URL") or os.environ.get("DATABASE_URL")
+        if env_url:
+            if env_url.startswith("postgresql") or env_url.startswith("postgres"):
+                return "postgresql"
+            return "sqlite"
+        return (self.backend or "sqlite").lower()
 
     def get_resolved_db_path(self, root: Optional[Path] = None) -> Path:
         base = root or PROJECT_ROOT
