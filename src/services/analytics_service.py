@@ -18,6 +18,18 @@ logger = get_logger(__name__)
 #: Statuses that mean a human took a decision on the comment.
 REVIEWED_STATUSES = ("APPROVED", "REJECTED", "FLAGGED")
 
+#: Buckets always drawn last in a Pareto chart: they are leftovers rather than
+#: findings, so putting them first would make the cumulative line meaningless.
+PARETO_TAIL_BUCKETS = ("uncategorized", "other")
+
+#: Label for the bucket that absorbs everything below ``top_n`` when a Pareto is
+#: asked to group its tail.
+OTHER_BUCKET = "Other"
+
+#: Neutral colour for a grouped tail when there is no Uncategorized bucket to
+#: inherit one from.
+NEUTRAL_COLOR = '#9CA3AF'
+
 CATEGORY_COLORS = {
     'Technical': '#EF4444',
     'Drafting': '#8B5CF6',
@@ -70,6 +82,12 @@ def _status_clean():
 def _category_clean(column=None):
     """NULL, '' and whitespace-only categories collapse to a single 'Uncategorized'."""
     return func.coalesce(func.nullif(func.trim(column if column is not None else CommentModel.category_name), ''), 'Uncategorized')
+
+
+def _pareto_sort_key(item) -> tuple:
+    """Count descending, then name ascending, with leftover buckets pushed last."""
+    name = (item.category_name or '').strip()
+    return (1 if name.lower() in PARETO_TAIL_BUCKETS else 0, -item.count, name)
 
 def _apply_comment_filters(
     query,
@@ -516,7 +534,20 @@ class AnalyticsService:
         top_n: int = 20,
         include_rejected: bool = True,
         drawing_ids: Optional[List[str]] = None,
+        group_tail: bool = False,
     ) -> List[CategoryDistributionDTO]:
+        """
+        Pareto view of the category distribution.
+
+        ``cumulative_percentage`` is always measured against the FULL population,
+        never against the ``top_n`` slice that is returned, so the cumulative line
+        reaches 100% only when every category is on screen. Ordering is stable —
+        count descending, then name ascending — with Uncategorized and a grouped
+        Other drawn last.
+
+        ``group_tail=True`` folds every category below ``top_n`` into one "Other"
+        bucket so the returned counts still add up to the population total.
+        """
         distribution = self.get_category_distribution(
             project_id=project_id,
             drawing_id=drawing_id,
@@ -527,7 +558,33 @@ class AnalyticsService:
             include_rejected=include_rejected,
             drawing_ids=drawing_ids,
         )
-        return distribution[:top_n]
+        total = sum(d.count for d in distribution)
+        distribution = sorted(distribution, key=_pareto_sort_key)
+
+        if group_tail and top_n >= 0 and len(distribution) > top_n:
+            head, tail = distribution[:top_n], distribution[top_n:]
+            tail_count = sum(d.count for d in tail)
+            other_color = next(
+                (d.color_hex for d in tail
+                 if (d.category_name or '').strip().lower() == 'uncategorized'),
+                NEUTRAL_COLOR,
+            )
+            distribution = head + [CategoryDistributionDTO(
+                category_name=OTHER_BUCKET,
+                count=tail_count,
+                percentage=(tail_count / total * 100.0) if total > 0 else 0.0,
+                color_hex=other_color,
+            )]
+        elif top_n >= 0:
+            distribution = distribution[:top_n]
+
+        running = 0
+        for item in distribution:
+            running += item.count
+            item.cumulative_count = running
+            item.cumulative_percentage = (running / total * 100.0) if total > 0 else None
+
+        return distribution
 
     def get_reviewer_metrics(self) -> List[ReviewerMetricsDTO]:
         with self._db.get_session() as session:

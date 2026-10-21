@@ -1496,6 +1496,7 @@ class AppController(QObject):
         top_n: int = 20,
         include_rejected: bool = True,
         drawing_ids: Optional[List[str]] = None,
+        group_tail: bool = False,
     ):
         """Proxy to analytics_service.get_pareto_analysis with full filtering."""
         eff_dept = self.current_department_name if self.current_department_name else department_name
@@ -1509,6 +1510,7 @@ class AppController(QObject):
             top_n=top_n,
             include_rejected=include_rejected,
             drawing_ids=drawing_ids,
+            group_tail=group_tail,
         )
 
     def get_status_trend(

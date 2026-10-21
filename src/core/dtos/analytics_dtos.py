@@ -63,6 +63,10 @@ class CategoryDistributionDTO:
     count: int
     percentage: float
     color_hex: str = '#6366F1'
+    #: Set by get_pareto_analysis only — running totals over the displayed bars,
+    #: measured against the full population rather than the visible top_n slice.
+    cumulative_count: Optional[int] = None
+    cumulative_percentage: Optional[float] = None
 
 @dataclass
 class ConfidenceBucketDTO:

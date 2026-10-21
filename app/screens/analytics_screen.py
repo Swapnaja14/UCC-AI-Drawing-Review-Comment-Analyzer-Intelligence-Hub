@@ -617,7 +617,13 @@ class AnalyticsPage(QWidget):
             pareto_title = "Pareto — Comments by Category"
             pie_title = "Category Distribution"
 
-        pareto_view  = build_pareto_chart(pareto_data, title=pareto_title)
+        pareto_view  = build_pareto_chart(
+            pareto_data,
+            title=pareto_title,
+            # The Pareto may be a top-N slice; the cumulative line must still be
+            # measured against the whole population the slice came from.
+            total=sum(getattr(d, "count", 0) for d in (category_data or [])) or None,
+        )
         timeline_view = build_monthly_chart(trend_data, title="Comment Timeline (by Creation Date)")
         pie_view     = build_category_pie(category_data, title=pie_title)
 

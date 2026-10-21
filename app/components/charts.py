@@ -108,13 +108,15 @@ def _chart_view(chart: "QChart") -> "QChartView":
 
 
 def _axis_style(axis, color: Optional[str] = None) -> None:
-    """Apply consistent axis label and grid-line styling adhering to theme."""
+    """Apply consistent axis label, title and grid-line styling adhering to theme."""
     dark = _is_dark_theme()
     lbl_color = color or ("#A6A9B1" if dark else "#5B5F6A")
     grid_color = "#3A3C42" if dark else "#E2E4E8"
     axis.setLabelsColor(QColor(lbl_color))
     axis.setGridLineColor(QColor(grid_color))
     axis.setLabelsFont(QFont("Segoe UI", 10))
+    axis.setTitleBrush(QColor(lbl_color))
+    axis.setTitleFont(QFont("Segoe UI", 10, QFont.Weight.DemiBold))
 
 
 def _make_integer_value_axis(max_val: int) -> "QValueAxis":
@@ -159,18 +161,27 @@ def no_chart_label(text: str) -> QFrame:
 def build_pareto_chart(
     data: Optional[Union[List[Any], Dict[str, Any]]] = None,
     title: str = "Pareto — Comments by Category",
+    total: Optional[int] = None,
+    reference_line: Optional[float] = 80.0,
 ) -> "QChartView | QFrame":
     """
-    Build a Pareto chart: bar series for category counts with a
-    cumulative-percentage line overlay.
+    Build a Pareto chart: bars for category counts plus a cumulative-% line.
 
     Parameters
     ----------
     data:
         Either a list of CategoryDistributionDTO objects, a list of dicts,
-        or a dict containing 'categories', 'counts', and optional 'cumulative' keys.
+        or a dict containing 'categories', 'counts' and optional 'cumulative'.
     title:
         Custom title for the Pareto chart.
+    total:
+        Size of the FULL population the bars were drawn from. Required when
+        ``data`` is a truncated top-N slice, otherwise the cumulative line would
+        be measured against the visible bars only and reach 100% too early.
+        Items that already carry ``cumulative_percentage`` take precedence.
+    reference_line:
+        Percentage at which to draw a dashed reference line on the right-hand
+        axis, or None to leave it out.
 
     Returns
     -------
@@ -181,11 +192,10 @@ def build_pareto_chart(
         return no_chart_label(title)
 
     chart = _styled_chart(title)
-    chart.legend().hide()
 
     cats: List[str] = []
     counts: List[int] = []
-    cumuls: List[float] = []
+    provided: List[Optional[float]] = []
 
     if isinstance(data, list) and data:
         for item in data:
@@ -198,42 +208,37 @@ def build_pareto_chart(
                 if hasattr(item, "count")
                 else (item.get("count", 0) if isinstance(item, dict) else 0)
             )
+            c_cum = getattr(item, "cumulative_percentage", None)
+            if c_cum is None and isinstance(item, dict):
+                c_cum = item.get("cumulative_percentage")
             cats.append(str(c_name))
             counts.append(int(c_count))
-
-        total = sum(counts)
-        running = 0.0
-        for c in counts:
-            running += c
-            cumuls.append((running / total * 100.0) if total > 0 else 0.0)
+            provided.append(float(c_cum) if c_cum is not None else None)
 
     elif isinstance(data, dict) and data:
         if "categories" in data and "counts" in data:
             cats = [str(c) for c in data["categories"]]
             counts = [int(v) for v in data["counts"]]
-            cumuls = [float(v) for v in data.get("cumulative", [])]
-            if not cumuls and sum(counts) > 0:
-                total = sum(counts)
-                running = 0.0
-                for c in counts:
-                    running += c
-                    cumuls.append(running / total * 100.0)
+            provided = [float(v) for v in data.get("cumulative", [])]
         else:
             for k, v in data.items():
                 cats.append(str(k))
                 counts.append(int(v))
-            total = sum(counts)
-            running = 0.0
-            for c in counts:
-                running += c
-                cumuls.append((running / total * 100.0) if total > 0 else 0.0)
 
     if not cats or not counts or sum(counts) == 0:
-        cats = ["No Data"]
-        counts = [0]
-        cumuls = [0.0]
+        cats, counts, provided = ["No Data"], [0], [None]
 
-    bar_set = QBarSet("Count")
+    if total is None:
+        total = sum(counts)
+    if len(provided) != len(cats) or any(p is None for p in provided):
+        running = 0.0
+        provided = []
+        for c in counts:
+            running += c
+            provided.append((running / total * 100.0) if total > 0 else 0.0)
+    cumuls = [float(p) for p in provided]
+
+    bar_set = QBarSet("Comments")
     bar_set.setColor(QColor("#3E9BFF"))
     bar_set.setBorderColor(QColor("#60A5FA"))
     for v in counts:
@@ -245,6 +250,16 @@ def build_pareto_chart(
 
     max_count = max(counts) if max(counts) > 0 else 10
     ax_val = _make_integer_value_axis(max_count)
+    ax_val.setTitleText("Comments")
+
+    # The cumulative line is a percentage, so it gets its own 0–100 axis on the
+    # right instead of being rescaled onto the count axis.
+    ax_pct = QValueAxis()
+    ax_pct.setRange(0, 100)
+    ax_pct.setTickCount(6)
+    ax_pct.setLabelFormat("%d%%")
+    ax_pct.setTitleText("Cumulative %")
+    _axis_style(ax_pct)
 
     line_series = QLineSeries()
     line_series.setName("Cumulative %")
@@ -254,11 +269,12 @@ def build_pareto_chart(
     pen.setWidth(2)
     line_series.setPen(pen)
     for i, pct in enumerate(cumuls):
-        line_series.append(i, pct * ax_val.max() / 100.0)
+        line_series.append(i, pct)
     chart.addSeries(line_series)
 
     ax_cat = QBarCategoryAxis()
     ax_cat.append(cats)
+    ax_cat.setTitleText("Category")
     _axis_style(ax_cat)
     if any(len(c) > 10 for c in cats) or len(cats) > 5:
         ax_cat.setLabelsAngle(-25)
@@ -267,8 +283,27 @@ def build_pareto_chart(
 
     chart.addAxis(ax_val, Qt.AlignmentFlag.AlignLeft)
     bar_series.attachAxis(ax_val)
+
+    chart.addAxis(ax_pct, Qt.AlignmentFlag.AlignRight)
     line_series.attachAxis(ax_cat)
-    line_series.attachAxis(ax_val)
+    line_series.attachAxis(ax_pct)
+
+    if reference_line is not None:
+        ref_series = QLineSeries()
+        ref_series.setName(f"{reference_line:.0f}% reference")
+        ref_pen = ref_series.pen()
+        ref_pen.setStyle(Qt.PenStyle.DashLine)
+        ref_pen.setWidth(1)
+        ref_pen.setColor(QColor("#A6A9B1"))
+        ref_series.setPen(ref_pen)
+        ref_series.append(0, float(reference_line))
+        ref_series.append(max(len(cats) - 1, 0), float(reference_line))
+        chart.addSeries(ref_series)
+        ref_series.attachAxis(ax_cat)
+        ref_series.attachAxis(ax_pct)
+
+    chart.legend().setVisible(True)
+    chart.legend().setAlignment(Qt.AlignmentFlag.AlignBottom)
 
     return _chart_view(chart)
 
