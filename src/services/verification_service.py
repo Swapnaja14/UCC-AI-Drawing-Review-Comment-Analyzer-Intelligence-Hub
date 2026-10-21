@@ -1,12 +1,6 @@
-from datetime import datetime
+from datetime import datetime, timezone
 from typing import List, Optional
 
-from src.core.dtos.audit_dtos import (
-    AuditAction,
-    AuditLogEntryDTO,
-    VerificationSummaryDTO,
-    BulkActionResultDTO
-)
 from src.core.dtos.audit_dtos import (
     AuditAction,
     AuditLogEntryDTO,
@@ -29,7 +23,7 @@ class VerificationService:
         self._audit_log: List[AuditLogEntryDTO] = []
 
     def _log_audit(self, comment_id: str, action: str, reviewer_id: str, old_value: str, new_value: str, notes: str = '') -> None:
-        now_dt = datetime.now()
+        now_dt = datetime.now(timezone.utc)
         entry = AuditLogEntryDTO(
             comment_id=comment_id,
             action=action,
@@ -49,12 +43,8 @@ class VerificationService:
                     latest = existing[0]
                     if latest.get("action") == action and latest.get("new_value") == new_value:
                         already_persisted = True
-                        if notes and hasattr(self.audit_repo, "_db"):
-                            with self.audit_repo._db.get_session() as session:
-                                row = session.get(AuditLogModel, latest["id"])
-                                if row:
-                                    row.notes = notes
-                                    session.commit()
+                        if notes:
+                            self.audit_repo.update_audit_notes(latest["id"], notes)
 
                 if not already_persisted:
                     self.audit_repo.create_audit_entry(
@@ -78,7 +68,9 @@ class VerificationService:
                     old_status = c_data.get('status', 'Pending')
         except Exception:
             pass
-        success = self.comment_repo.update_comment_status(comment_id, 'Approved', True)
+        success = self.comment_repo.update_comment_status(
+            comment_id, 'Approved', True, changed_by_user_id=reviewer_id
+        )
         if success:
             audit_note = notes or ('Confirmed by reviewer' if old_status == 'Approved' else '')
             self._log_audit(comment_id, AuditAction.APPROVE, reviewer_id, old_status, 'Approved', audit_note)
@@ -93,7 +85,9 @@ class VerificationService:
                     old_status = c_data.get('status', 'Pending')
         except Exception:
             pass
-        success = self.comment_repo.update_comment_status(comment_id, 'Rejected', True)
+        success = self.comment_repo.update_comment_status(
+            comment_id, 'Rejected', True, changed_by_user_id=reviewer_id
+        )
         if success:
             audit_note = notes or ('Overridden by reviewer' if old_status == 'Approved' else '')
             self._log_audit(comment_id, AuditAction.REJECT, reviewer_id, old_status, 'Rejected', audit_note)
@@ -108,7 +102,9 @@ class VerificationService:
                     old_status = c_data.get('status', 'Pending')
         except Exception:
             pass
-        success = self.comment_repo.update_comment_status(comment_id, 'Flagged', True)
+        success = self.comment_repo.update_comment_status(
+            comment_id, 'Flagged', True, changed_by_user_id=reviewer_id
+        )
         if success:
             audit_note = notes or ('Flagged for follow-up' if old_status == 'Approved' else '')
             self._log_audit(comment_id, AuditAction.FLAG, reviewer_id, old_status, 'Flagged', audit_note)

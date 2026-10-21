@@ -1141,11 +1141,13 @@ class CommentRepository:
                 elif status == "Flagged":
                     act = "flag"
 
+                actor_id, actor_name = _resolve_audit_actor(session, changed_by_user_id)
                 audit_entry = AuditLogModel(
                     id=f"AUD-{uuid.uuid4().hex[:8].upper()}",
                     comment_id=comment_id,
                     action=act,
-                    reviewer_name=changed_by_user_id or "reviewer",
+                    user_id=actor_id,
+                    reviewer_name=actor_name,
                     old_value=old_status,
                     new_value=status,
                     notes=f"Status updated from '{old_status}' to '{status}'",
@@ -1530,6 +1532,21 @@ class AuditLogRepository:
             )
             return [_audit_log_to_dict(r) for r in rows]
 
+    def update_audit_notes(self, audit_log_id: str, notes: str) -> bool:
+        """
+        Attach reviewer notes to an audit row that was already written by the
+        repository layer (e.g. by update_comment_status), which cannot know the
+        free-text note the caller wanted to record.
+        """
+        with self._db.get_session() as session:
+            row = session.get(AuditLogModel, audit_log_id)
+            if row is None:
+                logger.warning(f"update_audit_notes: audit entry '{audit_log_id}' not found.")
+                return False
+            row.notes = notes or ""
+            session.commit()
+            return True
+
 
 # ---------------------------------------------------------------------------
 # ExportHistoryRepository
@@ -1879,3 +1896,20 @@ def _audit_log_to_dict(a: AuditLogModel) -> Dict[str, Any]:
             if a.timestamp else ""
         ),
     }
+
+
+def _resolve_audit_actor(session: Session, changed_by_user_id: Optional[str]) -> tuple[Optional[str], str]:
+    """
+    Map an acting-user identifier onto (users.id, display name) for an audit row.
+
+    Returns (None, <identifier>) when the identifier is not a known user, so an
+    unattributable action still records who claimed it instead of collapsing to
+    the generic "reviewer" placeholder.
+    """
+    raw = (changed_by_user_id or "").strip()
+    if not raw or raw == "system":
+        return None, raw or "reviewer"
+    user = session.get(UserModel, raw)
+    if user is not None:
+        return user.id, user.display_name or user.username or raw
+    return None, raw

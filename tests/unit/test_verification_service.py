@@ -26,11 +26,12 @@ class MockCommentRepository(CommentRepository):
     def get_comments_for_drawing(self, drawing_id):
         return [c for c in self.comments if c['drawing_id'] == drawing_id]
 
-    def update_comment_status(self, comment_id, status, verified_by_human):
+    def update_comment_status(self, comment_id, status, verified_by_human, changed_by_user_id=None):
         for c in self.comments:
             if c['id'] == comment_id:
                 c['status'] = status
                 c['verified_by_human'] = verified_by_human
+                c['changed_by'] = changed_by_user_id
                 return True
         return False
 
