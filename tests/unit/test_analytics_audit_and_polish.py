@@ -19,7 +19,7 @@ from src.infrastructure.storage.models import (
     ProjectModel, DrawingModel, PageModel, CommentModel, UserModel, EngineeringDepartmentModel
 )
 from src.services.analytics_service import AnalyticsService
-from app.components.charts import _is_dark_theme, _styled_chart, build_pareto_chart, build_monthly_chart, build_category_pie
+from app.components.charts import _styled_chart, build_pareto_chart, build_monthly_chart, build_category_pie
 
 
 @pytest.fixture

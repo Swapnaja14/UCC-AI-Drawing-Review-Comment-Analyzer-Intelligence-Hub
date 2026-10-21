@@ -111,7 +111,7 @@ class MainWindow(QMainWindow):
         self.ocr_results_page = OcrResultsPage(controller=self.controller)
         self.classification_page = ClassificationPage(controller=self.controller)
         self.human_review_page = HumanReviewPage(controller=self.controller)
-        self.analytics_page = AnalyticsPage(controller=self.controller)
+        self.analytics_page = AnalyticsPage(controller=self.controller, theme_manager=self._theme)
         self.export_page = ExportPage(controller=self.controller)
         self.settings_page = SettingsPage(theme_manager=self._theme, controller=self.controller)
 

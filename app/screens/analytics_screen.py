@@ -11,7 +11,7 @@ from typing import Any, Dict, List, Optional
 from PySide6.QtWidgets import (QWidget, QVBoxLayout, QHBoxLayout, QFrame,
                                 QLabel, QPushButton, QComboBox,
                                 QDateEdit, QGridLayout, QSizePolicy, QCheckBox)
-from PySide6.QtCore import Qt, QDate, QTimer
+from PySide6.QtCore import Qt, QDate, QTimer, QThread
 from PySide6.QtGui import QFont
 
 from app.components.kpi_card import KpiCard
@@ -83,9 +83,13 @@ class AnalyticsPage(QWidget):
     connected to AppController backend.
     """
 
-    def __init__(self, controller=None, parent=None):
+    def __init__(self, controller=None, theme_manager=None, parent=None):
         super().__init__(parent)
         self._controller = controller
+        from app.theme import ThemeManager
+        self._theme_manager = theme_manager or (ThemeManager.instance() if hasattr(ThemeManager, "instance") else None)
+        if self._theme_manager and hasattr(self._theme_manager, "theme_changed"):
+            self._theme_manager.theme_changed.connect(self._on_theme_changed)
         self._kpi_cards: List[KpiCard] = []
 
         root = QVBoxLayout(self)
@@ -689,6 +693,7 @@ class AnalyticsPage(QWidget):
             pareto_title = f"Pareto — Comments by Category{rej_suffix}"
             pie_title = f"Category Distribution{rej_suffix}"
 
+        colors = self._theme_manager.colors if self._theme_manager else None
         pareto_view  = build_pareto_chart(
             pareto_data,
             title=pareto_title,
@@ -696,9 +701,10 @@ class AnalyticsPage(QWidget):
             # measured against the whole population the slice came from.
             total=sum(getattr(d, "count", 0) for d in (category_data or [])) or None,
             highlight_name=cat_name if cat_name else None,
+            theme_colors=colors,
         )
-        timeline_view = build_monthly_chart(trend_data, title="Comments extracted over time")
-        pie_view     = build_category_pie(category_data, title=pie_title, highlight_name=cat_name if cat_name else None)
+        timeline_view = build_monthly_chart(trend_data, title="Comments extracted over time", theme_colors=colors)
+        pie_view     = build_category_pie(category_data, title=pie_title, highlight_name=cat_name if cat_name else None, theme_colors=colors)
 
         def _wrap(view, min_h: int = 280) -> QFrame:
             f = QFrame()
@@ -757,10 +763,14 @@ class AnalyticsPage(QWidget):
         """Debounce reload of KPIs and charts on filter changes (~150 ms)."""
         if not self._validate_date_range():
             return
-        if hasattr(self, "_debounce_timer"):
+        if hasattr(self, "_debounce_timer") and QThread.currentThread().loopLevel() > 0:
             self._debounce_timer.start(150)
         else:
             self._do_reload()
+
+    def _on_theme_changed(self, theme_name: str) -> None:
+        """Rebuild charts with updated theme palette when the active theme toggles."""
+        self.reload_data()
 
     def reload_data(self) -> None:
         """Immediate reload of live metrics, charts, and filter options (cancels pending debounce)."""

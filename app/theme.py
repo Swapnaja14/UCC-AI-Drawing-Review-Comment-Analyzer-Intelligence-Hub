@@ -476,10 +476,17 @@ QLabel#KpiValue {{
 class ThemeManager(QObject):
     theme_changed = Signal(str)
 
+    _instance = None
+
     def __init__(self, app: QApplication):
         super().__init__()
         self._app = app
         self._current = "dark"
+        ThemeManager._instance = self
+
+    @classmethod
+    def instance(cls):
+        return cls._instance
 
     @property
     def current(self) -> str:
