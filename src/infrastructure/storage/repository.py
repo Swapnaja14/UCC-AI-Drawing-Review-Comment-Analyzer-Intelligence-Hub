@@ -32,6 +32,7 @@ from src.infrastructure.storage.models import (
     AuditLogModel,
     ExportLogModel,
     ProcessingRunModel,
+    VALID_COMMENT_STATUSES,
 )
 
 logger = get_logger("DatabaseRepository")
@@ -1108,13 +1109,17 @@ class CommentRepository:
     ) -> bool:
         """
         Update the status of a single comment and record an audit log entry.
+
+        Returns False without writing anything when ``status`` is outside
+        ``VALID_COMMENT_STATUSES``; an unknown status would otherwise poison
+        every downstream aggregate that groups by status.
         """
-        _VALID_STATUSES = {"Pending", "Approved", "Rejected", "Flagged"}
-        if status not in _VALID_STATUSES:
-            logger.warning(
-                f"update_comment_status: '{status}' is not a recognised status. "
-                f"Expected one of {_VALID_STATUSES}."
+        if status not in VALID_COMMENT_STATUSES:
+            logger.error(
+                f"update_comment_status: rejected '{status}' for comment '{comment_id}'. "
+                f"Expected one of {sorted(VALID_COMMENT_STATUSES)}."
             )
+            return False
 
         with self._db.get_session() as session:
             row = session.get(CommentModel, comment_id)

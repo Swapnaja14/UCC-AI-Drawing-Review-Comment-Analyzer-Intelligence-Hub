@@ -28,6 +28,20 @@ class Base(DeclarativeBase):
 
 
 # ---------------------------------------------------------------------------
+# Shared vocabularies
+# ---------------------------------------------------------------------------
+
+#: The only values ``comments.status`` may hold. Writes outside this set are
+#: rejected by CommentRepository.update_comment_status so that every aggregate
+#: grouping by status stays exhaustive.
+VALID_COMMENT_STATUSES = frozenset({"Pending", "Approved", "Rejected", "Flagged"})
+
+#: Value written to ``comments.ocr_engine`` when text extraction failed, used
+#: to separate OCR-failure flags from manual reviewer flags.
+OCR_FAILED_ENGINE = "OCR Failed"
+
+
+# ---------------------------------------------------------------------------
 # users
 # ---------------------------------------------------------------------------
 
