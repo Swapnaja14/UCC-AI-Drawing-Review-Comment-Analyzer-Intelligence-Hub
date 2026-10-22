@@ -307,8 +307,18 @@ class AppController(QObject):
         if db_engine is not None:
             self.db_engine = db_engine
         else:
+            db_backend = self.config.database.get_backend()
+            db_url = self.config.database.get_url()
             db_path = self.config.database.get_resolved_db_path()
-            self.db_engine = DatabaseEngine(db_path=db_path)
+            if db_backend == "postgresql":
+                self.db_engine = DatabaseEngine(
+                    url=db_url,
+                    backend="postgresql",
+                    pool_size=getattr(self.config.database, "pool_size", 5),
+                    max_overflow=getattr(self.config.database, "max_overflow", 10),
+                )
+            else:
+                self.db_engine = DatabaseEngine(db_path=db_path, backend="sqlite")
         self.drawing_repo    = DrawingRepository(self.db_engine)
         self.project_repo    = ProjectRepository(self.db_engine)
         self.comment_repo    = CommentRepository(self.db_engine)
