@@ -1,8 +1,8 @@
 # PostgreSQL Migration Verification & Reconciliation Report
 
-**Generated:** 2026-10-21 14:07:50 UTC
+**Generated:** 2026-10-22 16:35:35 UTC
 **Source Engine:** `sqlite` (sqlite:///D:/Collage/SEMESTER V/industry/UCC-AI-Drawing-Review-Comment-Analyzer-Intelligence-Hub/data/ucc_database_working_copy.db)
-**Target Engine:** `sqlite` (sqlite:///D:/Collage/SEMESTER V/industry/UCC-AI-Drawing-Review-Comment-Analyzer-Intelligence-Hub/data/ucc_database_working_copy.db)
+**Target Engine:** `postgresql` (postgresql+psycopg://postgres:Varad%40210@localhost:5432/ucc_database)
 
 ## 1. Table Row Count Reconciliation
 
