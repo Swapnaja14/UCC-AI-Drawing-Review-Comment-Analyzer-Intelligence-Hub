@@ -1413,8 +1413,8 @@ class AnalyticsService:
                     func.lower(AuditLogModel.action).in_(human_actions),
                     func.coalesce(AuditLogModel.reviewer_name, "") != "AI Auto-Approval",
                 ).group_by(
-                    func.coalesce(AuditLogModel.user_id, "anonymous"),
-                    func.coalesce(AuditLogModel.reviewer_name, "Anonymous Reviewer"),
+                    AuditLogModel.user_id,
+                    AuditLogModel.reviewer_name,
                 )
 
                 rows = query.all()
