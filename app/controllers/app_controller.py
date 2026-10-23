@@ -307,10 +307,13 @@ class AppController(QObject):
         if db_engine is not None:
             self.db_engine = db_engine
         else:
-            db_backend = self.config.database.get_backend()
-            db_url = self.config.database.get_url()
-            db_path = self.config.database.get_resolved_db_path()
-            if db_backend == "postgresql":
+            get_backend_fn = getattr(self.config.database, "get_backend", None)
+            db_backend = get_backend_fn() if callable(get_backend_fn) else getattr(self.config.database, "backend", "sqlite")
+            get_url_fn = getattr(self.config.database, "get_url", None)
+            db_url = get_url_fn() if callable(get_url_fn) else getattr(self.config.database, "url", None)
+            get_path_fn = getattr(self.config.database, "get_resolved_db_path", None)
+            db_path = get_path_fn() if callable(get_path_fn) else None
+            if db_backend == "postgresql" and db_url:
                 self.db_engine = DatabaseEngine(
                     url=db_url,
                     backend="postgresql",

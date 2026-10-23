@@ -495,7 +495,7 @@ class UploadPage(QWidget):
     # ── Department Selection Getters ────────────────────────────────────────
 
     def get_single_department_id(self) -> str | None:
-        if self._controller and self._controller.is_department_scoped():
+        if self._controller and getattr(self._controller, "current_department_id", None):
             return self._controller.current_department_id
         idx = self._single_dept_combo.currentIndex()
         if idx <= 0:
@@ -504,7 +504,7 @@ class UploadPage(QWidget):
         return val if val and str(val).strip().lower() != "unassigned" else None
 
     def get_single_department_name(self) -> str | None:
-        if self._controller and self._controller.is_department_scoped():
+        if self._controller and getattr(self._controller, "current_department_id", None):
             return self._controller.current_department_name
         idx = self._single_dept_combo.currentIndex()
         if idx <= 0:
@@ -513,7 +513,7 @@ class UploadPage(QWidget):
         return name if name and str(name).strip().lower() != "unassigned" else None
 
     def get_batch_department_id(self) -> str | None:
-        if self._controller and self._controller.is_department_scoped():
+        if self._controller and getattr(self._controller, "current_department_id", None):
             return self._controller.current_department_id
         idx = self._batch_dept_combo.currentIndex()
         if idx <= 0:
@@ -522,7 +522,7 @@ class UploadPage(QWidget):
         return val if val and str(val).strip().lower() != "unassigned" else None
 
     def get_batch_department_name(self) -> str | None:
-        if self._controller and self._controller.is_department_scoped():
+        if self._controller and getattr(self._controller, "current_department_id", None):
             return self._controller.current_department_name
         idx = self._batch_dept_combo.currentIndex()
         if idx <= 0:

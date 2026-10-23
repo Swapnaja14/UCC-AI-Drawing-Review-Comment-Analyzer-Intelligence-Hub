@@ -2,8 +2,8 @@ app_name: UCC AI Drawing Review Comment Analyzer
 version: 1.0.0
 environment: development
 database:
-  backend: sqlite
-  url: null
+  backend: postgresql
+  url: postgresql+psycopg://postgres:Varad%40210@localhost:5432/ucc_database
   db_path: data/ucc_database.db
   wal_mode: true
   echo_sql: false

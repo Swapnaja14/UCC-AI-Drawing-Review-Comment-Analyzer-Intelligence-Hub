@@ -9,14 +9,37 @@ from __future__ import annotations
 
 import json
 import os
+import sys
 from dataclasses import asdict, dataclass, field
 from pathlib import Path
 from typing import Any, Dict, List, Optional
 import yaml
 
+def _resolve_project_root() -> Path:
+    if getattr(sys, "frozen", False):
+        exe_dir = Path(sys.executable).resolve().parent
+        if (exe_dir / "data").exists() or (exe_dir / "config").exists():
+            return exe_dir
+        if hasattr(sys, "_MEIPASS"):
+            return Path(sys._MEIPASS)
+        return exe_dir
+    return Path(__file__).resolve().parents[2]
+
 # Resolve project root directory
-PROJECT_ROOT = Path(__file__).resolve().parents[2]
-DEFAULT_CONFIG_PATH = PROJECT_ROOT / "config" / "config.yaml"
+PROJECT_ROOT = _resolve_project_root()
+
+def _resolve_default_config_path() -> Path:
+    if getattr(sys, "frozen", False):
+        exe_cfg = Path(sys.executable).resolve().parent / "config" / "config.yaml"
+        if exe_cfg.exists():
+            return exe_cfg
+        if hasattr(sys, "_MEIPASS"):
+            meipass_cfg = Path(sys._MEIPASS) / "config" / "config.yaml"
+            if meipass_cfg.exists():
+                return meipass_cfg
+    return PROJECT_ROOT / "config" / "config.yaml"
+
+DEFAULT_CONFIG_PATH = _resolve_default_config_path()
 
 
 @dataclass
