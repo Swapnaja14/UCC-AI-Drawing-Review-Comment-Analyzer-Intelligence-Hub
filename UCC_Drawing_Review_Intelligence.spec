@@ -1,68 +1,142 @@
 # -*- mode: python ; coding: utf-8 -*-
 
 a = Analysis(
+
     ['main.py'],
+
     pathex=[],
+
     binaries=[],
+
     datas=[
+
         ('data', 'data'),
+
         ('app', 'app'),
+
         ('src', 'src'),
+
         ('config', 'config'),
+
         ('models', 'models'),
+
         ('alembic', 'alembic'),
+
         ('alembic.ini', '.'),
+
         ('VERSION', '.'),
+
     ],
+
     hiddenimports=[
+
         'PySide6.QtCharts',
+
         'psycopg',
+
         'psycopg.pq',
+
         'sqlalchemy.dialects.postgresql',
+
         'sqlalchemy.dialects.postgresql.psycopg',
+
         'sqlalchemy.dialects.sqlite',
+
         'openpyxl',
+
         'openpyxl.cell._writer',
+
         'fitz',
+
         'PIL',
+
         'PIL.Image',
+
         'cv2',
+
         'numpy',
+
         'pandas',
+
         'yaml',
+
     ],
+
     hookspath=[],
+
     hooksconfig={},
+
     runtime_hooks=[],
-    excludes=[],
+
+    excludes=[
+
+        'sentencepiece',
+
+        'torch.distributions',
+
+        'torch.testing',
+
+    ],
+
     noarchive=False,
+
     optimize=0,
+
 )
+
 pyz = PYZ(a.pure)
 
+
+
 exe = EXE(
+
     pyz,
+
     a.scripts,
+
     [],
+
     exclude_binaries=True,
+
     name='UCC_Drawing_Review_Intelligence',
+
     debug=False,
+
     bootloader_ignore_signals=False,
+
     strip=False,
+
     upx=False,
+
     console=False,
+
     disable_windowed_traceback=False,
+
     argv_emulation=False,
+
     target_arch=None,
+
     codesign_identity=None,
+
     entitlements_file=None,
+
 )
+
 coll = COLLECT(
+
     exe,
+
     a.binaries,
+
     a.datas,
+
     strip=False,
+
     upx=False,
+
     upx_exclude=[],
+
     name='UCC_Drawing_Review_Intelligence',
+
 )
+
