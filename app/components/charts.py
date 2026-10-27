@@ -263,9 +263,13 @@ def build_pareto_chart(
     bar_series.setLabelsPosition(QBarSeries.LabelsPosition.LabelsOutsideEnd)
     chart.addSeries(bar_series)
 
-    max_count = max(counts) if max(counts) > 0 else 10
-    ax_val = _make_integer_value_axis(max_count, theme_colors=theme_colors)
+    total_count = sum(counts) if counts and sum(counts) > 0 else 10
+    ax_val = QValueAxis()
+    ax_val.setRange(0, total_count)
+    ax_val.setTickCount(6)
+    ax_val.setLabelFormat("%d")
     ax_val.setTitleText("Comments")
+    _axis_style(ax_val, theme_colors=theme_colors)
 
     # The cumulative line is a percentage, so it gets its own 0–100 axis on the
     # right instead of being rescaled onto the count axis.
