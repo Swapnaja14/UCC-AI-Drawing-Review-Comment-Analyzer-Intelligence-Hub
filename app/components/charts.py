@@ -258,6 +258,9 @@ def build_pareto_chart(
 
     bar_series = QBarSeries()
     bar_series.append(bar_set)
+    bar_series.setLabelsVisible(True)
+    bar_series.setLabelsFormat("@value")
+    bar_series.setLabelsPosition(QBarSeries.LabelsPosition.LabelsOutsideEnd)
     chart.addSeries(bar_series)
 
     max_count = max(counts) if max(counts) > 0 else 10
@@ -619,6 +622,9 @@ def build_confidence_distribution_chart(
 
     bar_series = QBarSeries()
     bar_series.append(bar_set)
+    bar_series.setLabelsVisible(True)
+    bar_series.setLabelsFormat("@value")
+    bar_series.setLabelsPosition(QBarSeries.LabelsPosition.LabelsOutsideEnd)
     chart.addSeries(bar_series)
 
     ax_cat = QBarCategoryAxis()
